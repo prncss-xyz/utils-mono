@@ -1,0 +1,45 @@
+{
+	"name": "root",
+	"version": "0.0.0",
+	"private": true,
+	"description": "",
+	"keywords": [],
+	"license": "MIT",
+	"author": "",
+	"type": "module",
+	"main": "index.js",
+	"scripts": {
+		"prepare": "git config --local --get core.hooksPath >/dev/null 2>&1 || vp config",
+		"dev": "pnpm run -r dev",
+		"storybook": "pnpm run -r storybook",
+		"build": "pnpm run -r build",
+		"preview": "pnpm run -r preview",
+		"pages:enable": "gh api --method POST repos/prncss-xyz/fe/pages -f build_type=workflow",
+		"tsc": "pnpm run -r tsc",
+		"knip": "knip --production --cache",
+		"sherif": "sherif",
+		"check": "vp check",
+		"test": "vp run vp:test",
+		"test:changed": "vp run vp:test:changed"
+	},
+	"devDependencies": {
+		"@commitlint/cli": "catalog:",
+		"@commitlint/config-conventional": "catalog:",
+		"@commitlint/types": "catalog:",
+		"@playwright/test": "catalog:",
+		"@storybook/addon-vitest": "catalog:",
+		"@vitest/browser-playwright": "catalog:",
+		"@vitest/coverage-v8": "catalog:",
+		"knip": "catalog:",
+		"sherif": "catalog:",
+		"vite": "catalog:",
+		"vite-plus": "catalog:"
+	},
+	"devEngines": {
+		"packageManager": {
+			"name": "pnpm",
+			"version": "^11.10.0",
+			"onFail": "download"
+		}
+	}
+}

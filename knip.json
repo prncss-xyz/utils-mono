@@ -1,0 +1,19 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"workspaces": {
+		"apps/web": {
+			"entry": ["waku.config.ts!", "src/waku.server.tsx!"],
+			"project": ["src/**/*.{ts,tsx}!"],
+			"ignore": [
+				"src/pages.gen.ts",
+				"src/components/For/index.tsx",
+				"src/components/Show/index.tsx"
+			]
+		}
+	},
+	"ignoreDependencies": [
+		"@astryxdesign/theme-neutral",
+		"@astryxdesign/cli",
+		"@astryxdesign/core"
+	]
+}

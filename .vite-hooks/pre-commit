@@ -1,0 +1,2 @@
+pnpm vp staged
+pnpm vp run verify
