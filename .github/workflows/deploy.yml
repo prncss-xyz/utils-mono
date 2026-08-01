@@ -12,14 +12,11 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "deploy"
   cancel-in-progress: true
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,21 +32,5 @@ jobs:
       - name: Install Playwright browser
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
-      - name: Setup Pages
-        id: pages
-        uses: actions/configure-pages@v6
-
       - name: Check, build (with basePath)
         run: vpr ci
-        env:
-          VITE_GITHUB_REPOSITORY: ${{ github.repository }}
-          VITE_BASE_URL: ${{ steps.pages.outputs.base_url }}
-          VITE_BASE_PATH: ${{ steps.pages.outputs.base_path }}
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: apps/web/dist/public
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
