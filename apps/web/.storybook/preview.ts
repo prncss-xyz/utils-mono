@@ -6,6 +6,7 @@ import { createElement } from 'react'
 import '../src/styles.css'
 
 export default definePreview({
+  tags: ['autodocs'],
 	addons: [addonA11y(), addonDocs()],
 	decorators: [
 		(Story, context) => {
