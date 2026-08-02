@@ -10,7 +10,7 @@ const lintConfig: OxlintConfig = {
 		builtin: true,
 	},
 	ignorePatterns,
-	plugins: ['jsx-a11y'],
+	plugins: ['react', 'jsx-a11y', 'typescript'],
 	options: {
 		denyWarnings: true,
 		typeAware: true,
