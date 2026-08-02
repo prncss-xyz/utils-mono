@@ -5,6 +5,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Section } from '@astryxdesign/core/Section'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
+import { Show } from '@prncss-xyz/react-utils'
 
 import { HelloWorld } from '@/components/HelloWorld'
 
@@ -47,7 +48,9 @@ export default async function HomePage() {
 				</Section>
 
 				<Section variant='section' padding={10} dividers={['top']}>
-					<HelloWorld />
+					<Show when>
+						<HelloWorld />
+					</Show>
 				</Section>
 
 				<Section variant='section' padding={10} dividers={['top']}>

@@ -19,6 +19,7 @@
 		"@astryxdesign/cli": "catalog:",
 		"@astryxdesign/core": "catalog:",
 		"@astryxdesign/theme-neutral": "catalog:",
+		"@prncss-xyz/react-utils": "workspace:*",
 		"react": "catalog:",
 		"react-dom": "catalog:",
 		"waku": "catalog:"
