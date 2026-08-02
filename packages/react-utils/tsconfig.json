@@ -1,20 +1,5 @@
 {
-	"compilerOptions": {
-		"target": "esnext",
-		"lib": ["es2023"],
-		"moduleDetection": "force",
-		"module": "nodenext",
-		"moduleResolution": "nodenext",
-		"resolveJsonModule": true,
-		"types": ["node"],
-		"strict": true,
-		"noUnusedLocals": true,
-		"declaration": true,
-		"noEmit": true,
-		"allowImportingTsExtensions": true,
-		"esModuleInterop": true,
-		"isolatedModules": true,
-		"verbatimModuleSyntax": true,
-		"skipLibCheck": true
-	}
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"extends": "../../tsconfig.base.json",
+	"include": ["**/*.ts", "**/*.tsx"]
 }

@@ -1,7 +1,8 @@
 import { expect, test } from 'vite-plus/test'
 
-import { fn } from '../src/index.ts'
+import { For, Show } from '../src/index.ts'
 
-test('fn', () => {
-	expect(fn()).toBe('Hello, tsdown!')
+test('exports the React utilities', () => {
+	expect(For).toBeTypeOf('function')
+	expect(Show).toBeTypeOf('function')
 })

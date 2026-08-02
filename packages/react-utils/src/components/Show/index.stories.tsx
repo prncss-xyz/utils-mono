@@ -1,6 +1,5 @@
-import preview from '@/../.storybook/preview'
-
 import { Show } from '.'
+import preview from '../../../.storybook/preview'
 
 const meta = preview.meta({
 	title: 'Components/Show',

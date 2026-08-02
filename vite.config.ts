@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite-plus'
 
-import { storybookTestProject } from './apps/web/vite.config'
 import lint, { ignorePatterns } from './oxlint.config'
+import { storybookTestProject } from './packages/react-utils/vite.config'
 
 export default defineConfig({
 	staged: {
@@ -45,7 +45,7 @@ export default defineConfig({
 	test: {
 		projects: [
 			{
-				extends: './apps/web/vite.config.ts',
+				extends: './packages/react-utils/vite.config.ts',
 				...storybookTestProject,
 			},
 		],
