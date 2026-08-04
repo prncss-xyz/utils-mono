@@ -348,9 +348,9 @@ importers:
       '@astryxdesign/theme-neutral':
         specifier: 'catalog:'
         version: 0.1.9(@astryxdesign/core@0.1.9(@stylexjs/stylex@0.19.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)
-      '@icydotdev/pocket':
-        specifier: 'catalog:'
-        version: 1.0.7(react@19.2.8)
+      '@prncss-xyz/react-utils':
+        specifier: workspace:*
+        version: link:../../packages/react-utils
       react:
         specifier: 'catalog:'
         version: 19.2.8
@@ -393,6 +393,10 @@ importers:
         version: 0.2.6(@types/node@26.1.1)(@vitest/browser-playwright@4.1.10)(@vitest/coverage-v8@4.1.10)(@voidzero-dev/vite-plus-core@0.2.6(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@7.0.2)(yaml@2.9.0))(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(typescript@7.0.2)(yaml@2.9.0)
 
   packages/react-utils:
+    dependencies:
+      '@icydotdev/pocket':
+        specifier: 'catalog:'
+        version: 1.0.7(react@19.2.8)
     devDependencies:
       '@storybook/addon-a11y':
         specifier: 'catalog:'
