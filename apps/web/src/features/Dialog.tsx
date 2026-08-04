@@ -1,8 +1,7 @@
 'use client'
 
 import { AlertDialog, Button, useToast } from '@astryxdesign/core'
-import { DialogProvider } from '@prncss-xyz/react-utils'
-import { useDialog } from '@prncss-xyz/react-utils'
+import { DialogProvider, useDialog, useDialog2 } from '@prncss-xyz/react-utils'
 
 function Coucou2({ close, message }: { message: string; close: () => void }) {
 	const toast = useToast()
@@ -38,13 +37,11 @@ function Coucou({ close, message }: { message: string; close: () => void }) {
 }
 
 function Inner() {
-	const dialog = useDialog()
+	const dialog = useDialog2()
 	return (
 		<Button
 			label='open'
-			onClick={() =>
-				dialog((close) => <Coucou close={close} message='Coucou!' />)
-			}
+			onClick={() => dialog(Coucou, { message: 'Coucou' })}
 		/>
 	)
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { createPocket } from '@icydotdev/pocket'
-import { useState, type ReactNode } from 'react'
+import { type ReactNode, createElement, useState } from 'react'
 
 const [Ctx0, useCtx0] = createPocket(() => useState<ReactNode>(undefined))
 
@@ -24,14 +24,25 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 }
 
 export function useDialog() {
-	const [node, setNode] = useCtx0()
-	const pending = node !== undefined
-	function close() {
-		if (pending) return
-		setNode(undefined)
-	}
+	const [, setNode] = useCtx0()
 	function call(create: (close: () => void) => ReactNode) {
-		setNode(create(close))
+		setNode(create(() => setNode(undefined)))
+	}
+	return call
+}
+
+export function useDialog2() {
+	const [, setNode] = useCtx0()
+	function call<Props extends { close: () => void }>(
+		Comp: (props: Props) => ReactNode,
+		props: Omit<Props, 'close'>,
+	) {
+		setNode(
+			createElement(Comp, {
+				...props,
+				close: () => setNode(undefined),
+			} as Props),
+		)
 	}
 	return call
 }

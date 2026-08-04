@@ -10,7 +10,7 @@ const lintConfig: OxlintConfig = {
 		builtin: true,
 	},
 	ignorePatterns,
-	plugins: ['react', 'jsx-a11y', 'typescript'],
+	plugins: ['import', 'react', 'jsx-a11y', 'typescript'],
 	options: {
 		denyWarnings: true,
 		typeAware: true,
@@ -90,6 +90,7 @@ const lintConfig: OxlintConfig = {
 		'preserve-caught-error': 'error',
 		'require-yield': 'error',
 		'sort-vars': 'error',
+		'import/no-duplicates': 'error',
 		'func-style': ['error', 'declaration', { allowTypeAnnotation: true }],
 		eqeqeq: ['error', 'smart'],
 		yoda: ['error', 'never', { onlyEquality: true }],
