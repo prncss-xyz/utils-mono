@@ -10,7 +10,7 @@ function CtxProvider0({ children }: { children: ReactNode }) {
 	return (
 		<>
 			{children}
-			{node}
+			{node && <DialogProvider>{node}</DialogProvider>}
 		</>
 	)
 }
@@ -24,11 +24,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 }
 
 export function useDialog() {
-	const [node, call] = useCtx0()
+	const [node, setNode] = useCtx0()
 	const pending = node !== undefined
 	function close() {
 		if (pending) return
-		call(undefined)
+		setNode(undefined)
 	}
-	return [call, close] as const
+	function call(create: (close: () => void) => ReactNode) {
+		setNode(create(close))
+	}
+	return call
 }

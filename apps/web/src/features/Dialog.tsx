@@ -4,7 +4,7 @@ import { AlertDialog, Button, useToast } from '@astryxdesign/core'
 
 import { DialogProvider, useDialog } from '@/components/Dialog'
 
-function Coucou({ close, message }: { message: string; close: () => void }) {
+function Coucou2({ close, message }: { message: string; close: () => void }) {
 	const toast = useToast()
 	return (
 		<AlertDialog
@@ -21,12 +21,30 @@ function Coucou({ close, message }: { message: string; close: () => void }) {
 	)
 }
 
+function Coucou({ close, message }: { message: string; close: () => void }) {
+	const call = useDialog()
+	return (
+		<AlertDialog
+			isOpen
+			actionLabel='coucou2'
+			title='title'
+			description={message}
+			onOpenChange={close}
+			onAction={() => {
+				call((close) => <Coucou2 close={close} message='Coucou2!' />)
+			}}
+		/>
+	)
+}
+
 function Inner() {
-	const [call, close] = useDialog()
+	const call = useDialog()
 	return (
 		<Button
 			label='open'
-			onClick={() => call(<Coucou close={close} message='Coucou!' />)}
+			onClick={() =>
+				call((close) => <Coucou close={close} message='Coucou!' />)
+			}
 		/>
 	)
 }
