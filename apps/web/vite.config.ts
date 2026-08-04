@@ -6,6 +6,9 @@ const basepath = (process.env.VITE_BASE_PATH ?? '') + '/'
 
 const config = defineConfig({
 	base: basepath,
+	optimizeDeps: {
+		exclude: ['@astryxdesign/core'],
+	},
 	resolve: { tsconfigPaths: true },
 	plugins: [viteReact(), babel({ presets: [reactCompilerPreset()] })],
 	run: {

@@ -9,8 +9,8 @@
 	"type": "module",
 	"main": "index.js",
 	"scripts": {
-		"prepare": "git config --local --get core.hooksPath >/dev/null 2>&1 || vp config",
-		"dev": "pnpm run -r dev",
+		"prepare": "vp config",
+		"dev": "pnpm run -r --parallel dev",
 		"storybook": "pnpm run -r storybook",
 		"build": "pnpm run -r build",
 		"preview": "pnpm run -r preview",

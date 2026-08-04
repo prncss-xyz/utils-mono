@@ -1,10 +1,9 @@
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { Heading } from '@astryxdesign/core/Heading'
-import { Link } from '@astryxdesign/core/Link'
 import { Section } from '@astryxdesign/core/Section'
 import { VStack } from '@astryxdesign/core/VStack'
 
-import { RouterLink } from '@/components/RouterLink'
+import { Dialog } from '@/features/Dialog'
 
 export default async function HomePage() {
 	return (
@@ -12,13 +11,12 @@ export default async function HomePage() {
 			<VStack gap={0}>
 				<Section variant='transparent' padding={10}>
 					<Heading level={1} type='display-1' textWrap='balance'>
-						Personal Playground
+						Dialog
 					</Heading>
 				</Section>
+
 				<Section variant='section' padding={10} dividers={['top']}>
-					<Link as={RouterLink} href='/dialog' isStandalone>
-						Demo
-					</Link>
+					<Dialog />
 				</Section>
 			</VStack>
 		</AppShell>
