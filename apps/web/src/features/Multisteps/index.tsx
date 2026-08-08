@@ -22,6 +22,10 @@ type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
 	[K in keyof T]: Parameters<T[K]>[0]
 }>
 
+function Id({ children }: { children: ReactNode }) {
+	return children
+}
+
 function multistep<State extends Record<any, object>, Exit>() {
 	return function <
 		Init,
@@ -37,6 +41,7 @@ function multistep<State extends Record<any, object>, Exit>() {
 			steps,
 			onExit,
 			useState = React.useState,
+			Wrap = Id,
 		}: {
 			init: Init
 			steps: {
@@ -52,6 +57,7 @@ function multistep<State extends Record<any, object>, Exit>() {
 			useState?: (
 				init: Tags<State>,
 			) => readonly [Tags<State>, (next: Tags<State>) => void]
+			Wrap?: (props: { children: ReactNode }) => ReactNode
 		}): ReactNode {
 			const [state, setState] = useState(initializer(init))
 			function send(message: any) {
@@ -67,7 +73,11 @@ function multistep<State extends Record<any, object>, Exit>() {
 			}
 			const Step = steps[state.type] as any
 			Step.displayName ??= state.type
-			return <Step {...state.payload} send={send} />
+			return (
+				<Wrap>
+					<Step {...state.payload} send={send} />
+				</Wrap>
+			)
 		}
 	}
 }
@@ -104,44 +114,47 @@ function useFlowState<S>(init: S) {
 function FlowDialog({ close }: { close: () => void }) {
 	const toast = useToast()
 	return (
-		<Dialog isOpen onOpenChange={close}>
-			<DialogHeader title='Multistep' />
-			<Multistep
-				useState={useFlowState}
-				init={4}
-				onExit={(body) => toast({ body })}
-				steps={{
-					a: ({ payload, send }) => {
-						return (
-							<VStack gap={3}>
-								<Text>a</Text>
-								{payload}
-								<Button label='e' onClick={() => send(tag('e', payload + 8))} />
-							</VStack>
-						)
-					},
-					b: ({ payload, send }) => {
-						return (
-							<VStack gap={3}>
-								<Text>b</Text>
-								{payload}
-								<Button
-									label='e'
-									onClick={() => send(tag('e', 'agew' + String(payload)))}
-								/>
-								<Button
-									label='exit'
-									onClick={() => {
-										send(tag('bye', undefined))
-										close()
-									}}
-								/>
-							</VStack>
-						)
-					},
-				}}
-			/>
-		</Dialog>
+		<Multistep
+			useState={useFlowState}
+			Wrap={({ children }) => (
+				<Dialog isOpen onOpenChange={close}>
+					<DialogHeader title='Multistep' onOpenChange={close} />
+					{children}
+				</Dialog>
+			)}
+			init={4}
+			onExit={(body) => {
+				toast({ body })
+				close()
+			}}
+			steps={{
+				a: ({ payload, send }) => {
+					return (
+						<VStack gap={3}>
+							<Text>a</Text>
+							{payload}
+							<Button label='e' onClick={() => send(tag('e', payload + 8))} />
+						</VStack>
+					)
+				},
+				b: ({ payload, send }) => {
+					return (
+						<VStack gap={3}>
+							<Text>b</Text>
+							{payload}
+							<Button
+								label='e'
+								onClick={() => send(tag('e', 'agew' + String(payload)))}
+							/>
+							<Button
+								label='exit'
+								onClick={() => send(tag('bye', undefined))}
+							/>
+						</VStack>
+					)
+				},
+			}}
+		/>
 	)
 }
 
