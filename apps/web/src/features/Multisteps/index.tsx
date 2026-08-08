@@ -16,7 +16,7 @@ import {
 	useDialog2,
 	DialogProvider,
 } from '@prncss-xyz/react-utils'
-import React, { type ReactNode } from 'react'
+import React, { useState, type ReactNode } from 'react'
 
 type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
 	[K in keyof T]: Parameters<T[K]>[0]
@@ -116,12 +116,18 @@ function FlowDialog({ close }: { close: () => void }) {
 	return (
 		<Multistep
 			useState={useFlowState}
-			Wrap={({ children }) => (
-				<Dialog isOpen onOpenChange={close}>
-					<DialogHeader title='Multistep' onOpenChange={close} />
-					{children}
-				</Dialog>
-			)}
+			Wrap={function Wrap({ children }) {
+				const [now] = useState(() => Date.now())
+				return (
+					<Dialog isOpen onOpenChange={close}>
+						<DialogHeader title='Multistep' onOpenChange={close} />
+						<VStack>
+							<div>{now}</div>
+							{children}
+						</VStack>
+					</Dialog>
+				)
+			}}
 			init={4}
 			onExit={(body) => {
 				toast({ body })
