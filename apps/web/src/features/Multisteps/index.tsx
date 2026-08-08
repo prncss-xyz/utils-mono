@@ -10,21 +10,20 @@ import {
 } from '@astryxdesign/core'
 import {
 	type Tags,
-	type Prettify,
 	tag,
-	useLocalStorage,
 	useDialog2,
 	DialogProvider,
 } from '@prncss-xyz/react-utils'
-import React, { useState, type ReactNode } from 'react'
+import {
+	type Dispatch,
+	type ReactNode,
+	type SetStateAction,
+	useState,
+} from 'react'
 
 type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
 	[K in keyof T]: Parameters<T[K]>[0]
 }>
-
-function Id({ children }: { children: ReactNode }) {
-	return children
-}
 
 function multistep<State extends Record<any, object>, Exit>() {
 	return function <
@@ -36,50 +35,66 @@ function multistep<State extends Record<any, object>, Exit>() {
 			>
 		},
 	>(initializer: (init: Init) => Tags<State>, transitions: Transitions) {
-		return function Multistep({
+		return function Multistep<T>({
 			init,
 			steps,
 			onExit,
-			useState = React.useState,
-			Wrap = Id,
+			impl,
 		}: {
 			init: Init
 			steps: {
 				[Type in keyof State]: (
-					props: Prettify<
-						State[Type] & {
-							send: (s: Event<Transitions[Type]>) => void
-						}
-					>,
-				) => ReactNode
+					payload: State[Type],
+					send: (s: Event<Transitions[Type]>) => void,
+				) => T
 			}
 			onExit: (exit: Exit) => void
-			useState?: (
-				init: Tags<State>,
-			) => readonly [Tags<State>, (next: Tags<State>) => void]
-			Wrap?: (props: { children: ReactNode }) => ReactNode
-		}): ReactNode {
-			const [state, setState] = useState(initializer(init))
-			function send(message: any) {
-				const next: any = transitions[state.type][message.type]!(
-					message.payload,
-					state.payload as any,
-				)
-				if (next.type === 'exit') {
-					onExit(next.payload)
-					return
+			impl: (state0: Tags<State>, getStep: any) => T
+		}) {
+			function getStep(
+				state: Tags<State>,
+				setState: (next: Tags<State>) => void,
+			) {
+				const send = (message: any) => {
+					const next: any = transitions[state.type][message.type]!(
+						message.payload,
+						state.payload as any,
+					)
+					if (next.type === 'exit') {
+						onExit(next.payload)
+						return
+					}
+					setState(next)
 				}
-				setState(next)
+				return (steps[state.type] as any)(state.payload, send)
 			}
-			const Step = steps[state.type] as any
-			Step.displayName ??= state.type
-			return (
-				<Wrap>
-					<Step {...state.payload} send={send} />
-				</Wrap>
-			)
+			return impl(initializer(init), getStep)
 		}
 	}
+}
+
+function noop(..._args: unknown[]): void {}
+
+function Impl<State>({
+	state0,
+	getStep,
+}: {
+	state0: State
+	getStep: (
+		state: State,
+		setState: Dispatch<SetStateAction<State>>,
+	) => ReactNode
+}) {
+	const [now] = useState(() => Date.now())
+	return (
+		<Dialog isOpen onOpenChange={noop}>
+			<DialogHeader title='Multistep' onOpenChange={noop} />
+			<VStack gap={3}>
+				<Text>{now}</Text>
+				{getStep(...useState(state0))}
+			</VStack>
+		</Dialog>
+	)
 }
 
 const Multistep = multistep<
@@ -100,54 +115,29 @@ const Multistep = multistep<
 	},
 })
 
-function useFlowState<S>(init: S) {
-	return useLocalStorage(
-		'multistep',
-		(raw) => {
-			if (raw == null) return init
-			return JSON.parse(raw) as never
-		},
-		JSON.stringify as never,
-	)
-}
-
 function FlowDialog({ close }: { close: () => void }) {
 	const toast = useToast()
 	return (
 		<Multistep
-			useState={useFlowState}
-			Wrap={function Wrap({ children }) {
-				const [now] = useState(() => Date.now())
-				return (
-					<Dialog isOpen onOpenChange={close}>
-						<DialogHeader title='Multistep' onOpenChange={close} />
-						<VStack>
-							<div>{now}</div>
-							{children}
-						</VStack>
-					</Dialog>
-				)
-			}}
 			init={4}
 			onExit={(body) => {
 				toast({ body })
 				close()
 			}}
+			impl={(state0, getStep) => <Impl state0={state0} getStep={getStep} />}
 			steps={{
-				a: ({ payload, send }) => {
+				a: ({ payload }, send) => {
 					return (
-						<VStack gap={3}>
-							<Text>a</Text>
-							{payload}
+						<>
+							<Text>a: {payload}</Text>
 							<Button label='e' onClick={() => send(tag('e', payload + 8))} />
-						</VStack>
+						</>
 					)
 				},
-				b: ({ payload, send }) => {
+				b: ({ payload }, send) => {
 					return (
-						<VStack gap={3}>
-							<Text>b</Text>
-							{payload}
+						<>
+							<Text>b: {payload}</Text>
 							<Button
 								label='e'
 								onClick={() => send(tag('e', 'agew' + String(payload)))}
@@ -156,7 +146,7 @@ function FlowDialog({ close }: { close: () => void }) {
 								label='exit'
 								onClick={() => send(tag('bye', undefined))}
 							/>
-						</VStack>
+						</>
 					)
 				},
 			}}
