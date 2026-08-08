@@ -1,6 +1,13 @@
 'use client'
 
-import { Button, Dialog, Text, useToast, VStack } from '@astryxdesign/core'
+import {
+	Button,
+	Dialog,
+	DialogHeader,
+	Text,
+	useToast,
+	VStack,
+} from '@astryxdesign/core'
 import {
 	type Tags,
 	type Prettify,
@@ -11,11 +18,9 @@ import {
 } from '@prncss-xyz/react-utils'
 import React, { type ReactNode } from 'react'
 
-type Event<T extends Record<any, (...args: any[]) => any>, Exit> = Tags<
-	{
-		[K in keyof T]: Parameters<T[K]>[0]
-	} & { exit: Exit }
->
+type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
+	[K in keyof T]: Parameters<T[K]>[0]
+}>
 
 function multistep<State extends Record<any, object>, Exit>() {
 	return function <
@@ -23,7 +28,7 @@ function multistep<State extends Record<any, object>, Exit>() {
 		Transitions extends {
 			[Type in keyof State]: Record<
 				any,
-				(res: any, last: State[Type]) => Tags<State>
+				(res: any, last: State[Type]) => Tags<State & { exit: Exit }>
 			>
 		},
 	>(initializer: (init: Init) => Tags<State>, transitions: Transitions) {
@@ -38,7 +43,7 @@ function multistep<State extends Record<any, object>, Exit>() {
 				[Type in keyof State]: (
 					props: Prettify<
 						State[Type] & {
-							send: (s: Event<Transitions[Type], Exit>) => void
+							send: (s: Event<Transitions[Type]>) => void
 						}
 					>,
 				) => ReactNode
@@ -50,16 +55,15 @@ function multistep<State extends Record<any, object>, Exit>() {
 		}): ReactNode {
 			const [state, setState] = useState(initializer(init))
 			function send(message: any) {
-				if (message.type === 'exit') {
-					onExit(message.payload)
+				const next: any = transitions[state.type][message.type]!(
+					message.payload,
+					state.payload as any,
+				)
+				if (next.type === 'exit') {
+					onExit(next.payload)
 					return
 				}
-				setState(
-					transitions[state.type][message.type]!(
-						message.payload,
-						state.payload as any,
-					),
-				)
+				setState(next)
 			}
 			const Step = steps[state.type] as any
 			Step.displayName ??= state.type
@@ -73,10 +77,17 @@ const Multistep = multistep<
 		a: { payload: number }
 		b: { payload: string }
 	},
-	string
+	'canceled' | 'bye'
 >()((init: number) => tag('a', { payload: init }), {
-	a: { e: (payload: number) => tag('b', { payload: 'sadf' + payload }) },
-	b: { e: (payload: string) => tag('a', { payload: payload.length + 3 }) },
+	a: {
+		e: (payload: number) => tag('b', { payload: 'sadf' + payload }),
+		close: () => tag('exit', 'canceled' as const),
+	},
+	b: {
+		e: (payload: string) => tag('a', { payload: payload.length + 3 }),
+		bye: () => tag('exit', 'bye' as const),
+		close: () => tag('exit', 'canceled' as const),
+	},
 })
 
 function useFlowState<S>(init: S) {
@@ -94,6 +105,7 @@ function FlowDialog({ close }: { close: () => void }) {
 	const toast = useToast()
 	return (
 		<Dialog isOpen onOpenChange={close}>
+			<DialogHeader title='Multistep' />
 			<Multistep
 				useState={useFlowState}
 				init={4}
@@ -105,10 +117,6 @@ function FlowDialog({ close }: { close: () => void }) {
 								<Text>a</Text>
 								{payload}
 								<Button label='e' onClick={() => send(tag('e', payload + 8))} />
-								<Button
-									label='exit'
-									onClick={() => send(tag('exit', 'bye from a'))}
-								/>
 							</VStack>
 						)
 					},
@@ -124,7 +132,7 @@ function FlowDialog({ close }: { close: () => void }) {
 								<Button
 									label='exit'
 									onClick={() => {
-										send(tag('exit', 'bye from b'))
+										send(tag('bye', undefined))
 										close()
 									}}
 								/>
