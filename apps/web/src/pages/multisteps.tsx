@@ -3,7 +3,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Section } from '@astryxdesign/core/Section'
 import { VStack } from '@astryxdesign/core/VStack'
 
-import { Dialog } from '@/features/Dialog'
+import { Demo } from '@/features/Multisteps/index'
 
 export default async function Page() {
 	return (
@@ -11,12 +11,12 @@ export default async function Page() {
 			<VStack gap={0}>
 				<Section variant='transparent' padding={10}>
 					<Heading level={1} type='display-1' textWrap='balance'>
-						Dialog
+						Multisteps
 					</Heading>
 				</Section>
 
 				<Section variant='section' padding={10} dividers={['top']}>
-					<Dialog />
+					<Demo />
 				</Section>
 			</VStack>
 		</AppShell>

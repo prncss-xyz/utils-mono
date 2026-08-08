@@ -73,6 +73,7 @@ const lintConfig: OxlintConfig = {
 			'error',
 			{
 				argsIgnorePattern: '^_',
+				caughtErrors: 'all',
 				caughtErrorsIgnorePattern: '^_',
 				varsIgnorePattern: '^_',
 			},
@@ -91,7 +92,6 @@ const lintConfig: OxlintConfig = {
 		'require-yield': 'error',
 		'sort-vars': 'error',
 		'import/no-duplicates': 'error',
-		'func-style': ['error', 'declaration', { allowTypeAnnotation: true }],
 		eqeqeq: ['error', 'smart'],
 		yoda: ['error', 'never', { onlyEquality: true }],
 		'typescript/await-thenable': 'error',

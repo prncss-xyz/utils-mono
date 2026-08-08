@@ -6,7 +6,7 @@ import { VStack } from '@astryxdesign/core/VStack'
 
 import { RouterLink } from '@/components/RouterLink'
 
-export default async function HomePage() {
+export default async function Page() {
 	return (
 		<AppShell contentPadding={0} height='auto' variant='wash'>
 			<VStack gap={0}>
@@ -16,9 +16,14 @@ export default async function HomePage() {
 					</Heading>
 				</Section>
 				<Section variant='section' padding={10} dividers={['top']}>
-					<Link as={RouterLink} href='/dialog' isStandalone>
-						Demo
-					</Link>
+					<VStack>
+						<Link as={RouterLink} href='/dialog' isStandalone>
+							Dialog
+						</Link>
+						<Link as={RouterLink} href='/multisteps' isStandalone>
+							Multisteps
+						</Link>
+					</VStack>
 				</Section>
 			</VStack>
 		</AppShell>
