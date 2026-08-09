@@ -14,18 +14,13 @@ import {
 	useDialog2,
 	DialogProvider,
 } from '@prncss-xyz/react-utils'
-import {
-	type Dispatch,
-	type ReactNode,
-	type SetStateAction,
-	useState,
-} from 'react'
+import { type ReactNode, useState } from 'react'
 
 type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
 	[K in keyof T]: Parameters<T[K]>[0]
 }>
 
-function multistep<State extends Record<any, object>, Exit>() {
+function multistep<State extends Record<any, any>, Exit = never>() {
 	return function <
 		Init,
 		Transitions extends {
@@ -39,7 +34,7 @@ function multistep<State extends Record<any, object>, Exit>() {
 			init,
 			steps,
 			onExit,
-			impl,
+			wrap,
 		}: {
 			init: Init
 			steps: {
@@ -49,7 +44,13 @@ function multistep<State extends Record<any, object>, Exit>() {
 				) => T
 			}
 			onExit: (exit: Exit) => void
-			impl: (state0: Tags<State>, getStep: any) => T
+			wrap: (
+				state0: Tags<State>,
+				getStep: (
+					state: Tags<State>,
+					setState: (next: Tags<State>) => void,
+				) => T,
+			) => T
 		}) {
 			function getStep(
 				state: Tags<State>,
@@ -68,24 +69,23 @@ function multistep<State extends Record<any, object>, Exit>() {
 				}
 				return (steps[state.type] as any)(state.payload, send)
 			}
-			return impl(initializer(init), getStep)
+			return wrap(initializer(init), getStep)
 		}
 	}
 }
 
 function noop(..._args: unknown[]): void {}
 
-function Impl<State>({
+function Wrap<State>({
 	state0,
 	getStep,
 }: {
 	state0: State
-	getStep: (
-		state: State,
-		setState: Dispatch<SetStateAction<State>>,
-	) => ReactNode
+	getStep: (state: State, setState: (state: State) => void) => ReactNode
 }) {
-	const [now] = useState(() => Date.now())
+	const [now] = useState(() => {
+		return Date.now()
+	})
 	return (
 		<Dialog isOpen onOpenChange={noop}>
 			<DialogHeader title='Multistep' onOpenChange={noop} />
@@ -97,19 +97,26 @@ function Impl<State>({
 	)
 }
 
+function inDialog<State>(
+	state0: State,
+	getStep: (state: State, setState: (state: State) => void) => ReactNode,
+) {
+	return <Wrap state0={state0} getStep={getStep} />
+}
+
 const Multistep = multistep<
 	{
-		a: { payload: number }
-		b: { payload: string }
+		a: number
+		b: string
 	},
 	'canceled' | 'bye'
->()((init: number) => tag('a', { payload: init }), {
+>()((init: number) => tag('a', init), {
 	a: {
-		e: (payload: number) => tag('b', { payload: 'sadf' + payload }),
+		e: (payload: number) => tag('b', 'sadf' + payload),
 		close: () => tag('exit', 'canceled' as const),
 	},
 	b: {
-		e: (payload: string) => tag('a', { payload: payload.length + 3 }),
+		e: (payload: string) => tag('a', payload.length + 3),
 		bye: () => tag('exit', 'bye' as const),
 		close: () => tag('exit', 'canceled' as const),
 	},
@@ -124,9 +131,8 @@ function FlowDialog({ close }: { close: () => void }) {
 				toast({ body })
 				close()
 			}}
-			impl={(state0, getStep) => <Impl state0={state0} getStep={getStep} />}
 			steps={{
-				a: ({ payload }, send) => {
+				a: (payload, send) => {
 					return (
 						<>
 							<Text>a: {payload}</Text>
@@ -134,7 +140,7 @@ function FlowDialog({ close }: { close: () => void }) {
 						</>
 					)
 				},
-				b: ({ payload }, send) => {
+				b: (payload, send) => {
 					return (
 						<>
 							<Text>b: {payload}</Text>
@@ -150,13 +156,14 @@ function FlowDialog({ close }: { close: () => void }) {
 					)
 				},
 			}}
+			wrap={inDialog}
 		/>
 	)
 }
 
 function Content() {
-	const dialoag = useDialog2()
-	return <Button label='start' onClick={() => dialoag(FlowDialog, {})} />
+	const dialog = useDialog2()
+	return <Button label='start' onClick={() => dialog(FlowDialog, {})} />
 }
 
 export function Demo() {
