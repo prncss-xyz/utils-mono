@@ -31,7 +31,7 @@ function multistep<State extends Record<any, any>, Exit = never>() {
 			>
 		},
 	>(initializer: (init: Init) => Tags<State>, transitions: Transitions) {
-		return function Multistep<T>({
+		return function <T>({
 			init,
 			steps,
 			onExit,
@@ -45,32 +45,30 @@ function multistep<State extends Record<any, any>, Exit = never>() {
 				) => T
 			}
 			onExit: (exit: Exit) => void
-			wrap: (
-				state0: Tags<State>,
+			wrap: (props: {
+				state0: Tags<State>
 				getStep: (
 					state: Tags<State>,
 					setState: (next: Tags<State>) => void,
-				) => T,
-			) => T
+				) => T
+			}) => T
 		}) {
-			function getStep(
-				state: Tags<State>,
-				setState: (next: Tags<State>) => void,
-			) {
-				const send = (message: any) => {
-					const next: any = transitions[state.type][message.type]!(
-						message.payload,
-						state.payload as any,
-					)
-					if (next.type === 'exit') {
-						onExit(next.payload)
-						return
-					}
-					setState(next)
-				}
-				return (steps[state.type] as any)(state.payload, send)
-			}
-			return wrap(initializer(init), getStep)
+			return wrap({
+				state0: initializer(init),
+				getStep: (state, setState) => {
+					return (steps[state.type] as any)(state.payload, (message: any) => {
+						const next: any = transitions[state.type][message.type]!(
+							message.payload,
+							state.payload as any,
+						)
+						if (next.type === 'exit') {
+							onExit(next.payload)
+							return
+						}
+						setState(next)
+					})
+				},
+			})
 		}
 	}
 }
@@ -95,14 +93,6 @@ function InDialog<State>({
 			</VStack>
 		</Dialog>
 	)
-}
-
-function inDialog<State>(
-	state0: State,
-	getStep: (state: State, setState: (state: State) => void) => ReactNode,
-) {
-	return InDialog({ state0, getStep })
-	// return <InDialog state0={state0} getStep={getStep} />
 }
 
 const Multistep = multistep<
@@ -156,7 +146,7 @@ function FlowDialog() {
 					)
 				},
 			}}
-			wrap={inDialog}
+			wrap={InDialog}
 		/>
 	)
 }
