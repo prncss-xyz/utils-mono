@@ -14,17 +14,11 @@ import {
 	useCloseDialog,
 	DialogProvider,
 } from '@prncss-xyz/react-utils'
-import { type ReactNode, useState } from 'react'
+import { createElement, type ReactElement, useState } from 'react'
 
-import { multistep } from './multistep'
+import { multistep, type ShellProps } from './multistep'
 
-function InDialog<State>({
-	state0,
-	getStep,
-}: {
-	state0: State
-	getStep: (state: State, setState: (state: State) => void) => ReactNode
-}) {
+function InDialog<State>({ state0, getStep }: ShellProps<ReactElement, State>) {
 	const close = useCloseDialog()
 	const [now] = useState(() => Date.now())
 	return (
@@ -32,7 +26,7 @@ function InDialog<State>({
 			<DialogHeader title='Multistep' onOpenChange={close} />
 			<VStack gap={3}>
 				<Text>{now}</Text>
-				{getStep(...useState(state0))}
+				{getStep(createElement, ...useState(state0))}
 			</VStack>
 		</Dialog>
 	)
@@ -65,15 +59,17 @@ function FlowDialog() {
 				close()
 			}}
 			steps={{
-				a: (payload, send) => {
+				a: function A({ payload, send }) {
+					const [x] = useState(3)
 					return (
 						<>
 							<Text>a: {payload}</Text>
+							<Text>{x}</Text>
 							<Button label='e' onClick={() => send(tag('e', payload + 8))} />
 						</>
 					)
 				},
-				b: (payload, send) => {
+				b: ({ payload, send }) => {
 					return (
 						<>
 							<Text>b: {payload}</Text>
