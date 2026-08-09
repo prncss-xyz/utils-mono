@@ -9,7 +9,6 @@ import {
 	VStack,
 } from '@astryxdesign/core'
 import {
-	type Tags,
 	tag,
 	useCallDialog,
 	useCloseDialog,
@@ -17,61 +16,7 @@ import {
 } from '@prncss-xyz/react-utils'
 import { type ReactNode, useState } from 'react'
 
-type Event<T extends Record<any, (...args: any[]) => any>> = Tags<{
-	[K in keyof T]: Parameters<T[K]>[0]
-}>
-
-function multistep<State extends Record<any, any>, Exit = never>() {
-	return function <
-		Init,
-		Transitions extends {
-			[Type in keyof State]: Record<
-				any,
-				(res: any, last: State[Type]) => Tags<State & { exit: Exit }>
-			>
-		},
-	>(initializer: (init: Init) => Tags<State>, transitions: Transitions) {
-		return function <T>({
-			init,
-			steps,
-			onExit,
-			wrap,
-		}: {
-			init: Init
-			steps: {
-				[Type in keyof State]: (
-					payload: State[Type],
-					send: (s: Event<Transitions[Type]>) => void,
-				) => T
-			}
-			onExit: (exit: Exit) => void
-			wrap: (props: {
-				state0: Tags<State>
-				getStep: (
-					state: Tags<State>,
-					setState: (next: Tags<State>) => void,
-				) => T
-			}) => T
-		}) {
-			return wrap({
-				state0: initializer(init),
-				getStep: (state, setState) => {
-					return (steps[state.type] as any)(state.payload, (message: any) => {
-						const next: any = transitions[state.type][message.type]!(
-							message.payload,
-							state.payload as any,
-						)
-						if (next.type === 'exit') {
-							onExit(next.payload)
-							return
-						}
-						setState(next)
-					})
-				},
-			})
-		}
-	}
-}
+import { multistep } from './multistep'
 
 function InDialog<State>({
 	state0,
@@ -81,9 +26,7 @@ function InDialog<State>({
 	getStep: (state: State, setState: (state: State) => void) => ReactNode
 }) {
 	const close = useCloseDialog()
-	const [now] = useState(() => {
-		return Date.now()
-	})
+	const [now] = useState(() => Date.now())
 	return (
 		<Dialog isOpen onOpenChange={close}>
 			<DialogHeader title='Multistep' onOpenChange={close} />
@@ -100,14 +43,14 @@ const Multistep = multistep<
 		a: number
 		b: string
 	},
-	'canceled' | 'bye'
+	string
 >()((init: number) => tag('a', init), {
 	a: {
 		e: (payload: number) => tag('b', 'sadf' + payload),
 	},
 	b: {
 		e: (payload: string) => tag('a', payload.length + 3),
-		bye: () => tag('exit', 'bye' as const),
+		bye: () => tag('exit', 'bye'),
 	},
 })
 
@@ -146,7 +89,7 @@ function FlowDialog() {
 					)
 				},
 			}}
-			wrap={InDialog}
+			shell={InDialog}
 		/>
 	)
 }
