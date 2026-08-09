@@ -1,48 +1,83 @@
 'use client'
 
-import { createPocket } from '@icydotdev/pocket'
-import { type ReactNode, createElement, useState } from 'react'
+import {
+	type Dispatch,
+	type ReactNode,
+	type SetStateAction,
+	createContext,
+	createElement,
+	useContext,
+	useState,
+} from 'react'
 
-const [Ctx0, useCtx0] = createPocket(() => useState<ReactNode>(undefined))
+import { noop } from '../../functions'
+
+function cannotClose() {
+	throw new Error('close must be called inside a dialog')
+}
+
+type SetState<S> = [S, Dispatch<SetStateAction<S>>]
+type DialogState = { node: ReactNode; close: () => void }
+
+const Ctx0 = createContext<SetState<DialogState>>([
+	{ node: undefined, close: noop },
+	noop,
+])
 
 function CtxProvider0({ children }: { children: ReactNode }) {
-	const [node] = useCtx0()
+	const [{ node }, setCtx] = useContext(Ctx0)
+	const close = () => setCtx((ctx) => ({ ...ctx, node: undefined }))
 	return (
 		<>
 			{children}
-			{node && <DialogProvider>{node}</DialogProvider>}
+			{node && (
+				<InternalDialogProvider dialogClose={close}>
+					{node}
+				</InternalDialogProvider>
+			)}
 		</>
 	)
 }
 
-export function DialogProvider({ children }: { children: ReactNode }) {
+function InternalDialogProvider({
+	children,
+	dialogClose,
+}: {
+	children: ReactNode
+	dialogClose: () => void
+}) {
 	return (
-		<Ctx0>
+		<Ctx0
+			value={useState<DialogState>({ node: undefined, close: dialogClose })}
+		>
 			<CtxProvider0>{children}</CtxProvider0>
 		</Ctx0>
 	)
 }
 
-export function useDialog() {
-	const [, setNode] = useCtx0()
-	function call(create: (close: () => void) => ReactNode) {
-		setNode(create(() => setNode(undefined)))
-	}
-	return call
+export function DialogProvider({ children }: { children: ReactNode }) {
+	return (
+		<InternalDialogProvider dialogClose={cannotClose}>
+			{children}
+		</InternalDialogProvider>
+	)
 }
 
-export function useDialog2() {
-	const [, setNode] = useCtx0()
-	function call<Props extends { close: () => void }>(
+export function useCloseDialog() {
+	const [{ close }] = useContext(Ctx0)
+	return close
+}
+
+export function useCallDialog() {
+	const [, setNode] = useContext(Ctx0)
+	function call<Props extends object>(
 		Comp: (props: Props) => ReactNode,
-		props: Omit<Props, 'close'>,
+		...[props]: keyof Props extends never ? [props?: Props] : [props: Props]
 	) {
-		setNode(
-			createElement(Comp, {
-				...props,
-				close: () => setNode(undefined),
-			} as Props),
-		)
+		setNode((ctx) => ({
+			...ctx,
+			node: createElement(Comp, props),
+		}))
 	}
 	return call
 }

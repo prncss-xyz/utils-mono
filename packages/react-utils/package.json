@@ -22,9 +22,6 @@
 		"storybook": "storybook dev",
 		"build-storybook": "storybook build"
 	},
-	"dependencies": {
-		"@icydotdev/pocket": "catalog:"
-	},
 	"devDependencies": {
 		"@storybook/addon-a11y": "catalog:",
 		"@storybook/addon-docs": "catalog:",

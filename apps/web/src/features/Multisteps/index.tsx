@@ -11,7 +11,8 @@ import {
 import {
 	type Tags,
 	tag,
-	useDialog2,
+	useCallDialog,
+	useCloseDialog,
 	DialogProvider,
 } from '@prncss-xyz/react-utils'
 import { type ReactNode, useState } from 'react'
@@ -74,21 +75,20 @@ function multistep<State extends Record<any, any>, Exit = never>() {
 	}
 }
 
-function noop(..._args: unknown[]): void {}
-
-function Wrap<State>({
+function InDialog<State>({
 	state0,
 	getStep,
 }: {
 	state0: State
 	getStep: (state: State, setState: (state: State) => void) => ReactNode
 }) {
+	const close = useCloseDialog()
 	const [now] = useState(() => {
 		return Date.now()
 	})
 	return (
-		<Dialog isOpen onOpenChange={noop}>
-			<DialogHeader title='Multistep' onOpenChange={noop} />
+		<Dialog isOpen onOpenChange={close}>
+			<DialogHeader title='Multistep' onOpenChange={close} />
 			<VStack gap={3}>
 				<Text>{now}</Text>
 				{getStep(...useState(state0))}
@@ -101,7 +101,8 @@ function inDialog<State>(
 	state0: State,
 	getStep: (state: State, setState: (state: State) => void) => ReactNode,
 ) {
-	return <Wrap state0={state0} getStep={getStep} />
+	return InDialog({ state0, getStep })
+	// return <InDialog state0={state0} getStep={getStep} />
 }
 
 const Multistep = multistep<
@@ -113,17 +114,16 @@ const Multistep = multistep<
 >()((init: number) => tag('a', init), {
 	a: {
 		e: (payload: number) => tag('b', 'sadf' + payload),
-		close: () => tag('exit', 'canceled' as const),
 	},
 	b: {
 		e: (payload: string) => tag('a', payload.length + 3),
 		bye: () => tag('exit', 'bye' as const),
-		close: () => tag('exit', 'canceled' as const),
 	},
 })
 
-function FlowDialog({ close }: { close: () => void }) {
+function FlowDialog() {
 	const toast = useToast()
+	const close = useCloseDialog()
 	return (
 		<Multistep
 			init={4}
@@ -162,8 +162,8 @@ function FlowDialog({ close }: { close: () => void }) {
 }
 
 function Content() {
-	const dialog = useDialog2()
-	return <Button label='start' onClick={() => dialog(FlowDialog, {})} />
+	const call = useCallDialog()
+	return <Button label='start' onClick={() => call(FlowDialog)} />
 }
 
 export function Demo() {
