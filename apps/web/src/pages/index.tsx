@@ -20,6 +20,9 @@ export default async function Page() {
 						<Link as={RouterLink} href='/dialog' isStandalone>
 							Dialog
 						</Link>
+						<Link as={RouterLink} href='/store' isStandalone>
+							Store
+						</Link>
 						<Link as={RouterLink} href='/multisteps' isStandalone>
 							Multisteps
 						</Link>
