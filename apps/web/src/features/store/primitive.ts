@@ -10,11 +10,37 @@ import { Subscribed } from './subscribed'
 
 export type ValueStore<Value> = Subscribed<Value, [Value], void>
 
-export function primitive<Value>(init: Init<Value>, onMount?: OnMount) {
-	return new PrimitiveStore(init, onMount)
+let count = 0
+
+export function primitive<Value>(init: Init<Value>) {
+	return new Primitive(init)
 }
 
-export class PrimitiveStore<Value>
+export class Store {
+	private readonly contents = new WeakMap<
+		Primitive<any>,
+		PrimitiveInstance<any>
+	>()
+	get<V>(a: Primitive<V>): PrimitiveInstance<V> {
+		let res = this.contents.get(a)
+		if (!res) {
+			res = new PrimitiveInstance(a.init)
+			this.contents.set(a, res)
+		}
+		return res
+	}
+}
+
+export class Primitive<Value> {
+	public readonly init
+	public readonly index
+	constructor(init: Init<Value>) {
+		this.init = init
+		this.index = count++
+	}
+}
+
+export class PrimitiveInstance<Value>
 	extends Subscribed<Value, [SetStateWithReset<Value>], void>
 	implements ValueStore<Value>
 {

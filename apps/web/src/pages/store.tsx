@@ -3,7 +3,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Section } from '@astryxdesign/core/Section'
 import { VStack } from '@astryxdesign/core/VStack'
 
-import { Store } from '@/features/store'
+import { Demo } from '@/features/store'
 
 export default async function Page() {
 	return (
@@ -16,7 +16,7 @@ export default async function Page() {
 				</Section>
 
 				<Section variant='section' padding={10} dividers={['top']}>
-					<Store />
+					<Demo />
 				</Section>
 			</VStack>
 		</AppShell>

@@ -1,36 +1,24 @@
-import { use, useEffect, useSyncExternalStore } from 'react'
+import { useContext, useSyncExternalStore } from 'react'
 
-import { isPromise } from './functions'
-import type { Store } from './store'
+import type { Primitive } from './primitive'
+import { StoreCtx } from './storeCtx'
 
-export function useStoreValue<Value, Args extends any[], Result>(
-	store: Store<Promise<Value> | Value, Args, Result>,
-) {
+export function useAtomValue<Value>(atom: Primitive<Value>) {
+	const store = useContext(StoreCtx)
+	const instance = store.get(atom)
 	const res = useSyncExternalStore(
-		store.subscribe.bind(store),
-		store.peek.bind(store),
+		instance.subscribe.bind(instance),
+		instance.peek.bind(instance),
 	)
-	return isPromise(res) ? use(res) : res
+	return res
 }
 
-export function setStore<Value, Args extends any[], Result>(
-	store: Store<Promise<Value> | Value, Args, Result>,
-) {
-	return store.send.bind(store)
+export function useSetAtom<Value>(atom: Primitive<Value>) {
+	const store = useContext(StoreCtx)
+	const instance = store.get(atom)
+	return instance.send.bind(instance)
 }
 
-export function useStoreOnChange<Value, Args extends any[], Result>(
-	store: Store<Value, Args, Result>,
-	onChange: (value: Value) => void,
-) {
-	useEffect(
-		() => store.subscribe(() => onChange(store.peek())),
-		[onChange, store],
-	)
-}
-
-export function useStore<Value, Args extends any[], Result>(
-	store: Store<Value, Args, Result>,
-) {
-	return [useStoreValue(store), store.send.bind(store)] as const
+export function useAtom<Value>(atom: Primitive<Value>) {
+	return [useAtomValue(atom), useSetAtom(atom)] as const
 }

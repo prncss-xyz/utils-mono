@@ -1,10 +1,10 @@
-import { Store } from './store'
+import { Atom } from './atom'
 
 export abstract class Subscribed<
 	Value,
 	Args extends any[],
 	Result,
-> extends Store<Value, Args, Result> {
+> extends Atom<Value, Args, Result> {
 	private subscribers = new Set<() => void>()
 	subscribe(cb: () => void) {
 		if (this.subscribers.size === 0) this.mount()
@@ -22,7 +22,7 @@ export abstract class Subscribed<
 	}
 }
 
-export abstract class Counted<Value, Args extends any[], Result> extends Store<
+export abstract class Counted<Value, Args extends any[], Result> extends Atom<
 	Value,
 	Args,
 	Result
