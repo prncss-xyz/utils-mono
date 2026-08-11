@@ -6,9 +6,11 @@ import { StoreCtx } from './storeCtx'
 export function useAtomValue<Value>(atom: Primitive<Value>) {
 	const store = useContext(StoreCtx)
 	const instance = store.get(atom)
+	const peek = instance.peek.bind(instance)
 	const res = useSyncExternalStore(
 		instance.subscribe.bind(instance),
-		instance.peek.bind(instance),
+		peek,
+		peek,
 	)
 	return res
 }

@@ -16,15 +16,19 @@ export function primitive<Value>(init: Init<Value>) {
 	return new Primitive(init)
 }
 
+interface Create<T> {
+	create: () => T
+}
+
 export class Store {
 	private readonly contents = new WeakMap<
-		Primitive<any>,
-		PrimitiveInstance<any>
+		Create<any>,
+		any
 	>()
-	get<V>(a: Primitive<V>): PrimitiveInstance<V> {
+	get<V>(a: Create<V>): V {
 		let res = this.contents.get(a)
 		if (!res) {
-			res = new PrimitiveInstance(a.init)
+			res = a.create()
 			this.contents.set(a, res)
 		}
 		return res
@@ -32,11 +36,14 @@ export class Store {
 }
 
 export class Primitive<Value> {
-	public readonly init
-	public readonly index
+	readonly init
+	readonly index
 	constructor(init: Init<Value>) {
 		this.init = init
 		this.index = count++
+	}
+	create() {
+		return new PrimitiveInstance(this.init)
 	}
 }
 
