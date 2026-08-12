@@ -6,44 +6,53 @@ import {
 	type SetStateWithReset,
 } from './functions'
 import type { OnMount } from './mount'
+import type { Create } from './store'
 import { Subscribed } from './subscribed'
 
 export type ValueStore<Value> = Subscribed<Value, [Value], void>
 
-let count = 0
-
-export function primitive<Value>(init: Init<Value>) {
+export function primitive<V>(
+	init: Init<V>,
+): Create<V, PrimitiveInstance<V>, void> {
 	return new Primitive(init)
 }
 
-interface Create<T> {
-	create: () => T
-}
-
-export class Store {
-	private readonly contents = new WeakMap<
-		Create<any>,
-		any
-	>()
-	get<V>(a: Create<V>): V {
-		let res = this.contents.get(a)
-		if (!res) {
-			res = a.create()
-			this.contents.set(a, res)
-		}
-		return res
-	}
-}
-
-export class Primitive<Value> {
+export class Primitive<Value, Hash> implements Create<
+	Value,
+	any,
+	Hash
+> {
 	readonly init
-	readonly index
 	constructor(init: Init<Value>) {
 		this.init = init
-		this.index = count++
 	}
 	create() {
-		return new PrimitiveInstance(this.init)
+		return new PrimitiveInstance(fromInit(this.init))
+	}
+	pick(a: PrimitiveInstance<Value>) {
+		return a
+	}
+}
+
+export class Group<Value> implements Create<
+	Value,
+	Map<string, PrimitiveInstance<Value>>,
+	string
+> {
+	readonly init
+	constructor(init: Init<Value>) {
+		this.init = init
+	}
+	create() {
+		return new Map<string, PrimitiveInstance<Value>>()
+	}
+	pick(a: Map<string, PrimitiveInstance<Value>>, hash: string) {
+		let res = a.get(hash)
+		if (!res) {
+			res = new PrimitiveInstance(fromInit(this.init))
+			a.set(hash, res)
+		}
+		return res
 	}
 }
 

@@ -2,14 +2,14 @@
 
 import { Button, Text, VStack } from '@astryxdesign/core'
 
-import { primitive, Store } from './primitive'
+import { primitive } from './primitive'
 import { useAtom } from './react'
-import { StoreCtx } from './storeCtx'
+import { AtomProvider } from './storeCtx'
 
 const sampleValue = primitive(0)
 
 export function Store0() {
-	const [sample, setSample] = useAtom(sampleValue)
+	const [sample, setSample] = useAtom(sampleValue, undefined)
 	return (
 		<VStack gap={3}>
 			<Text>{sample}</Text>
@@ -18,12 +18,10 @@ export function Store0() {
 	)
 }
 
-const value = new Store()
-
 export function Demo() {
 	return (
-		<StoreCtx value={value}>
+		<AtomProvider>
 			<Store0 />
-		</StoreCtx>
+		</AtomProvider>
 	)
 }

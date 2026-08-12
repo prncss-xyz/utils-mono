@@ -1,11 +1,11 @@
 import { useContext, useSyncExternalStore } from 'react'
 
-import type { Primitive } from './primitive'
+import type { Create } from './store'
 import { StoreCtx } from './storeCtx'
 
-export function useAtomValue<Value>(atom: Primitive<Value>) {
+export function useAtomValue<V, T, H>(atom: Create<V, T, H>, hash: H) {
 	const store = useContext(StoreCtx)
-	const instance = store.get(atom)
+	const instance = store.get(atom, hash)
 	const peek = instance.peek.bind(instance)
 	const res = useSyncExternalStore(
 		instance.subscribe.bind(instance),
@@ -15,12 +15,12 @@ export function useAtomValue<Value>(atom: Primitive<Value>) {
 	return res
 }
 
-export function useSetAtom<Value>(atom: Primitive<Value>) {
+export function useSetAtom<V, T, H>(atom: Create<V, T, H>, hash: H) {
 	const store = useContext(StoreCtx)
-	const instance = store.get(atom)
+	const instance = store.get(atom, hash)
 	return instance.send.bind(instance)
 }
 
-export function useAtom<Value>(atom: Primitive<Value>) {
-	return [useAtomValue(atom), useSetAtom(atom)] as const
+export function useAtom<V, T, H>(atom: Create<V, T, H>, hash: H) {
+	return [useAtomValue(atom, hash), useSetAtom(atom, hash)] as const
 }
