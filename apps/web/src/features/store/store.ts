@@ -1,16 +1,16 @@
 import type { PrimitiveInstance } from './primitive'
 
-export interface Create<V, T, H> {
-	create(): T
-	pick(t: T, h: H): PrimitiveInstance<V>
+export interface Atom<V, H> {
+	create(h: H): any
+	pick(t: any, h: H): PrimitiveInstance<V>
 }
 
 export class Store {
-	private readonly contents = new WeakMap<Create<any, any, any>, any>()
-	get<V, T, H>(a: Create<V, T, H>, h: H): PrimitiveInstance<V> {
+	private readonly contents = new WeakMap<Atom<any, any>, any>()
+	get<V, H>(a: Atom<V, H>, h: H): PrimitiveInstance<V> {
 		let res = this.contents.get(a)
 		if (!res) {
-			res = a.create()
+			res = a.create(h)
 			this.contents.set(a, res)
 		}
 		return a.pick(res, h)

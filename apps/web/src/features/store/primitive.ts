@@ -6,51 +6,34 @@ import {
 	type SetStateWithReset,
 } from './functions'
 import type { OnMount } from './mount'
-import type { Create } from './store'
+import type { Atom } from './store'
 import { Subscribed } from './subscribed'
 
 export type ValueStore<Value> = Subscribed<Value, [Value], void>
 
-export function primitive<V>(
-	init: Init<V>,
-): Create<V, PrimitiveInstance<V>, void> {
-	return new Primitive(init)
+export function primitive<V, H = void>(init: V | ((h: H) => V)): Atom<V, H> {
+	return new Primitive<V, H>(init)
 }
 
-export class Primitive<Value, Hash> implements Create<
-	Value,
-	any,
-	Hash
-> {
+export class Primitive<Value, Hash> implements Atom<Value, Hash> {
 	readonly init
-	constructor(init: Init<Value>) {
+	constructor(init: Value | ((h: Hash) => Value)) {
 		this.init = init
 	}
-	create() {
-		return new PrimitiveInstance(fromInit(this.init))
-	}
-	pick(a: PrimitiveInstance<Value>) {
-		return a
-	}
-}
-
-export class Group<Value> implements Create<
-	Value,
-	Map<string, PrimitiveInstance<Value>>,
-	string
-> {
-	readonly init
-	constructor(init: Init<Value>) {
-		this.init = init
-	}
-	create() {
+	create(h: Hash) {
+		if (h === undefined)
+			return new PrimitiveInstance(
+				isFunction(this.init) ? this.init(h) : this.init,
+			)
 		return new Map<string, PrimitiveInstance<Value>>()
 	}
-	pick(a: Map<string, PrimitiveInstance<Value>>, hash: string) {
-		let res = a.get(hash)
+	pick(a: any, h: Hash) {
+		if (h === undefined) return a
+		if (!isFunction(this.init)) throw new Error('function expected')
+		let res = a.get(h)
 		if (!res) {
-			res = new PrimitiveInstance(fromInit(this.init))
-			a.set(hash, res)
+			res = new PrimitiveInstance(this.init(h))
+			a.set(h, res)
 		}
 		return res
 	}
