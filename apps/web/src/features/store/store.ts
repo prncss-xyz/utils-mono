@@ -1,18 +1,12 @@
-import type { PrimitiveInstance } from './primitive'
+import type { AtomInstance } from './atomInstance'
 
-export interface Atom<V, H> {
-	create(h: H): any
-	pick(t: any, h: H): PrimitiveInstance<V>
+export type Store = WeakMap<object, any>
+
+export function createStore(): Store {
+	return new WeakMap<object, any>()
 }
 
-export class Store {
-	private readonly contents = new WeakMap<Atom<any, any>, any>()
-	get<V, H>(a: Atom<V, H>, h: H): PrimitiveInstance<V> {
-		let res = this.contents.get(a)
-		if (!res) {
-			res = a.create(h)
-			this.contents.set(a, res)
-		}
-		return a.pick(res, h)
-	}
-}
+export type Atom<V, H, Args extends any[], Result> = (
+	store: Store,
+	h: H,
+) => AtomInstance<V, Args, Result>

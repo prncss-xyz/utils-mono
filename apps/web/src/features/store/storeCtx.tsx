@@ -1,9 +1,9 @@
 import { createContext, type ReactNode } from 'react'
 
-import { Store } from './store'
+import { createStore } from './store'
 
-export const StoreCtx = createContext<Store>(new Store())
+export const StoreCtx = createContext(createStore())
 
 export function AtomProvider({ children }: { children: ReactNode }) {
-	return <StoreCtx value={new Store()}>{children}</StoreCtx>
+	return <StoreCtx value={createStore()}>{children}</StoreCtx>
 }

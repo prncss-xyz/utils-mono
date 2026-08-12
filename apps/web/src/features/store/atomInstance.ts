@@ -4,17 +4,17 @@ export function noWrite(...args: [never]): never {
 	throw new Error(`Cannot write ${args} to a read-only store`)
 }
 
-interface IAtom<Value, Args extends any[], Result> {
+interface IAtomInstance<Value, Args extends any[], Result> {
 	send(...args: Args): Result
 	subscribe(cb: () => void): () => void
 	peek(): Value
 }
 
-export abstract class Atom<
+export abstract class AtomInstance<
 	Value,
 	Args extends any[],
 	Result,
-> implements IAtom<Value, Args, Result> {
+> implements IAtomInstance<Value, Args, Result> {
 	private uOnMount
 	private uUnmount: Teardown = undefined
 	abstract send(...args: Args): Result

@@ -1,4 +1,5 @@
 import {
+	cached,
 	fromInit,
 	isFunction,
 	isReset,
@@ -6,43 +7,37 @@ import {
 	type SetStateWithReset,
 } from './functions'
 import type { OnMount } from './mount'
-import type { Atom } from './store'
+import type { Store } from './store'
+// import type { Atom } from './store'
 import { Subscribed } from './subscribed'
 
-export type ValueStore<Value> = Subscribed<Value, [Value], void>
+// type Read = <V, H>(a: Atom<V, H>, h: H) => V
+//
 
-export function primitive<V, H = void>(init: V | ((h: H) => V)): Atom<V, H> {
-	return new Primitive<V, H>(init)
-}
-
-export class Primitive<Value, Hash> implements Atom<Value, Hash> {
-	readonly init
-	constructor(init: Value | ((h: Hash) => Value)) {
-		this.init = init
-	}
-	create(h: Hash) {
-		if (h === undefined)
-			return new PrimitiveInstance(
-				isFunction(this.init) ? this.init(h) : this.init,
-			)
-		return new Map<string, PrimitiveInstance<Value>>()
-	}
-	pick(a: any, h: Hash) {
-		if (h === undefined) return a
-		if (!isFunction(this.init)) throw new Error('function expected')
-		let res = a.get(h)
-		if (!res) {
-			res = new PrimitiveInstance(this.init(h))
-			a.set(h, res)
+export function primitive<Hash, V>(cb: V | ((k: Hash) => V)) {
+	const k = {}
+	return (store: Store, hash: Hash): PrimitiveInstance<V> => {
+		if (hash === undefined) {
+			return cached(store, k, () => {
+				if (!isFunction(cb)) return primitiveInstance(cb)
+				return primitiveInstance(cb(hash))
+			})
 		}
-		return res
+		if (!isFunction(cb)) throw new Error('function expected')
+		const m = cached(store, k, () => new Map<Hash, V>())
+		return cached(m, hash, (h) => primitiveInstance(cb(h)))
 	}
 }
 
-export class PrimitiveInstance<Value>
-	extends Subscribed<Value, [SetStateWithReset<Value>], void>
-	implements ValueStore<Value>
-{
+function primitiveInstance<V>(init: V) {
+	return new PrimitiveInstance(init)
+}
+
+export class PrimitiveInstance<Value> extends Subscribed<
+	Value,
+	[SetStateWithReset<Value>],
+	void
+> {
 	private init
 	private pristine = true
 	private value: Value = undefined as never

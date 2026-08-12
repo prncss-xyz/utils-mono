@@ -3,9 +3,12 @@ import { useContext, useSyncExternalStore } from 'react'
 import type { Atom } from './store'
 import { StoreCtx } from './storeCtx'
 
-export function useAtomValue<V, H>(atom: Atom<V, H>, hash: H): V {
+export function useAtomValue<V, H, Args extends any[], R>(
+	atom: Atom<V, H, Args, R>,
+	hash: H,
+): V {
 	const store = useContext(StoreCtx)
-	const instance = store.get(atom, hash)
+	const instance = atom(store, hash)
 	const peek = instance.peek.bind(instance)
 	const res = useSyncExternalStore(
 		instance.subscribe.bind(instance),
@@ -15,12 +18,18 @@ export function useAtomValue<V, H>(atom: Atom<V, H>, hash: H): V {
 	return res
 }
 
-export function useSetAtom<V, H>(atom: Atom<V, H>, hash: H) {
+export function useSetAtom<V, H, Args extends any[], R>(
+	atom: Atom<V, H, Args, R>,
+	hash: H,
+) {
 	const store = useContext(StoreCtx)
-	const instance = store.get(atom, hash)
+	const instance = atom(store, hash)
 	return instance.send.bind(instance)
 }
 
-export function useAtom<V, H>(atom: Atom<V, H>, hash: H) {
+export function useAtom<V, H, Args extends any[], R>(
+	atom: Atom<V, H, Args, R>,
+	hash: H,
+) {
 	return [useAtomValue(atom, hash), useSetAtom(atom, hash)] as const
 }

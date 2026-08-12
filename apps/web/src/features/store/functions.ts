@@ -48,3 +48,18 @@ export type OnChange<T> = (next: T | Reset, last: T) => void
 export function defer(callback: () => void) {
 	void Promise.resolve().then(callback)
 }
+
+export function cached<K extends object, V>(
+	m: WeakMap<K, V>,
+	k: K,
+	cb: (k: K) => V,
+): V
+export function cached<K, V>(m: Map<K, V>, k: K, cb: (k: K) => V): V
+export function cached<K, V>(m: any, k: K, cb: (k: K) => V) {
+	let res = m.get(k)
+	if (res === undefined) {
+		res = cb(k)
+		m.set(k, res)
+	}
+	return res
+}
