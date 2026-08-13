@@ -1,6 +1,7 @@
 import type { AtomInstance } from './atomInstance'
 import {
 	cached,
+	cached2,
 	fromInit,
 	isFunction,
 	isReset,
@@ -25,6 +26,14 @@ type Row<V> = {
 
 type Lookup<V> = Row<V>[]
 
+function createLookup<Value>(): Lookup<Value> {
+	return []
+}
+
+function createHash<Hash, Value>() {
+	return new Map<Hash, Value>()
+}
+
 export function primitive<V>(
 	cb: V | ((hash: void, read: Read) => V),
 ): (store: Store) => PrimitiveInstance<V>
@@ -39,13 +48,13 @@ export function primitive<Hash, Value>(
 		if (!isFunction(cb)) {
 			if (hash !== undefined)
 				throw new Error('value primitive atom cannot have an hash')
-			return cached(store, k, () => primitiveInstance(cb))
+			return cached2(store, k, cb, primitiveInstance)
 		}
 		let lookup: Lookup<Value>
-		if (hash === undefined) lookup = cached(store, k, () => [])
+		if (hash === undefined) lookup = cached(store, k, createLookup)
 		else {
-			const m = cached(store, k, () => new Map<Hash, Value>())
-			lookup = cached(m, hash, () => [])
+			const m = cached(store, k, createHash<Hash, Value>)
+			lookup = cached(m, hash, createLookup<Value>)
 		}
 		return dependantInstance(lookup, cb, store, hash)
 	}

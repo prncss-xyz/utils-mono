@@ -40,3 +40,17 @@ export function cached<K, V>(m: any, k: K, cb: (k: K) => V) {
 	}
 	return res
 }
+
+export function cached2<K extends object, A, V>(
+	m: WeakMap<K, V>,
+	k: K,
+  a: A,
+	cb: (a: A) => V,
+) {
+	let res = m.get(k)
+	if (res === undefined) {
+		res = cb(a)
+		m.set(k, res)
+	}
+	return res
+}
