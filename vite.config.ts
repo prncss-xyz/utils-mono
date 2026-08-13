@@ -1,7 +1,10 @@
 import { defineConfig } from 'vite-plus'
 
 import lint, { ignorePatterns } from './oxlint.config'
-import { storybookTestProject } from './packages/react-utils/vite.config'
+import {
+	canRunBrowserTests,
+	storybookTestProject,
+} from './packages/react-utils/vite.config'
 
 export default defineConfig({
 	staged: {
@@ -43,12 +46,23 @@ export default defineConfig({
 		},
 	},
 	test: {
-		projects: [
-			{
-				extends: './packages/react-utils/vite.config.ts',
-				...storybookTestProject,
-			},
-		],
+		projects: canRunBrowserTests
+			? [
+					{
+						extends: './packages/react-utils/vite.config.ts',
+						...storybookTestProject,
+					},
+				]
+			: [
+					{
+						test: {
+							environment: 'node',
+							globals: true,
+							include: ['packages/react-utils/**/*.test.ts'],
+							name: 'unit',
+						},
+					},
+				],
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'json'],

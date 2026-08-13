@@ -5,6 +5,13 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vite-plus'
 
+const systemChromium = '/usr/bin/chromium'
+
+export const canRunBrowserTests =
+	process.platform !== 'linux' ||
+	Boolean(process.report?.getReport().header.glibcVersionRuntime) ||
+	existsSync(systemChromium)
+
 export const storybookTestProject = {
 	root: fileURLToPath(new URL('.', import.meta.url)),
 	plugins: [
@@ -21,8 +28,8 @@ export const storybookTestProject = {
 			instances: [{ browser: 'chromium' as const }],
 			provider: playwright({
 				launchOptions: {
-					executablePath: existsSync('/usr/bin/chromium')
-						? '/usr/bin/chromium'
+					executablePath: existsSync(systemChromium)
+						? systemChromium
 						: undefined,
 				},
 			}),
@@ -38,6 +45,17 @@ export default defineConfig({
 		exports: true,
 	},
 	test: {
-		projects: [{ extends: true, ...storybookTestProject }],
+		projects: canRunBrowserTests
+			? [{ extends: true, ...storybookTestProject }]
+			: [
+					{
+						test: {
+							environment: 'node',
+							globals: true,
+							include: ['**/*.test.ts'],
+							name: 'unit',
+						},
+					},
+				],
 	},
 })

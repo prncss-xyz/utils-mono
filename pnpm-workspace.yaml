@@ -15,7 +15,7 @@ catalog:
   '@rolldown/plugin-babel': ^0.2.3
   '@storybook/addon-a11y': ^10.5.5
   '@storybook/addon-docs': ^10.5.5
-  '@storybook/addon-vitest': ^10.5.5
+  '@storybook/addon-vitest': ^10.5.7
   '@storybook/react-vite': ^10.5.5
   '@types/node': ^26.1.1
   '@types/react': ^19.2.17
@@ -25,7 +25,7 @@ catalog:
   '@vitest/coverage-v8': 4.1.10
   babel-plugin-react-compiler: ^1.0.0
   hono: ^4.12.32
-  knip: ^6.29.0
+  knip: ^6.32.2
   playwright: ^1.62.0
   react: ^19.2.8
   react-dom: ^19.2.8
@@ -33,8 +33,8 @@ catalog:
   sherif: ^1.13.0
   storybook: ^10.5.5
   typescript: ^7.0.2
-  vite: npm:@voidzero-dev/vite-plus-core@^0.2.6
-  vite-plus: ^0.2.6
+  vite: npm:@voidzero-dev/vite-plus-core@^0.2.9
+  vite-plus: ^0.2.9
   vitest: 4.1.10
   waku: 1.0.0-beta.8
 
