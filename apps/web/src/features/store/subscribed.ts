@@ -17,7 +17,7 @@ export abstract class Subscribed<
 	isMounted() {
 		return this.subscribers.size > 0
 	}
-	protected notify() {
+	notify() {
 		this.subscribers.forEach((cb) => cb())
 	}
 }

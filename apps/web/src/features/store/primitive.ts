@@ -1,3 +1,4 @@
+import type { AtomInstance } from './atomInstance'
 import {
 	cached,
 	fromInit,
@@ -7,26 +8,79 @@ import {
 	type SetStateWithReset,
 } from './functions'
 import type { OnMount } from './mount'
-import type { Store } from './store'
-// import type { Atom } from './store'
+import type { Atom, Store } from './store'
 import { Subscribed } from './subscribed'
 
-// type Read = <V, H>(a: Atom<V, H>, h: H) => V
-//
+type Read = <V, H, Args extends any[], R>(a: Atom<V, H, Args, R>, h: H) => V
 
-export function primitive<Hash, V>(cb: V | ((k: Hash) => V)) {
+type Dependency = {
+	instance: AtomInstance<any, any, any>
+	value: any
+}
+
+type Row<V> = {
+	dependencies: Dependency[]
+	instance: PrimitiveInstance<V>
+}
+
+type Lookup<V> = Row<V>[]
+
+export function primitive<V>(
+	cb: V | ((hash: void, read: Read) => V),
+): (store: Store) => PrimitiveInstance<V>
+export function primitive<V>(
+	cb: V | ((hash: string, read: Read) => V),
+): (store: Store, hash: string) => PrimitiveInstance<V>
+export function primitive<Hash, Value>(
+	cb: Value | ((hash: Hash, read: Read) => Value),
+) {
 	const k = {}
-	return (store: Store, hash: Hash): PrimitiveInstance<V> => {
-		if (hash === undefined) {
-			return cached(store, k, () => {
-				if (!isFunction(cb)) return primitiveInstance(cb)
-				return primitiveInstance(cb(hash))
-			})
+	return (store: Store, hash: Hash): PrimitiveInstance<Value> => {
+		if (!isFunction(cb)) {
+			if (hash !== undefined)
+				throw new Error('value primitive atom cannot have an hash')
+			return cached(store, k, () => primitiveInstance(cb))
 		}
-		if (!isFunction(cb)) throw new Error('function expected')
-		const m = cached(store, k, () => new Map<Hash, V>())
-		return cached(m, hash, (h) => primitiveInstance(cb(h)))
+		let lookup: Lookup<Value>
+		if (hash === undefined) lookup = cached(store, k, () => [])
+		else {
+			const m = cached(store, k, () => new Map<Hash, Value>())
+			lookup = cached(m, hash, () => [])
+		}
+		return dependantInstance(lookup, cb, store, hash)
 	}
+}
+
+function dependantInstance<Hash, Value>(
+	lookup: Lookup<Value>,
+	cb: (hash: Hash, read: Read) => Value,
+	store: Store,
+	hash: Hash,
+) {
+	outer: for (const row of lookup) {
+		for (const item of row.dependencies) {
+			if (!Object.is(item.instance.peek(), item.value)) continue outer
+		}
+		return row.instance
+	}
+	const dependencies: Dependency[] = []
+	const read: Read = (a, h) => {
+		const instance = a(store, h)
+		const value = instance.peek()
+		dependencies.push({
+			instance,
+			value,
+		})
+		return value
+	}
+	const instance = primitiveInstance(cb(hash, read))
+	lookup.push({
+		instance,
+		dependencies,
+	})
+	for (const dependancy of dependencies)
+		dependancy.instance.subscribe(instance.notify.bind(instance))
+	return instance
 }
 
 function primitiveInstance<V>(init: V) {

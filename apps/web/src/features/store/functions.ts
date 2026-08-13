@@ -1,24 +1,6 @@
-export function noop() {}
-
-export function id<T>(t: T) {
-	return t
-}
-
-export function forbidden(x: any): never {
-	throw new Error(`unexpected codepath with value: ${x}`)
-}
-
-export function exhaustive(x: never): never {
-	throw new Error(`unexpected value: ${x}`)
-}
-
 export type AnyFunction = (...args: any[]) => any
 export function isFunction(u: unknown): u is AnyFunction {
 	return typeof u === 'function'
-}
-
-export function isPromise(u: unknown): u is Promise<unknown> {
-	return typeof u === 'object' && u !== null && isFunction((u as any).then)
 }
 
 export type Init<T> = T | (() => T)
@@ -43,11 +25,6 @@ export function isReset(value: unknown): value is Reset {
 }
 
 export type SetStateWithReset<T> = SetState<T> | Reset
-export type OnChange<T> = (next: T | Reset, last: T) => void
-
-export function defer(callback: () => void) {
-	void Promise.resolve().then(callback)
-}
 
 export function cached<K extends object, V>(
 	m: WeakMap<K, V>,
