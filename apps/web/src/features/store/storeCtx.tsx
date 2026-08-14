@@ -1,6 +1,6 @@
-import { createContext, type ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 
-import { createStore } from './store'
+import { createStore, type Atom } from './store'
 
 export const StoreCtx = createContext(createStore())
 

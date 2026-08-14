@@ -1,9 +1,33 @@
 import type { AtomInstance } from './atomInstance'
 
-export type Store = WeakMap<object, any>
+export class Store {
+	base
+	override
+	constructor(base: WeakMap<object, any>, override: [object, any][] = []) {
+		this.base = base
+		this.override = override
+	}
+	cached<K extends object, A, V>(key: K, arg: A, create: (arg: A) => V) {
+		let res = this.base.get(key)
+		if (res === undefined) {
+			res = create(arg)
+			this.base.set(key, res)
+		}
+		return res
+	}
+	value<K, V>(key: K) {
+		for (const [k, v] of this.override) {
+			if (Object.is(k, key)) return v as V
+		}
+		throw new Error(`Value ${key} is not displayed in current scope`)
+	}
+	sub(k: object, v: any) {
+		return new Store(this.base, [[k, v], ...this.override])
+	}
+}
 
 export function createStore(): Store {
-	return new WeakMap<object, any>()
+	return new Store(new WeakMap(), [])
 }
 
 export type Atom<V, H, Args extends any[], Result> = (

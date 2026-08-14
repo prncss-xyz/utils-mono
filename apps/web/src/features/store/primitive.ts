@@ -1,7 +1,6 @@
-import type { AtomInstance } from './atomInstance'
+import { noWrite, type AtomInstance } from './atomInstance'
 import {
 	cached,
-	cached2,
 	fromInit,
 	isFunction,
 	isReset,
@@ -48,12 +47,12 @@ export function primitive<Hash, Value>(
 		if (!isFunction(cb)) {
 			if (hash !== undefined)
 				throw new Error('value primitive atom cannot have an hash')
-			return cached2(store, k, cb, primitiveInstance)
+			return store.cached(k, cb, primitiveInstance)
 		}
 		let lookup: Lookup<Value>
-		if (hash === undefined) lookup = cached(store, k, createLookup)
+		if (hash === undefined) lookup = store.cached(k, undefined, createLookup)
 		else {
-			const m = cached(store, k, createHash<Hash, Value>)
+			const m = store.cached(k, undefined, createHash<Hash, Value>)
 			lookup = cached(m, hash, createLookup<Value>)
 		}
 		return dependantInstance(lookup, cb, store, hash)
@@ -90,6 +89,31 @@ function dependantInstance<Hash, Value>(
 	for (const dependancy of dependencies)
 		dependancy.instance.subscribe(instance.notify.bind(instance))
 	return instance
+}
+
+export function scope<V>() {
+	const key = {}
+	return (store: Store, _: void): ValueInstance<V> => {
+		return store.value(key)
+	}
+}
+
+export function valueInstance<V>(init: V) {
+	return new ValueInstance(init)
+}
+
+export class ValueInstance<Value> extends Subscribed<Value, [x: never], void> {
+	private init
+	constructor(init: Value, onMount?: OnMount) {
+		super(onMount)
+		this.init = init
+	}
+	send(x: never) {
+		return noWrite(x)
+	}
+	peek() {
+		return this.init
+	}
 }
 
 function primitiveInstance<V>(init: V) {
