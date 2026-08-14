@@ -32,4 +32,5 @@ export function createStore(): Store {
 
 export type Atom<V, H, Args extends any[], Result> = {
 	instance: (store: Store, h: H) => AtomInstance<V, Args, Result>
+	readonly types?: readonly [V, H, Args, Result]
 }
