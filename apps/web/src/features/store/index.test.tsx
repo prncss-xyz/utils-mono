@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, test } from 'vite-plus/test'
 import { page } from 'vitest/browser'
 
+import { RESET } from './functions'
 import { primitive } from './primitive'
 import { useAtom } from './react'
 import { AtomProvider } from './storeCtx'
@@ -13,13 +14,33 @@ const hashValue = primitive((hash: string) => hash.length)
 
 function SimpleAtom() {
 	const [value, setValue] = useAtom(sampleValue, undefined)
-	return <button onClick={() => setValue((current) => current + 1)}>{value}</button>
+	return (
+		<button onClick={() => setValue((current) => current + 1)}>{value}</button>
+	)
+}
+
+function ResettableAtom() {
+	const [value, setValue] = useAtom(sampleValue, undefined)
+	return (
+		<>
+			<button
+				aria-label='value'
+				onClick={() => setValue((current) => current + 1)}
+			>
+				{value}
+			</button>
+			<button aria-label='reset' onClick={() => setValue(RESET)} />
+		</>
+	)
 }
 
 function AtomFamily({ hash }: { hash: string }) {
 	const [value, setValue] = useAtom(hashValue, hash)
 	return (
-		<button aria-label={hash} onClick={() => setValue((current) => current + 1)}>
+		<button
+			aria-label={hash}
+			onClick={() => setValue((current) => current + 1)}
+		>
 			{value}
 		</button>
 	)
@@ -50,6 +71,16 @@ describe('atoms', () => {
 		await expect.element(button).toHaveTextContent('0')
 		await button.click()
 		await expect.element(button).toHaveTextContent('1')
+	})
+
+	test('resets a primitive atom', async () => {
+		await render(<ResettableAtom />)
+		const value = page.getByRole('button', { name: 'value' })
+
+		await value.click()
+		await expect.element(value).toHaveTextContent('1')
+		await page.getByRole('button', { name: 'reset' }).click()
+		await expect.element(value).toHaveTextContent('0')
 	})
 
 	test('shares state between atoms with the same hash', async () => {

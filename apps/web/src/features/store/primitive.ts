@@ -113,7 +113,7 @@ class PrimitiveInstance<Value> extends Subscribed<
 	send(arg: SetStateWithReset<Value>) {
 		if (isReset(arg)) {
 			if (this.pristine) return
-			this.pristine = false
+			this.pristine = true
 			this.notify()
 			return
 		}
