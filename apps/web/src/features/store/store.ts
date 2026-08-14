@@ -30,7 +30,6 @@ export function createStore(): Store {
 	return new Store(new WeakMap(), [])
 }
 
-export type Atom<V, H, Args extends any[], Result> = (
-	store: Store,
-	h: H,
-) => AtomInstance<V, Args, Result>
+export type Atom<V, H, Args extends any[], Result> = {
+	instance: (store: Store, h: H) => AtomInstance<V, Args, Result>
+}

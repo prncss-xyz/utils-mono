@@ -35,28 +35,31 @@ function createHash<Hash, Value>() {
 
 export function primitive<V>(
 	cb: V | ((hash: void, read: Read) => V),
-): (store: Store) => PrimitiveInstance<V>
+): Atom<V, void, [SetStateWithReset<V>], void>
 export function primitive<V>(
 	cb: V | ((hash: string, read: Read) => V),
-): (store: Store, hash: string) => PrimitiveInstance<V>
+): Atom<V, string, [SetStateWithReset<V>], void>
 export function primitive<Hash, Value>(
 	cb: Value | ((hash: Hash, read: Read) => Value),
 ) {
-	const k = {}
-	return (store: Store, hash: Hash): PrimitiveInstance<Value> => {
-		if (!isFunction(cb)) {
-			if (hash !== undefined)
-				throw new Error('value primitive atom cannot have an hash')
-			return store.cached(k, cb, primitiveInstance)
-		}
-		let lookup: Lookup<Value>
-		if (hash === undefined) lookup = store.cached(k, undefined, createLookup)
-		else {
-			const m = store.cached(k, undefined, createHash<Hash, Value>)
-			lookup = cached(m, hash, createLookup<Value>)
-		}
-		return dependantInstance(lookup, cb, store, hash)
+	const atom = {
+		instance(store: Store, hash: Hash): PrimitiveInstance<Value> {
+			if (!isFunction(cb)) {
+				if (hash !== undefined)
+					throw new Error('value primitive atom cannot have an hash')
+				return store.cached(atom, cb, primitiveInstance)
+			}
+			let lookup: Lookup<Value>
+			if (hash === undefined)
+				lookup = store.cached(atom, undefined, createLookup)
+			else {
+				const m = store.cached(atom, undefined, createHash<Hash, Value>)
+				lookup = cached(m, hash, createLookup<Value>)
+			}
+			return dependantInstance(lookup, cb, store, hash)
+		},
 	}
+	return atom
 }
 
 function dependantInstance<Hash, Value>(
@@ -73,7 +76,7 @@ function dependantInstance<Hash, Value>(
 	}
 	const dependencies: Dependency[] = []
 	const read: Read = (a, h) => {
-		const instance = a(store, h)
+		const instance = a.instance(store, h)
 		const value = instance.peek()
 		dependencies.push({
 			instance,

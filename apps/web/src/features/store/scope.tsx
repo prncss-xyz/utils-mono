@@ -7,10 +7,12 @@ import { StoreCtx } from './storeCtx'
 import { Subscribed } from './subscribed'
 
 export function scope<Value>() {
-	const key = (store: Store, _: void): ValueInstance<Value> => {
-		return store.value(key)
+	const atom = {
+		instance(store: Store, _: void): ScopeInstance<Value> {
+			return store.value(atom)
+		},
 	}
-	return key
+	return atom
 }
 
 type Scope<Value> = ReturnType<typeof scope<Value>>
@@ -26,13 +28,13 @@ export function Scope<Value>({
 }) {
 	const store = useContext(StoreCtx)
 	return (
-		<StoreCtx value={store.sub(scope, new ValueInstance(value))}>
+		<StoreCtx value={store.sub(scope, new ScopeInstance(value))}>
 			{children}
 		</StoreCtx>
 	)
 }
 
-class ValueInstance<Value> extends Subscribed<Value, [x: never], void> {
+class ScopeInstance<Value> extends Subscribed<Value, [x: never], void> {
 	private init
 	constructor(init: Value, onMount?: OnMount) {
 		super(onMount)

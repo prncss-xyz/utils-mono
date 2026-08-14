@@ -8,7 +8,7 @@ export function useAtomValue<V, H, Args extends any[], R>(
 	hash: H,
 ): V {
 	const store = useContext(StoreCtx)
-	const instance = atom(store, hash)
+	const instance = atom.instance(store, hash)
 	const peek = instance.peek.bind(instance)
 	const res = useSyncExternalStore(
 		instance.subscribe.bind(instance),
@@ -23,7 +23,7 @@ export function useSetAtom<V, H, Args extends any[], R>(
 	hash: H,
 ) {
 	const store = useContext(StoreCtx)
-	const instance = atom(store, hash)
+	const instance = atom.instance(store, hash)
 	return instance.send.bind(instance)
 }
 
