@@ -1,4 +1,4 @@
-import { noWrite, type AtomInstance } from './atomInstance'
+import { type AtomInstance } from './atomInstance'
 import {
 	cached,
 	fromInit,
@@ -94,36 +94,11 @@ function dependantInstance<Hash, Value>(
 	return instance
 }
 
-export function scope<V>() {
-	const key = {}
-	return (store: Store, _: void): ValueInstance<V> => {
-		return store.value(key)
-	}
-}
-
-export function valueInstance<V>(init: V) {
-	return new ValueInstance(init)
-}
-
-export class ValueInstance<Value> extends Subscribed<Value, [x: never], void> {
-	private init
-	constructor(init: Value, onMount?: OnMount) {
-		super(onMount)
-		this.init = init
-	}
-	send(x: never) {
-		return noWrite(x)
-	}
-	peek() {
-		return this.init
-	}
-}
-
 function primitiveInstance<V>(init: V) {
 	return new PrimitiveInstance(init)
 }
 
-export class PrimitiveInstance<Value> extends Subscribed<
+class PrimitiveInstance<Value> extends Subscribed<
 	Value,
 	[SetStateWithReset<Value>],
 	void

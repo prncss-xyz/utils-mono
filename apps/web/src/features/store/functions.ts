@@ -8,12 +8,9 @@ export function fromInit<T>(init: Init<T>): T {
 	return isFunction(init) ? init() : init
 }
 
-export type Modify<T> = (last: T) => T
+type Modify<T> = (last: T) => T
 
-export type SetState<T> = T | Modify<T>
-export function setState<T>(next: SetState<T>, last: T): T {
-	return isFunction(next) ? next(last) : next
-}
+type SetState<T> = T | Modify<T>
 
 export const RESET: unique symbol = Symbol(
 	import.meta.env?.MODE !== 'production' ? 'RESET' : '',

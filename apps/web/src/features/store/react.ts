@@ -18,7 +18,7 @@ export function useAtomValue<V, H, Args extends any[], R>(
 	return res
 }
 
-export function useSetAtom<V, H, Args extends any[], R>(
+function useSetAtom<V, H, Args extends any[], R>(
 	atom: Atom<V, H, Args, R>,
 	hash: H,
 ) {

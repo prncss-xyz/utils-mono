@@ -2,6 +2,7 @@
 
 import { Button, Card, HStack, Text, VStack } from '@astryxdesign/core'
 
+import { RESET } from './functions'
 import { primitive } from './primitive'
 import { useAtom, useAtomValue } from './react'
 import { scope } from './scope'
@@ -11,36 +12,39 @@ const sampleValue = primitive(0)
 const hashValue = primitive((hash: string) => hash.length)
 const LabelScope = scope<string>()
 
-export function AtomFamily({ hash }: { hash: string }) {
+function AtomFamily({ hash }: { hash: string }) {
 	const [value, setValue] = useAtom(hashValue, hash)
 	return (
 		<Card>
 			<HStack gap={3}>
-				<Text>{hash}</Text>
-				<Button label={String(value)} onClick={() => setValue((x) => x + 1)} />
+				<Text>
+					{hash}:{value}
+				</Text>
+				<Button label='inc' onClick={() => setValue((x) => x + 1)} />
+				<Button label='reset' onClick={() => setValue(RESET)} />
 			</HStack>
 		</Card>
 	)
 }
 
-export function SimpleAtom() {
+function SimpleAtom() {
 	const [value, setValue] = useAtom(sampleValue, undefined)
 	return (
 		<Card>
 			<HStack gap={3}>
-				<Text>void</Text>
-				<Button label={String(value)} onClick={() => setValue((x) => x + 1)} />
+				<Text>void:{value}</Text>
+				<Button label='inc' onClick={() => setValue((x) => x + 1)} />
 			</HStack>
 		</Card>
 	)
 }
 
-export function ScopedValue() {
+function ScopedValue() {
 	const label = useAtomValue(LabelScope, undefined)
 	return <Text>{label}</Text>
 }
 
-export function ScopeExample() {
+function ScopeExample() {
 	return (
 		<Card>
 			<VStack gap={3}>
