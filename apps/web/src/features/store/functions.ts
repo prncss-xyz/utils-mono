@@ -22,18 +22,3 @@ export function isReset(value: unknown): value is Reset {
 }
 
 export type SetStateWithReset<T> = SetState<T> | Reset
-
-export function cached<K extends object, V>(
-	m: WeakMap<K, V>,
-	k: K,
-	cb: (k: K) => V,
-): V
-export function cached<K, V>(m: Map<K, V>, k: K, cb: (k: K) => V): V
-export function cached<K, V>(m: any, k: K, cb: (k: K) => V) {
-	let res = m.get(k)
-	if (res === undefined) {
-		res = cb(k)
-		m.set(k, res)
-	}
-	return res
-}

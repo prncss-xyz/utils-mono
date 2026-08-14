@@ -1,6 +1,5 @@
 import { type AtomInstance } from './atomInstance'
 import {
-	cached,
 	fromInit,
 	isFunction,
 	isReset,
@@ -18,28 +17,25 @@ type Dependency = {
 	value: any
 }
 
-type Row<V> = {
+type Row<Value, Hash> = {
 	dependencies: Dependency[]
-	instance: PrimitiveInstance<V>
+	instance: PrimitiveInstance<Value>
+	hash: Hash
 }
 
-type Lookup<V> = Row<V>[]
+type Lookup<Value, Hash> = Row<Value, Hash>[]
 
-function createLookup<Value>(): Lookup<Value> {
+function createLookup<Value, Hash>(): Lookup<Value, Hash> {
 	return []
 }
 
-function createHash<Hash, Value>() {
-	return new Map<Hash, Value>()
-}
-
-export function primitive<V>(
-	cb: V | ((hash: void, read: Read) => V),
-): Atom<V, void, [SetStateWithReset<V>], void>
-export function primitive<V>(
-	cb: V | ((hash: string, read: Read) => V),
-): Atom<V, string, [SetStateWithReset<V>], void>
-export function primitive<Hash, Value>(
+export function primitive<Value>(
+	cb: Value | ((hash: void, read: Read) => Value),
+): Atom<Value, void, [SetStateWithReset<Value>], void>
+export function primitive<Value>(
+	cb: Value | ((hash: string, read: Read) => Value),
+): Atom<Value, string, [SetStateWithReset<Value>], void>
+export function primitive<Value, Hash>(
 	cb: Value | ((hash: Hash, read: Read) => Value),
 ) {
 	const atom = {
@@ -49,26 +45,21 @@ export function primitive<Hash, Value>(
 					throw new Error('value primitive atom cannot have an hash')
 				return store.cached(atom, cb, primitiveInstance)
 			}
-			let lookup: Lookup<Value>
-			if (hash === undefined)
-				lookup = store.cached(atom, undefined, createLookup)
-			else {
-				const m = store.cached(atom, undefined, createHash<Hash, Value>)
-				lookup = cached(m, hash, createLookup<Value>)
-			}
-			return dependantInstance(lookup, cb, store, hash)
+			const lookup = store.cached(atom, undefined, createLookup<Value, Hash>)
+			return scopedInstance(lookup, cb, store, hash)
 		},
 	}
 	return atom
 }
 
-function dependantInstance<Hash, Value>(
-	lookup: Lookup<Value>,
+function scopedInstance<Value, Hash>(
+	lookup: Lookup<Value, Hash>,
 	cb: (hash: Hash, read: Read) => Value,
 	store: Store,
 	hash: Hash,
 ) {
 	outer: for (const row of lookup) {
+		if (row.hash !== hash) continue outer
 		for (const item of row.dependencies) {
 			if (!Object.is(item.instance.peek(), item.value)) continue outer
 		}
@@ -88,6 +79,7 @@ function dependantInstance<Hash, Value>(
 	lookup.push({
 		instance,
 		dependencies,
+		hash,
 	})
 	for (const dependancy of dependencies)
 		dependancy.instance.subscribe(instance.notify.bind(instance))
