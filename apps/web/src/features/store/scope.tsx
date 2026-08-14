@@ -7,9 +7,10 @@ import { StoreCtx } from './storeCtx'
 import { Subscribed } from './subscribed'
 
 export function scope<Value>() {
-	return (store: Store, _: void): ValueInstance<Value> => {
-		return store.value(Scope)
+	const key = (store: Store, _: void): ValueInstance<Value> => {
+		return store.value(key)
 	}
+	return key
 }
 
 type Scope<Value> = ReturnType<typeof scope<Value>>

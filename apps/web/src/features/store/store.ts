@@ -3,7 +3,7 @@ import type { AtomInstance } from './atomInstance'
 export class Store {
 	base
 	override
-	constructor(base: WeakMap<object, any>, override: [object, any][] = []) {
+	constructor(base: WeakMap<object, any>, override: [unknown, any][] = []) {
 		this.base = base
 		this.override = override
 	}
@@ -21,8 +21,8 @@ export class Store {
 		}
 		throw new Error(`Value ${key} is not displayed in current scope`)
 	}
-	sub(k: object, v: any) {
-		return new Store(this.base, [[k, v], ...this.override])
+	sub(key: unknown, v: any) {
+		return new Store(this.base, [[key, v], ...this.override])
 	}
 }
 
