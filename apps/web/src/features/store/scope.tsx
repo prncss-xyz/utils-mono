@@ -7,31 +7,18 @@ import { StoreCtx } from './storeCtx'
 import { Subscribed } from './subscribed'
 
 export function scope<Value>() {
-	const atom = {
-		instance(store: Store, _: void): ScopeInstance<Value> {
-			return store.value(atom)
-		},
+	function Scope({ children, value }: { children: ReactNode; value: Value }) {
+		const store = useContext(StoreCtx)
+		return (
+			<StoreCtx value={store.sub(Scope, new ScopeInstance(value))}>
+				{children}
+			</StoreCtx>
+		)
 	}
-	return atom
-}
-
-type Scope<Value> = ReturnType<typeof scope<Value>>
-
-export function Scope<Value>({
-	children,
-	scope,
-	value,
-}: {
-	children: ReactNode
-	scope: Scope<Value>
-	value: Value
-}) {
-	const store = useContext(StoreCtx)
-	return (
-		<StoreCtx value={store.sub(scope, new ScopeInstance(value))}>
-			{children}
-		</StoreCtx>
-	)
+	Scope.instance = (store: Store, _: void): ScopeInstance<Value> => {
+		return store.value(Scope)
+	}
+	return Scope
 }
 
 class ScopeInstance<Value> extends Subscribed<Value, [x: never], void> {

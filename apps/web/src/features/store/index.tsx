@@ -4,12 +4,12 @@ import { Button, Card, HStack, Text, VStack } from '@astryxdesign/core'
 
 import { primitive } from './primitive'
 import { useAtom, useAtomValue } from './react'
-import { scope, Scope } from './scope'
+import { scope } from './scope'
 import { AtomProvider } from './storeCtx'
 
 const sampleValue = primitive(0)
 const hashValue = primitive((hash: string) => hash.length)
-const labelScope = scope<string>()
+const LabelScope = scope<string>()
 
 export function AtomFamily({ hash }: { hash: string }) {
 	const [value, setValue] = useAtom(hashValue, hash)
@@ -36,7 +36,7 @@ export function SimpleAtom() {
 }
 
 export function ScopedValue() {
-	const label = useAtomValue(labelScope, undefined)
+	const label = useAtomValue(LabelScope, undefined)
 	return <Text>{label}</Text>
 }
 
@@ -44,12 +44,12 @@ export function ScopeExample() {
 	return (
 		<Card>
 			<VStack gap={3}>
-				<Scope scope={labelScope} value='outer scope'>
+				<LabelScope value='outer scope'>
 					<ScopedValue />
-					<Scope scope={labelScope} value='nested scope'>
+					<LabelScope value='nested scope'>
 						<ScopedValue />
-					</Scope>
-				</Scope>
+					</LabelScope>
+				</LabelScope>
 			</VStack>
 		</Card>
 	)
