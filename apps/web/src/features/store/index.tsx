@@ -4,12 +4,13 @@ import { Button, Card, HStack, Text, VStack } from '@astryxdesign/core'
 import { id } from '@prncss-xyz/react-utils'
 
 import { RESET } from './functions'
-import { primitive } from './primitive'
+import { derived, primitive } from './primitive'
 import { useAtom, useAtomValue } from './react'
 import { scope } from './scope'
 import { AtomProvider } from './storeCtx'
 
-const sampleValue = primitive(0)
+const sampleValue = primitive(1)
+const doubleValue = derived((read) => read(sampleValue) * 2)
 const hashValue = primitive(id<number>)
 const LabelScope = scope<string>()
 
@@ -30,10 +31,12 @@ function AtomFamily({ index }: { index: number }) {
 
 function SimpleAtom() {
 	const [value, setValue] = useAtom(sampleValue)
+	const double = useAtomValue(doubleValue)
 	return (
 		<Card>
 			<HStack gap={3}>
 				<Text>void:{value}</Text>
+				<Text>void:{double}</Text>
 				<Button label='inc' onClick={() => setValue((x) => x + 1)} />
 			</HStack>
 		</Card>

@@ -8,7 +8,7 @@ import {
 } from './functions'
 import { getHash } from './hash'
 import type { OnMount } from './mount'
-import type { Atom, Read, Store } from './store'
+import { type Atom, type Read, Store } from './store'
 import { Subscribed } from './subscribed'
 
 type Dependency = {
@@ -124,6 +124,75 @@ class PrimitiveInstance<Value> extends Subscribed<
 		if (this.pristine) {
 			this.pristine = false
 			this.value = fromInit(this.init)
+		}
+		return this.value
+	}
+}
+
+export function derived<Value>(
+	getter: (read: Read) => Value,
+): Atom<Value, void, [never], void> {
+	const atom = {
+		instance(store: Store) {
+			return store.cached(
+				atom,
+				getter,
+				() => new DerivedInstance(getter, store),
+			)
+		},
+	}
+	return atom
+}
+
+class DerivedInstance<Value, Args extends any[], Result> extends Subscribed<
+	Value,
+	Args,
+	Result
+> {
+	private getter
+	private dirty = true
+	private value: Value = undefined as any
+	private store: Store
+	private instancesToUnsubscribe = new Map<
+		AtomInstance<any, any[], any>,
+		() => void
+	>()
+	constructor(getter: (read: Read) => Value, store: Store, onMount?: OnMount) {
+		super(onMount)
+		this.store = store
+		this.getter = getter
+	}
+	send(..._args: Args): Result {
+		throw new Error('not implemented')
+	}
+	peek() {
+		if (this.dirty) {
+			this.dirty = false
+			const dependancies = new Set<AtomInstance<any, any[], any>>()
+			const read = <V, K, Args extends any[], R>(
+				a: Atom<V, K, Args, R>,
+				k: K,
+			) => {
+				const instance = a.instance(this.store, k)
+				const value = instance.peek()
+				dependancies.add(instance)
+				return value
+			}
+			this.value = this.getter(read as Read)
+			for (const [store, unsubscribe] of this.instancesToUnsubscribe)
+				if (!dependancies.has(store)) {
+					unsubscribe()
+					this.instancesToUnsubscribe.delete(store)
+				}
+			for (const store of dependancies)
+				if (!this.instancesToUnsubscribe.has(store))
+					this.instancesToUnsubscribe.set(
+						store,
+						store.subscribe(() => {
+							this.dirty = true
+							this.notify()
+						}),
+					)
 		}
 		return this.value
 	}
