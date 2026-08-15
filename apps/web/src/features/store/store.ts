@@ -34,3 +34,14 @@ export type Atom<V, H, Args extends any[], Result> = {
 	instance: (store: Store, h: H) => AtomInstance<V, Args, Result>
 	readonly types?: readonly [V, H, Args, Result]
 }
+
+export type KeyArg<K> = undefined extends K
+	? [k?: K]
+	: null extends K
+		? [k?: K]
+		: [k: K]
+
+export type Read = <V, K, Args extends any[], R>(
+	a: Atom<V, K, Args, R>,
+	...k: KeyArg<K>
+) => V

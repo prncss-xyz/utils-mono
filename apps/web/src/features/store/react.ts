@@ -1,14 +1,14 @@
 import { useContext, useSyncExternalStore } from 'react'
 
-import type { Atom } from './store'
+import type { Atom, KeyArg } from './store'
 import { StoreCtx } from './storeCtx'
 
-export function useAtomValue<V, H, Args extends any[], R>(
-	atom: Atom<V, H, Args, R>,
-	hash: H,
+export function useAtomValue<V, K, Args extends any[], R>(
+	atom: Atom<V, K, Args, R>,
+	...key: KeyArg<K>
 ): V {
 	const store = useContext(StoreCtx)
-	const instance = atom.instance(store, hash)
+	const instance = atom.instance(store, key[0] as K)
 	const peek = instance.peek.bind(instance)
 	const res = useSyncExternalStore(
 		instance.subscribe.bind(instance),
@@ -18,18 +18,18 @@ export function useAtomValue<V, H, Args extends any[], R>(
 	return res
 }
 
-function useSetAtom<V, H, Args extends any[], R>(
-	atom: Atom<V, H, Args, R>,
-	hash: H,
+function useSetAtom<V, K, Args extends any[], R>(
+	atom: Atom<V, K, Args, R>,
+	...key: KeyArg<K>
 ) {
 	const store = useContext(StoreCtx)
-	const instance = atom.instance(store, hash)
+	const instance = atom.instance(store, key[0] as K)
 	return instance.send.bind(instance)
 }
 
-export function useAtom<V, H, Args extends any[], R>(
-	atom: Atom<V, H, Args, R>,
-	hash: H,
+export function useAtom<V, K, Args extends any[], R>(
+	atom: Atom<V, K, Args, R>,
+	...key: KeyArg<K>
 ) {
-	return [useAtomValue(atom, hash), useSetAtom(atom, hash)] as const
+	return [useAtomValue(atom, ...key), useSetAtom(atom, ...key)] as const
 }

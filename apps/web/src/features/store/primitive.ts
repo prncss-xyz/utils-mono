@@ -8,12 +8,8 @@ import {
 } from './functions'
 import { getHash } from './hash'
 import type { OnMount } from './mount'
-import type { Atom, Store } from './store'
+import type { Atom, Read, Store } from './store'
 import { Subscribed } from './subscribed'
-
-type Read = <V, H, Args extends any[], R>(a: Atom<V, H, Args, R>, h: H) => V
-
-export type Hashable = NonNullable<unknown>
 
 type Dependency = {
 	instance: AtomInstance<any, any, any>
@@ -35,8 +31,8 @@ function createLookup<Value>(): Lookup<Value> {
 export function primitive<Value>(
 	cb: Value | ((hash: void, read: Read) => Value),
 ): Atom<Value, void, [SetStateWithReset<Value>], void>
-export function primitive<Value, Key extends Hashable>(
-	cb: Value | ((key: Key, read: Read) => Value),
+export function primitive<Value, Key>(
+	cb: (key: NonNullable<Key>, read: Read) => Value,
 ): Atom<Value, Key, [SetStateWithReset<Value>], void>
 export function primitive<Value, Key>(
 	cb: Value | ((key: Key, read: Read) => Value),
@@ -70,8 +66,8 @@ function scopedInstance<Value, Key>(
 		return row.instance
 	}
 	const dependencies: Dependency[] = []
-	const read: Read = (a, h) => {
-		const instance = a.instance(store, h)
+	const read = <V, K, Args extends any[], R>(a: Atom<V, K, Args, R>, k: K) => {
+		const instance = a.instance(store, k)
 		const value = instance.peek()
 		dependencies.push({
 			instance,
@@ -79,7 +75,7 @@ function scopedInstance<Value, Key>(
 		})
 		return value
 	}
-	const instance = primitiveInstance(cb(key, read))
+	const instance = primitiveInstance(cb(key, read as Read))
 	lookup.push({
 		instance,
 		dependencies,

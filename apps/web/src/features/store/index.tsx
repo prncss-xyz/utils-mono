@@ -29,7 +29,7 @@ function AtomFamily({ index }: { index: number }) {
 }
 
 function SimpleAtom() {
-	const [value, setValue] = useAtom(sampleValue, undefined)
+	const [value, setValue] = useAtom(sampleValue)
 	return (
 		<Card>
 			<HStack gap={3}>
@@ -41,7 +41,7 @@ function SimpleAtom() {
 }
 
 function ScopedValue() {
-	const label = useAtomValue(LabelScope, undefined)
+	const label = useAtomValue(LabelScope)
 	return <Text>{label}</Text>
 }
 
