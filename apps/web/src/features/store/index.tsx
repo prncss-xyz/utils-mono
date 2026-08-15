@@ -1,6 +1,7 @@
 'use client'
 
 import { Button, Card, HStack, Text, VStack } from '@astryxdesign/core'
+import { id } from '@prncss-xyz/react-utils'
 
 import { RESET } from './functions'
 import { primitive } from './primitive'
@@ -9,16 +10,16 @@ import { scope } from './scope'
 import { AtomProvider } from './storeCtx'
 
 const sampleValue = primitive(0)
-const hashValue = primitive((hash: string) => hash.length)
+const hashValue = primitive(id<number>)
 const LabelScope = scope<string>()
 
-function AtomFamily({ hash }: { hash: string }) {
-	const [value, setValue] = useAtom(hashValue, hash)
+function AtomFamily({ index }: { index: number }) {
+	const [value, setValue] = useAtom(hashValue, index)
 	return (
 		<Card>
 			<HStack gap={3}>
 				<Text>
-					{hash}:{value}
+					{index}:{value}
 				</Text>
 				<Button label='inc' onClick={() => setValue((x) => x + 1)} />
 				<Button label='reset' onClick={() => setValue(RESET)} />
@@ -65,10 +66,9 @@ export function Demo() {
 			<VStack gap={5}>
 				<SimpleAtom />
 				<ScopeExample />
-				<AtomFamily hash='caca' />
-				<AtomFamily hash='caca' />
-				<AtomFamily hash='pipi' />
-				<AtomFamily hash='crotte' />
+				<AtomFamily index={4} />
+				<AtomFamily index={4} />
+				<AtomFamily index={3} />
 			</VStack>
 		</AtomProvider>
 	)

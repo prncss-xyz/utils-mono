@@ -6,58 +6,62 @@ import {
 	type Init,
 	type SetStateWithReset,
 } from './functions'
+import { getHash } from './hash'
 import type { OnMount } from './mount'
 import type { Atom, Store } from './store'
 import { Subscribed } from './subscribed'
 
 type Read = <V, H, Args extends any[], R>(a: Atom<V, H, Args, R>, h: H) => V
 
+export type Hashable = NonNullable<unknown>
+
 type Dependency = {
 	instance: AtomInstance<any, any, any>
 	value: any
 }
 
-type Row<Value, Hash> = {
+type Row<Value> = {
 	dependencies: Dependency[]
 	instance: PrimitiveInstance<Value>
-	hash: Hash
+	hash: string
 }
 
-type Lookup<Value, Hash> = Row<Value, Hash>[]
+type Lookup<Value> = Row<Value>[]
 
-function createLookup<Value, Hash>(): Lookup<Value, Hash> {
+function createLookup<Value>(): Lookup<Value> {
 	return []
 }
 
 export function primitive<Value>(
 	cb: Value | ((hash: void, read: Read) => Value),
 ): Atom<Value, void, [SetStateWithReset<Value>], void>
-export function primitive<Value>(
-	cb: Value | ((hash: string, read: Read) => Value),
-): Atom<Value, string, [SetStateWithReset<Value>], void>
-export function primitive<Value, Hash>(
-	cb: Value | ((hash: Hash, read: Read) => Value),
+export function primitive<Value, Key extends Hashable>(
+	cb: Value | ((key: Key, read: Read) => Value),
+): Atom<Value, Key, [SetStateWithReset<Value>], void>
+export function primitive<Value, Key>(
+	cb: Value | ((key: Key, read: Read) => Value),
 ) {
 	const atom = {
-		instance(store: Store, hash: Hash): PrimitiveInstance<Value> {
+		instance(store: Store, key: Key): PrimitiveInstance<Value> {
 			if (!isFunction(cb)) {
-				if (hash !== undefined)
+				if (key !== undefined)
 					throw new Error('value primitive atom cannot have an hash')
 				return store.cached(atom, cb, primitiveInstance)
 			}
-			const lookup = store.cached(atom, undefined, createLookup<Value, Hash>)
-			return scopedInstance(lookup, cb, store, hash)
+			const lookup = store.cached(atom, undefined, createLookup<Value>)
+			return scopedInstance(lookup, cb, store, key)
 		},
 	}
 	return atom
 }
 
-function scopedInstance<Value, Hash>(
-	lookup: Lookup<Value, Hash>,
-	cb: (hash: Hash, read: Read) => Value,
+function scopedInstance<Value, Key>(
+	lookup: Lookup<Value>,
+	cb: (key: Key, read: Read) => Value,
 	store: Store,
-	hash: Hash,
+	key: Key,
 ) {
+	const hash = getHash(key)
 	outer: for (const row of lookup) {
 		if (row.hash !== hash) continue outer
 		for (const item of row.dependencies) {
@@ -75,7 +79,7 @@ function scopedInstance<Value, Hash>(
 		})
 		return value
 	}
-	const instance = primitiveInstance(cb(hash, read))
+	const instance = primitiveInstance(cb(key, read))
 	lookup.push({
 		instance,
 		dependencies,
