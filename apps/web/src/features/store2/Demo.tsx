@@ -13,7 +13,7 @@ function Simple() {
 		<HStack gap={3}>
 			{value}
 			<Button label='3' onClick={() => setValue(3)} />
-			<Button label='inc' onClick={() => setValue((x: number) => x + 1)} />
+			<Button label='inc' onClick={() => setValue((x) => x + 1)} />
 			<Button label='reset' onClick={() => setValue(RESET)} />
 		</HStack>
 	)

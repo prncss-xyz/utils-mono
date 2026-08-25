@@ -1,16 +1,10 @@
 // oxlint-disable no-console
-import {
-	isFunction,
-	isReset,
-	type SetStateWithReset,
-} from '../store/functions'
+import { isFunction, isReset, type SetStateWithReset } from '../store/functions'
 import { sortedPush } from './utils'
 
 type Scope = [AtomSymbol<any, any>, any][]
 
 let count = 0
-
-// types: primitive, derived, family, effect
 
 type Instance<T> = {
 	index: number
@@ -31,9 +25,10 @@ type CoreSymbol = {
 	index: number
 }
 
-type PrimitiveSymbol<S> = CoreSymbol & {
+type PrimitiveSymbol<S, E> = CoreSymbol & {
 	type: 'primitive'
 	getter: Getter<S> | S
+	readonly event?: E
 }
 
 type DerivedSymbol<S, E> = CoreSymbol & {
@@ -42,20 +37,22 @@ type DerivedSymbol<S, E> = CoreSymbol & {
 	setter: Setter<E>
 }
 
-export type AtomSymbol<S, E> = PrimitiveSymbol<S> | DerivedSymbol<S, E>
+export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
 
 type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
 type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
 type Getter<T> = (read: Read) => T
 type Setter<E> = (read: Read, write: Write, e: E) => void
 
-// type DerivedSymbol<T, E> = Symbol<T, E> & { type: 'derived' }
-
-// const rootValue: PrimitiveSymbol<never, never> = 0 as never
+// TODO: write tests covering the use cases explored by Demo, but don't write integration tests with react, instead test the store object directly
+// TODO: notify only once in case of diamond
+// TODO: override
+// TODO: effect
+// TODO: family
 
 export function primitive<V>(
 	getter: V | Getter<V>,
-): PrimitiveSymbol<V> & AtomSymbol<V, SetStateWithReset<V>> {
+): PrimitiveSymbol<V, SetStateWithReset<V>> {
 	return {
 		type: 'primitive' as const,
 		getter,
@@ -117,6 +114,7 @@ export class Store {
 		} as Instance<R>
 		const read = <T, E>(s: AtomSymbol<T, E>) => {
 			const source = this.getInstance(s)
+			// TODO: this needs to be sorted
 			if (symbol.type === 'primitive') scope.push([symbol, source.value])
 			else {
 				sortedPush(res.deps, source)
@@ -136,7 +134,6 @@ export class Store {
 	private notify<S>(instance: Instance<S>) {
 		instance.subscriptions.forEach(call)
 		for (const sub of instance.subs) {
-			// TODO: skip primitive
 			sub.dirty = true
 			this.notify(sub)
 		}
@@ -156,7 +153,7 @@ export class Store {
 		const instance = this.getInstance(symbol)
 		if (instance.dirty) {
 			const { getter } = instance
-			// TODO: register reads
+			// TODO: register reads, update deps and subs
 			instance.value = isFunction(getter)
 				? getter(this.peek.bind(this))
 				: getter
