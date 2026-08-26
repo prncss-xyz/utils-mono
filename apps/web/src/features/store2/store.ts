@@ -76,6 +76,8 @@ function call(cb: () => void) {
 export class Store {
   private contents
   private subscriptions
+  private primitiveSendQueue: (() => Instance<any>)[] = []
+  private primitiveSendScheduled = false
   constructor(opts: {
     contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
     subscriptions: WeakMap<AtomSymbol<any, any>, Set<() => void>>
@@ -147,13 +149,35 @@ export class Store {
       this.notify(sub)
     }
   }
+  private enqueuePrimitiveSend(mutation: () => Instance<any>) {
+    this.primitiveSendQueue.push(mutation)
+    if (this.primitiveSendScheduled) return
+    this.primitiveSendScheduled = true
+    queueMicrotask(() => this.flushPrimitiveSends())
+  }
+  private flushPrimitiveSends() {
+    const mutations = this.primitiveSendQueue
+    this.primitiveSendQueue = []
+    this.primitiveSendScheduled = false
+    const affected: Instance<any>[] = []
+    const affectedSet = new Set<Instance<any>>()
+    for (const mutation of mutations) {
+      const instance = mutation()
+      if (affectedSet.has(instance)) continue
+      affectedSet.add(instance)
+      affected.push(instance)
+    }
+    for (const instance of affected) this.notify(instance)
+  }
   send<S, E>(symbol: AtomSymbol<S, E>, e: E): void {
     if (symbol.type === 'primitive') {
-      const instance = this.getInstance(symbol)
-      const res = isFunction(e) ? e(instance.value) : e
-      if (isReset(res)) this.removeInstance(instance)
-      else instance.value = res
-      this.notify(instance)
+      this.enqueuePrimitiveSend(() => {
+        const instance = this.getInstance(symbol)
+        const res = isFunction(e) ? e(instance.value) : e
+        if (isReset(res)) this.removeInstance(instance)
+        else instance.value = res
+        return instance
+      })
       return
     }
     symbol.setter(this.peek.bind(this), this.send.bind(this), e)
