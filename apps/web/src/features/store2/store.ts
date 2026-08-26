@@ -15,7 +15,6 @@ type Instance<T> = {
   scope: Scope
   deps: Instance<any>[]
   subs: Instance<any>[]
-  subscriptions: Set<() => void>
 }
 
 // TODO: will eventually be a tree
@@ -44,7 +43,6 @@ type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
 type Getter<T> = (read: Read) => T
 type Setter<E> = (read: Read, write: Write, e: E) => void
 
-// TODO: notify only once in case of diamond
 // TODO: override
 // TODO: effect
 // TODO: family
@@ -77,12 +75,18 @@ function call(cb: () => void) {
 
 export class Store {
   private contents
-  constructor(opts: { contents: WeakMap<AtomSymbol<any, any>, Lattice<any>> }) {
+  private subscriptions
+  constructor(opts: {
+    contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
+    subscriptions: WeakMap<AtomSymbol<any, any>, Set<() => void>>
+  }) {
     this.contents = opts.contents
+    this.subscriptions = opts.subscriptions
   }
   static init() {
     return new Store({
       contents: new WeakMap<AtomSymbol<any, any>, Lattice<any>>(),
+      subscriptions: new WeakMap<AtomSymbol<any, any>, Set<() => void>>(),
     })
   }
   private findInstance<R, S>(symbol: AtomSymbol<R, S>) {
@@ -125,7 +129,6 @@ export class Store {
     }
     const getter = symbol.getter
     res.value = isFunction(getter) ? getter(read) : getter
-    res.subscriptions = new Set()
     const content = this.contents.get(symbol)
     if (content) content.push(res)
     else this.contents.set(symbol, [res])
@@ -138,7 +141,7 @@ export class Store {
     for (const dep of instance.deps) sortedRemove(dep.subs, instance)
   }
   private notify<S>(instance: Instance<S>) {
-    instance.subscriptions.forEach(call)
+    this.subscriptions.get(instance.symbol)?.forEach(call)
     for (const sub of [...instance.subs]) {
       this.removeInstance(sub)
       this.notify(sub)
@@ -159,8 +162,9 @@ export class Store {
     return this.getInstance(symbol).value
   }
   subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
-    const instance = this.getInstance(symbol)
-    instance.subscriptions.add(notify)
-    return () => instance.subscriptions.delete(notify)
+    const subscriptions = this.subscriptions.get(symbol) ?? new Set()
+    subscriptions.add(notify)
+    this.subscriptions.set(symbol, subscriptions)
+    return () => subscriptions.delete(notify)
   }
 }
