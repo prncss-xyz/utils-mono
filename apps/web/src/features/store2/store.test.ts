@@ -31,7 +31,7 @@ describe('Store', () => {
 		const doubleSubscriber = vi.fn()
 
 		store.subscribe(count, countSubscriber)
-		store.subscribe(double, doubleSubscriber)
+		const unsubscribeDouble = store.subscribe(double, doubleSubscriber)
 
 		expect(store.peek(double)).toBe(0)
 
@@ -41,5 +41,13 @@ describe('Store', () => {
 		expect(store.peek(double)).toBe(6)
 		expect(countSubscriber).toHaveBeenCalledOnce()
 		expect(doubleSubscriber).toHaveBeenCalledOnce()
+
+		store.send(double, 3)
+
+		expect(store.peek(count)).toBe(6)
+		expect(store.peek(double)).toBe(12)
+		expect(countSubscriber).toHaveBeenCalledTimes(2)
+		expect(doubleSubscriber).toHaveBeenCalledTimes(2)
+		unsubscribeDouble()
 	})
 })
