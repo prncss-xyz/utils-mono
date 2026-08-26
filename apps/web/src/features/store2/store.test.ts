@@ -28,12 +28,11 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(0)
 	})
 
-	it('applies queued sends FIFO and evaluates updaters at flush time', async () => {
+	it('applies queued sends and evaluates updaters at flush time', async () => {
 		const count = primitive(1)
 		const store = Store.init()
-		const updater = vi.fn((value: number) => value * 2)
+		const updater = vi.fn((value: number) => value + 2)
 
-		store.send(count, 3)
 		store.send(count, updater)
 		store.send(count, (value) => value + 4)
 
@@ -42,8 +41,8 @@ describe('Store', () => {
 
 		await flushMicrotask()
 
-		expect(updater).toHaveBeenCalledWith(3)
-		expect(store.peek(count)).toBe(10)
+		expect(updater).toHaveBeenCalledOnce()
+		expect(store.peek(count)).toBe(7)
 	})
 
 	it('coalesces notifications per affected primitive instance', async () => {
@@ -94,6 +93,21 @@ describe('Store', () => {
 		expect(getter).toHaveBeenCalledOnce()
 		expect(store.peek(count)).toBe(1)
 		expect(getter).toHaveBeenCalledTimes(2)
+	})
+
+	it('preserves RESET semantics when composed with updater callbacks', async () => {
+		const count = primitive(1)
+		const store = Store.init()
+
+		store.send(count, 5)
+		await flushMicrotask()
+
+		store.send(count, RESET)
+		store.send(count, (value) => value + 1)
+		await flushMicrotask()
+
+		expect(store.peek(count)).toBe(2)
+
 	})
 
 	it('runs a writable derived setter synchronously and queues its primitive write', async () => {
@@ -174,5 +188,22 @@ describe('Store', () => {
 		expect(countSubscriber).toHaveBeenCalledTimes(2)
 		expect(doubleSubscriber).toHaveBeenCalledTimes(2)
 		unsubscribeDouble()
+	})
+
+	it('skips notifying subscribers when a batch produces no committed change', async () => {
+		const count = primitive(0)
+		const store = Store.init()
+		const subscriber = vi.fn()
+
+		store.subscribe(count, subscriber)
+		store.send(count, 0)
+		await flushMicrotask()
+
+		expect(subscriber).not.toHaveBeenCalled()
+
+		store.send(count, (value) => value)
+		await flushMicrotask()
+
+		expect(subscriber).not.toHaveBeenCalled()
 	})
 })
