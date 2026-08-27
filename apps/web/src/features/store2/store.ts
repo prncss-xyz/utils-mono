@@ -1,4 +1,6 @@
 // oxlint-disable no-console
+import { noop } from '@prncss-xyz/react-utils'
+
 import { isFunction, isReset, type SetStateWithReset } from '../store/functions'
 import { addScope, sortedPush, sortedRemove } from './utils'
 
@@ -6,10 +8,15 @@ type Scope = [AtomSymbol<any, any>, any][]
 
 let count = 0
 
+function exhaustive(n: never): never {
+	throw new Error(`unexpected value ${n}`)
+}
+
 type Instance<T> = {
 	index: number
 	symbol: AtomSymbol<T, any>
 	getter: Getter<T> | T
+	doer: Doer<any> | undefined
 	type: 'primitive' | 'derived'
 	value: T
 	scope: Scope
@@ -40,16 +47,28 @@ type DerivedSymbol<S, E> = CoreSymbol & {
 	setter: Setter<E>
 }
 
-export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
+type EffectSymbol<S> = CoreSymbol & {
+	type: 'effect'
+	getter: Getter<S>
+	tracker: Getter<any>
+	doer: Doer<any>
+}
+
+export type AtomSymbol<S, E> =
+	| PrimitiveSymbol<S, E>
+	| DerivedSymbol<S, E>
+	| EffectSymbol<S>
 
 type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
 type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
 type Getter<T> = (read: Read) => T
 type Setter<E> = (read: Read, write: Write, e: E) => void
+type Doer<S> = (s: S) => void
 
 // TODO: override
 // TODO: effect
 // TODO: family
+// TODO: external
 
 export function primitive<V>(
 	getter: V | Getter<V>,
@@ -69,6 +88,19 @@ export function derived<V, E>(
 		type: 'derived' as const,
 		getter,
 		setter,
+		index: count++,
+	}
+}
+
+export function effect<S>(
+	tracker: Getter<S>,
+	doer: Doer<S>,
+): AtomSymbol<void, never> {
+	return {
+		type: 'effect' as const,
+		getter: noop,
+		tracker,
+		doer,
 		index: count++,
 	}
 }
@@ -118,6 +150,7 @@ export class Store {
 			symbol,
 			type: symbol.type,
 			getter: symbol.getter,
+			doer: symbol.type === 'effect' ? symbol.doer : undefined,
 			scope,
 			deps,
 			subs,
@@ -155,27 +188,37 @@ export class Store {
 		}
 	}
 	send<S, E>(symbol: AtomSymbol<S, E>, value: E): void {
-		if (symbol.type === 'primitive') {
-			if (!this.nextPrimitiveValues) {
-				queueMicrotask(this.flush.bind(this))
-				this.nextPrimitiveValues = new Map()
-			}
-			if (isFunction(value)) {
-				const res = this.nextPrimitiveValues.get(symbol)
-				if (res?.type === 'callbacks') {
-					res.value.push(value)
+		switch (symbol.type) {
+			case 'primitive': {
+				if (!this.nextPrimitiveValues) {
+					queueMicrotask(this.flush.bind(this))
+					this.nextPrimitiveValues = new Map()
+				}
+				if (isFunction(value)) {
+					const res = this.nextPrimitiveValues.get(symbol)
+					if (res?.type === 'callbacks') {
+						res.value.push(value)
+						return
+					}
+					this.nextPrimitiveValues.set(symbol, {
+						type: 'callbacks',
+						value: [value],
+					})
 					return
 				}
-				this.nextPrimitiveValues.set(symbol, {
-					type: 'callbacks',
-					value: [value],
-				})
+				this.nextPrimitiveValues.set(symbol, { type: 'value', value })
 				return
 			}
-			this.nextPrimitiveValues.set(symbol, { type: 'value', value })
-			return
+			case 'derived': {
+				symbol.setter(this.peek.bind(this), this.send.bind(this), value)
+				return
+			}
+			case 'effect': {
+				return
+			}
+			default:
+				return exhaustive(symbol)
 		}
-		symbol.setter(this.peek.bind(this), this.send.bind(this), value)
 	}
 	flush() {
 		for (const [symbol, sendValue] of this.nextPrimitiveValues!) {
