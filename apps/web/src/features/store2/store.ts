@@ -1,8 +1,18 @@
-// oxlint-disable no-console
 import { noop } from '@prncss-xyz/react-utils'
 
-import { isFunction, isReset, type SetStateWithReset } from '../store/functions'
+import {
+	isFunction,
+	isReset,
+	RESET,
+	type SetStateWithReset,
+} from '../store/functions'
 import { addScope, sortedPush, sortedRemove } from './utils'
+
+const LAST: unique symbol = Symbol(
+	import.meta.env?.MODE !== 'production' ? 'RESET' : '',
+)
+
+type Last = typeof LAST
 
 type Scope = [AtomSymbol<any, any>, any][]
 
@@ -31,9 +41,7 @@ type CoreSymbol = {
 	index: number
 }
 
-type PrimitiveSendAction =
-	| { type: 'value'; value: any }
-	| { type: 'callbacks'; value: ((value: any) => any)[] }
+type PrimitiveSendAction = { value: any; callbacks: ((value: any) => any)[] }
 
 type PrimitiveSymbol<S, E> = CoreSymbol & {
 	type: 'primitive'
@@ -63,7 +71,7 @@ type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
 type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
 type Getter<T> = (read: Read) => T
 type Setter<E> = (read: Read, write: Write, e: E) => void
-type Doer<S> = (s: S) => void
+type Doer<S> = (next: S | undefined, last: S | undefined) => void
 
 // TODO: override
 // TODO: effect
@@ -194,19 +202,20 @@ export class Store {
 					queueMicrotask(this.flush.bind(this))
 					this.nextPrimitiveValues = new Map()
 				}
+				let res: PrimitiveSendAction
 				if (isFunction(value)) {
-					const res = this.nextPrimitiveValues.get(symbol)
-					if (res?.type === 'callbacks') {
-						res.value.push(value)
-						return
+					res = this.nextPrimitiveValues.get(symbol) ?? {
+						value: LAST,
+						callbacks: [],
 					}
-					this.nextPrimitiveValues.set(symbol, {
-						type: 'callbacks',
-						value: [value],
-					})
-					return
+					res.callbacks.push(value)
+				} else {
+					res = {
+						value,
+						callbacks: [],
+					}
 				}
-				this.nextPrimitiveValues.set(symbol, { type: 'value', value })
+				this.nextPrimitiveValues.set(symbol, res)
 				return
 			}
 			case 'derived': {
@@ -221,8 +230,10 @@ export class Store {
 		}
 	}
 	flush() {
-		for (const [symbol, sendValue] of this.nextPrimitiveValues!) {
-			if (isReset(sendValue.value)) {
+		const nextPrimitiveValues = this.nextPrimitiveValues!
+		this.nextPrimitiveValues = undefined
+		for (const [symbol, sendValue] of nextPrimitiveValues) {
+			if (isReset(sendValue.value) && sendValue.callbacks.length === 0) {
 				const instance = this.findInstance(symbol)
 				if (instance) {
 					this.removeInstance(instance)
@@ -231,17 +242,19 @@ export class Store {
 				continue
 			}
 			const instance = this.getInstance(symbol)
-			let next: any
-			if (sendValue.type === 'callbacks') {
-				next = instance.value
-				for (const cb of sendValue.value) next = cb(next)
-			} else next = sendValue.value
+			let next = isReset(sendValue.value)
+				? isFunction(instance.getter)
+					? instance.getter(this.peek.bind(this))
+					: instance.getter
+				: sendValue.value === LAST
+					? instance.value
+					: sendValue.value
+			for (const cb of sendValue.callbacks) next = cb(next)
 			if (!Object.is(next, instance.value)) {
 				instance.value = next
 				this.notify(instance)
 			}
 		}
-		this.nextPrimitiveValues = undefined
 	}
 	peek<S, E>(symbol: AtomSymbol<S, E>) {
 		return this.getInstance(symbol).value
