@@ -3,10 +3,6 @@ import { noop } from '@prncss-xyz/react-utils'
 import { isFunction, isReset, type SetStateWithReset } from '../store/functions'
 import { addScope, sortedPush, sortedRemove } from './utils'
 
-const LAST: unique symbol = Symbol(
-  import.meta.env?.MODE !== 'production' ? 'RESET' : '',
-)
-
 type Scope = [AtomSymbol<any, any>, any][]
 
 let count = 0
@@ -33,8 +29,6 @@ type Lattice<T> = Instance<T>[]
 type CoreSymbol = {
   index: number
 }
-
-type PrimitiveSendAction = { value: any; callbacks: ((value: any) => any)[] }
 
 type PrimitiveSymbol<S, E> = CoreSymbol & {
   type: 'primitive'
@@ -113,9 +107,8 @@ function call(cb: () => void) {
 export class Store {
   private contents
   private subscriptions
-  private nextPrimitiveValues:
-    | Map<PrimitiveSymbol<any, any>, PrimitiveSendAction>
-    | undefined = undefined
+  private nextPrimitiveValues: Map<PrimitiveSymbol<any, any>, any> | undefined =
+    undefined
   constructor(opts: {
     contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
     subscriptions: WeakMap<AtomSymbol<any, any>, Set<() => void>>
@@ -190,35 +183,31 @@ export class Store {
       this.notify(sub)
     }
   }
-  send<S, E>(symbol: AtomSymbol<S, E>, value: E): void {
+  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
     switch (symbol.type) {
       case 'primitive': {
         if (!this.nextPrimitiveValues) {
           queueMicrotask(this.flush.bind(this))
           this.nextPrimitiveValues = new Map()
         }
-        let res: PrimitiveSendAction
-        if (isFunction(value)) {
-          res = this.nextPrimitiveValues.get(symbol) ?? {
-            value: LAST,
-            callbacks: [],
-          }
-          res.callbacks.push(value)
+        let res: any
+        if (isFunction(next)) {
+          const last = this.nextPrimitiveValues.has(symbol)
+            ? this.nextPrimitiveValues.get(symbol)
+            : this.peek(symbol)
+          res = next(last)
         } else {
-          res = {
-            value,
-            callbacks: [],
-          }
+          res = next
         }
         this.nextPrimitiveValues.set(symbol, res)
         return
       }
       case 'derived': {
-        symbol.setter(this.peek.bind(this), this.send.bind(this), value)
+        symbol.setter(this.peek.bind(this), this.send.bind(this), next)
         return
       }
       case 'effect': {
-        return
+        throw new Error('You cannot write to an effect')
       }
       default:
         return exhaustive(symbol)
@@ -227,8 +216,8 @@ export class Store {
   flush() {
     const nextPrimitiveValues = this.nextPrimitiveValues!
     this.nextPrimitiveValues = undefined
-    for (const [symbol, sendValue] of nextPrimitiveValues) {
-      if (isReset(sendValue.value) && sendValue.callbacks.length === 0) {
+    for (const [symbol, next] of nextPrimitiveValues) {
+      if (isReset(next)) {
         const instance = this.findInstance(symbol)
         if (instance) {
           this.removeInstance(instance)
@@ -237,14 +226,6 @@ export class Store {
         continue
       }
       const instance = this.getInstance(symbol)
-      let next = isReset(sendValue.value)
-        ? isFunction(instance.getter)
-          ? instance.getter(this.peek.bind(this))
-          : instance.getter
-        : sendValue.value === LAST
-          ? instance.value
-          : sendValue.value
-      for (const cb of sendValue.callbacks) next = cb(next)
       if (!Object.is(next, instance.value)) {
         instance.value = next
         this.notify(instance)
