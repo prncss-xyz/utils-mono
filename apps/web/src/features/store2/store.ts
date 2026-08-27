@@ -3,7 +3,6 @@ import { noop } from '@prncss-xyz/react-utils'
 import {
 	isFunction,
 	isReset,
-	RESET,
 	type SetStateWithReset,
 } from '../store/functions'
 import { addScope, sortedPush, sortedRemove } from './utils'
@@ -11,8 +10,6 @@ import { addScope, sortedPush, sortedRemove } from './utils'
 const LAST: unique symbol = Symbol(
 	import.meta.env?.MODE !== 'production' ? 'RESET' : '',
 )
-
-type Last = typeof LAST
 
 type Scope = [AtomSymbol<any, any>, any][]
 
