@@ -22,6 +22,7 @@ type Instance<T> = {
   scope: Scope
   deps: Instance<any>[]
   subs: Instance<any>[]
+  subscriptions: Set<() => void>
 }
 
 // TODO: will eventually be a tree
@@ -31,7 +32,7 @@ type CoreSymbol = {
   index: number
 }
 
-type PrimitiveSymbol<S, E> = CoreSymbol & {
+export type PrimitiveSymbol<S, E> = CoreSymbol & {
   type: 'primitive'
   getter: Getter<S> | S
   readonly event?: E
@@ -107,20 +108,28 @@ function call(cb: () => void) {
 
 export class Store {
   private contents
-  private subscriptions
+  private override
   private nextPrimitiveValues: Map<PrimitiveSymbol<any, any>, any> | undefined =
     undefined
   constructor(opts: {
     contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
-    subscriptions: WeakMap<AtomSymbol<any, any>, Set<() => void>>
+    override: Map<AtomSymbol<any, any>, AtomSymbol<any, any>>
   }) {
     this.contents = opts.contents
-    this.subscriptions = opts.subscriptions
+    this.override = opts.override
   }
   static init() {
     return new Store({
-      contents: new WeakMap<AtomSymbol<any, any>, Lattice<any>>(),
-      subscriptions: new WeakMap<AtomSymbol<any, any>, Set<() => void>>(),
+      contents: new WeakMap(),
+      override: new Map(),
+    })
+  }
+  substore<S, E>(target: PrimitiveSymbol<S, E>, source: PrimitiveSymbol<S, E>) {
+    const override = new Map([...this.override])
+    override.set(target, source)
+    return new Store({
+      contents: this.contents,
+      override,
     })
   }
   private findInstance<R, S>(symbol: AtomSymbol<R, S>) {
@@ -140,6 +149,7 @@ export class Store {
     const scope: Scope = []
     const deps: Instance<any>[] = []
     const subs: Instance<any>[] = []
+    const subscriptions = new Set<() => void>()
     const res = {
       index: symbol.index,
       symbol,
@@ -149,11 +159,18 @@ export class Store {
       scope,
       deps,
       subs,
+      subscriptions,
     } as Instance<R>
     const read = <T, E>(s: AtomSymbol<T, E>) => {
       const source = this.getInstance(s)
-      if (symbol.type === 'primitive') addScope(scope, s, source.value)
-      else {
+      if (symbol.type === 'primitive') {
+        if (this.override.has(symbol)) {
+          const value = this.override.get(symbol)
+          addScope(scope, s, value)
+          throw new Error('not implemented')
+        }
+        addScope(scope, s, source.value)
+      } else {
         sortedPush(res.deps, source)
         sortedPush(source.subs, res)
         for (const [atom, value] of source.scope) {
@@ -177,7 +194,7 @@ export class Store {
     for (const dep of instance.deps) sortedRemove(dep.subs, instance)
   }
   private notify<S>(instance: Instance<S>) {
-    this.subscriptions.get(instance.symbol)?.forEach(call)
+    instance.subscriptions.forEach(call)
     // When instance is one of those dependencies, it removes sub from the same array
     // being iterated.
     for (const sub of [...instance.subs]) {
@@ -229,12 +246,11 @@ export class Store {
     }
   }
   peek<S, E>(symbol: AtomSymbol<S, E>) {
-    return this.getInstance(symbol).value
+    return this.getInstance(this.override.get(symbol) ?? symbol).value
   }
   subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
-    const subscriptions = this.subscriptions.get(symbol) ?? new Set()
-    subscriptions.add(notify)
-    this.subscriptions.set(symbol, subscriptions)
-    return () => subscriptions.delete(notify)
+    const instance = this.getInstance(symbol)
+    instance.subscriptions.add(notify)
+    return () => instance.subscriptions.delete(notify)
   }
 }
