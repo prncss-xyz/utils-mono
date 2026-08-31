@@ -1,39 +1,9 @@
 'use client'
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react'
+import { createContext, useContext, useSyncExternalStore } from 'react'
 
-import type { SetStateWithReset } from '../store/functions'
-import {
-  primitive,
-  Store,
-  type AtomSymbol,
-  type PrimitiveSymbol,
-} from './store'
+import { Store, type AtomSymbol } from './store'
 
-export const StoreCtx = createContext(Store.init())
-
-export function Override<S>({
-  target,
-  value,
-  children,
-}: {
-  target: PrimitiveSymbol<S, SetStateWithReset<S>>
-  value: S
-  children: ReactNode
-}) {
-  const [source] = useState(() => primitive(value))
-  const setValue = useSetAtom(source)
-  useEffect(() => setValue(value), [value, setValue])
-  const baseStore = useContext(StoreCtx)
-  const [nextStore] = useState(baseStore.substore(target, source))
-  return <StoreCtx value={nextStore}> {children} </StoreCtx>
-}
+export const StoreCtx = createContext(new Store())
 
 export function useAtomValue<V>(atom: AtomSymbol<V, any>): V {
   const store = useContext(StoreCtx)
