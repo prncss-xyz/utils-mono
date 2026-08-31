@@ -2,10 +2,15 @@
 import { Button, HStack, VStack } from '@astryxdesign/core'
 
 import { RESET } from '../store/functions'
-import { useAtom } from './react'
-import { derived, primitive } from './store'
+import { useAtom, useAtomValue } from './react'
+import { derived, effect, primitive } from './store'
 
 const simple = primitive(0)
+const logSimple = effect(
+  (get) => get(simple),
+  // oxlint-disable-next-line no-console
+  (next, last) => console.log(next, last),
+)
 
 function Simple() {
   const [value, setValue] = useAtom(simple)
@@ -35,6 +40,7 @@ function Double() {
 }
 
 export function Demo() {
+  useAtomValue(logSimple)
   return (
     <VStack gap={5}>
       <Simple />
