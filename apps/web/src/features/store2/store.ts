@@ -8,53 +8,53 @@ type Scope = [AtomSymbol<any, any>, any][]
 let count = 0
 
 function exhaustive(n: never): never {
-  throw new Error(`unexpected value ${n}`)
+	throw new Error(`unexpected value ${n}`)
 }
 
 type Instance<T> = {
-  index: number
-  symbol: AtomSymbol<T, any>
-  getter: Getter<T> | T
-  doer: Doer<any> | undefined
-  type: 'primitive' | 'derived'
-  init: T
-  value: T
-  scope: Scope
-  deps: Instance<any>[]
-  subs: Instance<any>[]
-  subscriptions: Set<() => void>
+	index: number
+	symbol: AtomSymbol<T, any>
+	getter: Getter<T> | T
+	doer: Doer<any> | undefined
+	type: 'primitive' | 'derived'
+	init: T
+	value: T
+	scope: Scope
+	deps: Instance<any>[]
+	subs: Instance<any>[]
+	subscriptions: Set<() => void>
 }
 
 // TODO: will eventually be a tree
 type Lattice<T> = Instance<T>[]
 
 type CoreSymbol = {
-  index: number
+	index: number
 }
 
 export type PrimitiveSymbol<S, E> = CoreSymbol & {
-  type: 'primitive'
-  getter: Getter<S> | S
-  readonly event?: E
+	type: 'primitive'
+	getter: Getter<S> | S
+	readonly event?: E
 }
 
 type DerivedSymbol<S, E> = CoreSymbol & {
-  type: 'derived'
-  getter: Getter<S>
-  setter: Setter<E>
+	type: 'derived'
+	getter: Getter<S>
+	setter: Setter<E>
 }
 
 type EffectSymbol<S> = CoreSymbol & {
-  type: 'effect'
-  getter: Getter<S>
-  tracker: Getter<any>
-  doer: Doer<any>
+	type: 'effect'
+	getter: Getter<S>
+	tracker: Getter<any>
+	doer: Doer<any>
 }
 
 export type AtomSymbol<S, E> =
-  | PrimitiveSymbol<S, E>
-  | DerivedSymbol<S, E>
-  | EffectSymbol<S>
+	| PrimitiveSymbol<S, E>
+	| DerivedSymbol<S, E>
+	| EffectSymbol<S>
 
 type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
 type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
@@ -68,189 +68,196 @@ type Doer<S> = (next: S | undefined, last: S | undefined) => void
 // TODO: external
 
 export function primitive<V>(
-  getter: V | Getter<V>,
+	getter: V | Getter<V>,
 ): PrimitiveSymbol<V, SetStateWithReset<V>> {
-  return {
-    type: 'primitive' as const,
-    getter,
-    index: count++,
-  }
+	return {
+		type: 'primitive' as const,
+		getter,
+		index: count++,
+	}
 }
 
 export function derived<V, E>(
-  getter: Getter<V>,
-  setter: Setter<E>,
+	getter: Getter<V>,
+	setter: Setter<E>,
 ): DerivedSymbol<V, E> {
-  return {
-    type: 'derived' as const,
-    getter,
-    setter,
-    index: count++,
-  }
+	return {
+		type: 'derived' as const,
+		getter,
+		setter,
+		index: count++,
+	}
 }
 
 export function effect<S>(
-  tracker: Getter<S>,
-  doer: Doer<S>,
+	tracker: Getter<S>,
+	doer: Doer<S>,
 ): AtomSymbol<void, never> {
-  return {
-    type: 'effect' as const,
-    getter: noop,
-    tracker,
-    doer,
-    index: count++,
-  }
+	return {
+		type: 'effect' as const,
+		getter: noop,
+		tracker,
+		doer,
+		index: count++,
+	}
 }
 
 function call(cb: () => void) {
-  cb()
+	cb()
 }
 
 export class Store {
-  private contents
-  private override
-  private nextPrimitiveValues: Map<PrimitiveSymbol<any, any>, any> | undefined =
-    undefined
-  constructor(opts: {
-    contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
-    override: Map<AtomSymbol<any, any>, AtomSymbol<any, any>>
-  }) {
-    this.contents = opts.contents
-    this.override = opts.override
-  }
-  static init() {
-    return new Store({
-      contents: new WeakMap(),
-      override: new Map(),
-    })
-  }
-  substore<S, E>(target: PrimitiveSymbol<S, E>, source: PrimitiveSymbol<S, E>) {
-    const override = new Map([...this.override])
-    override.set(target, source)
-    return new Store({
-      contents: this.contents,
-      override,
-    })
-  }
-  private findInstance<R, S>(symbol: AtomSymbol<R, S>) {
-    const content = this.contents.get(symbol)
-    if (!content) return
-    outer: for (const row of content) {
-      for (const [k, v] of row.scope) {
-        if (!this.findInstance(k)) continue outer
-        if (!Object.is(this.findInstance(k)?.value, v)) continue outer
-      }
-      return row as Instance<R>
-    }
-  }
-  getInstance<R, S>(symbol: AtomSymbol<R, S>): Instance<R> {
-    const instance = this.findInstance(symbol)
-    if (instance) return instance
-    const scope: Scope = []
-    const deps: Instance<any>[] = []
-    const subs: Instance<any>[] = []
-    const subscriptions = new Set<() => void>()
-    const res = {
-      index: symbol.index,
-      symbol,
-      type: symbol.type,
-      getter: symbol.getter,
-      doer: symbol.type === 'effect' ? symbol.doer : undefined,
-      scope,
-      deps,
-      subs,
-      subscriptions,
-    } as Instance<R>
-    const read = <T, E>(s: AtomSymbol<T, E>) => {
-      const source = this.getInstance(s)
-      if (symbol.type === 'primitive') {
-        if (this.override.has(symbol)) {
-          const value = this.override.get(symbol)
-          addScope(scope, s, value)
-          throw new Error('not implemented')
-        }
-        addScope(scope, s, source.value)
-      } else {
-        sortedPush(res.deps, source)
-        sortedPush(source.subs, res)
-        for (const [atom, value] of source.scope) {
-          addScope(scope, atom, value)
-        }
-      }
-      return source.value
-    }
-    const getter = symbol.getter
-    res.value = isFunction(getter) ? getter(read) : getter
-    res.init = res.value
-    const content = this.contents.get(symbol)
-    if (content) content.push(res)
-    else this.contents.set(symbol, [res])
-    return res
-  }
-  private removeInstance(instance: Instance<any>) {
-    const content = this.contents.get(instance.symbol)
-    const index = content?.indexOf(instance) ?? -1
-    if (index !== -1) content?.splice(index, 1)
-    for (const dep of instance.deps) sortedRemove(dep.subs, instance)
-  }
-  private notify<S>(instance: Instance<S>) {
-    instance.subscriptions.forEach(call)
-    // When instance is one of those dependencies, it removes sub from the same array
-    // being iterated.
-    for (const sub of [...instance.subs]) {
-      this.removeInstance(sub)
-      this.notify(sub)
-    }
-  }
-  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
-    switch (symbol.type) {
-      case 'primitive': {
-        if (!this.nextPrimitiveValues) {
-          queueMicrotask(this.flush.bind(this))
-          this.nextPrimitiveValues = new Map()
-        }
-        let res: any
-        if (isFunction(next)) {
-          const last = this.nextPrimitiveValues.has(symbol)
-            ? this.nextPrimitiveValues.get(symbol)
-            : this.peek(symbol)
-          res = next(last)
-        } else {
-          res = next
-        }
-        this.nextPrimitiveValues.set(symbol, res)
-        return
-      }
-      case 'derived': {
-        symbol.setter(this.peek.bind(this), this.send.bind(this), next)
-        return
-      }
-      case 'effect': {
-        throw new Error('You cannot write to an effect')
-      }
-      default:
-        return exhaustive(symbol)
-    }
-  }
-  flush() {
-    const nextPrimitiveValues = this.nextPrimitiveValues!
-    this.nextPrimitiveValues = undefined
-    // oxlint-disable-next-line prefer-const
-    for (let [symbol, next] of nextPrimitiveValues) {
-      const instance = this.getInstance(symbol)
-      if (isReset(next)) next = instance.init
-      if (!Object.is(next, instance.value)) {
-        instance.value = next
-        this.notify(instance)
-      }
-    }
-  }
-  peek<S, E>(symbol: AtomSymbol<S, E>) {
-    return this.getInstance(this.override.get(symbol) ?? symbol).value
-  }
-  subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
-    const instance = this.getInstance(symbol)
-    instance.subscriptions.add(notify)
-    return () => instance.subscriptions.delete(notify)
-  }
+	private contents
+	private override
+	private rev
+	private nextPrimitiveValues: Map<PrimitiveSymbol<any, any>, any> | undefined =
+		undefined
+	constructor(opts: {
+		contents: WeakMap<AtomSymbol<any, any>, Lattice<any>>
+		override: Map<AtomSymbol<any, any>, AtomSymbol<any, any>>
+		rev: Map<AtomSymbol<any, any>, AtomSymbol<any, any>>
+	}) {
+		this.contents = opts.contents
+		this.override = opts.override
+		this.rev = opts.rev
+	}
+	static init() {
+		return new Store({
+			contents: new WeakMap(),
+			override: new Map(),
+			rev: new Map(),
+		})
+	}
+	substore<S, E>(target: PrimitiveSymbol<S, E>, source: PrimitiveSymbol<S, E>) {
+		const override = new Map([...this.override])
+		override.set(target, source)
+		const rev = new Map([...this.rev])
+		rev.set(source, target)
+		return new Store({
+			contents: this.contents,
+			override,
+			rev,
+		})
+	}
+	private findInstance<R, S>(symbol: AtomSymbol<R, S>) {
+		const content = this.contents.get(symbol)
+		if (!content) return
+		outer: for (const row of content) {
+			for (const [k, v] of row.scope) {
+				if (!this.findInstance(k)) continue outer
+				if (!Object.is(this.findInstance(k)?.value, v)) continue outer
+			}
+			return row as Instance<R>
+		}
+	}
+	getInstance<R, S>(symbol: AtomSymbol<R, S>): Instance<R> {
+		const instance = this.findInstance(symbol)
+		if (instance) return instance
+		const scope: Scope = []
+		const deps: Instance<any>[] = []
+		const subs: Instance<any>[] = []
+		const subscriptions = new Set<() => void>()
+		const res = {
+			index: symbol.index,
+			symbol,
+			type: symbol.type,
+			getter: symbol.getter,
+			doer: symbol.type === 'effect' ? symbol.doer : undefined,
+			scope,
+			deps,
+			subs,
+			subscriptions,
+		} as Instance<R>
+		const read = <T, E>(s: AtomSymbol<T, E>) => {
+			const source = this.getInstance(s)
+			if (symbol.type === 'primitive') {
+				if (this.override.has(symbol)) {
+					const value = this.override.get(symbol)
+					addScope(scope, s, value)
+					throw new Error('not implemented')
+				}
+				addScope(scope, s, source.value)
+			} else {
+				sortedPush(res.deps, source)
+				sortedPush(source.subs, res)
+				for (const [atom, value] of source.scope) {
+					addScope(scope, atom, value)
+				}
+			}
+			return source.value
+		}
+		const getter = symbol.getter
+		res.value = isFunction(getter) ? getter(read) : getter
+		res.init = res.value
+		const content = this.contents.get(symbol)
+		if (content) content.push(res)
+		else this.contents.set(symbol, [res])
+		return res
+	}
+	private removeInstance(instance: Instance<any>) {
+		const content = this.contents.get(instance.symbol)
+		const index = content?.indexOf(instance) ?? -1
+		if (index !== -1) content?.splice(index, 1)
+		for (const dep of instance.deps) sortedRemove(dep.subs, instance)
+	}
+	private notify<S>(instance: Instance<S>) {
+		instance.subscriptions.forEach(call)
+		// When instance is one of those dependencies, it removes sub from the same array
+		// being iterated.
+		for (const sub of [...instance.subs]) {
+			this.removeInstance(sub)
+			this.notify(sub)
+		}
+	}
+	send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
+		switch (symbol.type) {
+			case 'primitive': {
+				if (!this.nextPrimitiveValues) {
+					queueMicrotask(this.flush.bind(this))
+					this.nextPrimitiveValues = new Map()
+				}
+				let res: any
+				if (isFunction(next)) {
+					const last = this.nextPrimitiveValues.has(symbol)
+						? this.nextPrimitiveValues.get(symbol)
+						: this.peek(symbol)
+					res = next(last)
+				} else {
+					res = next
+				}
+				this.nextPrimitiveValues.set(symbol, res)
+				return
+			}
+			case 'derived': {
+				symbol.setter(this.peek.bind(this), this.send.bind(this), next)
+				return
+			}
+			case 'effect': {
+				throw new Error('You cannot write to an effect')
+			}
+			default:
+				return exhaustive(symbol)
+		}
+	}
+	flush() {
+		const nextPrimitiveValues = this.nextPrimitiveValues!
+		this.nextPrimitiveValues = undefined
+		// oxlint-disable-next-line prefer-const
+		for (let [symbol, next] of nextPrimitiveValues) {
+			const instance = this.getInstance(symbol)
+			if (isReset(next)) next = instance.init
+			if (!Object.is(next, instance.value)) {
+				instance.value = next
+				this.notify(instance)
+			}
+		}
+	}
+	peek<S, E>(symbol: AtomSymbol<S, E>) {
+		return this.getInstance(this.override.get(symbol) ?? symbol).value
+	}
+	subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
+		const instance = this.getInstance(symbol)
+		instance.subscriptions.add(notify)
+		return () => instance.subscriptions.delete(notify)
+	}
 }
