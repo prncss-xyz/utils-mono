@@ -21,6 +21,7 @@ function exhaustive(n: never): never {
 type Instance<T> = {
   index: number
   type: AtomSymbol<any, any>['type']
+  symbol: AtomSymbol<any, any>
   dirty: boolean
   value: T
   deps: Instance<any>[]
@@ -124,6 +125,7 @@ export class Store {
     instance = {
       index: symbol.index,
       type: symbol.type,
+      symbol,
       dirty: symbol.type !== 'primitive',
       value:
         symbol.type === 'primitive'
@@ -138,8 +140,12 @@ export class Store {
     return instance
   }
   private notify<S>(instance: Instance<S>) {
-    if (instance.type === 'derived' || instance.type === 'effect')
+    if (instance.type === 'derived') instance.dirty = true
+    if (instance.type === 'effect') {
       instance.dirty = true
+      const { effects } = this.getTasks()
+      effects.add(instance.symbol as EffectSymbol<any>)
+    }
     for (const sub of instance.subs) this.notify(sub)
     instance.subscriptions.forEach(call)
   }
@@ -151,12 +157,19 @@ export class Store {
       sortedRemove(instance.deps, dep)
       sortedRemove(dep.subs, instance)
     }
+    instance.count = 0
     instance.value = symbol.getter(<T, E>(s: AtomSymbol<T, E>) => {
       const dep = this.getInstance(s)
+      instance.count += dep.count + dep.subscriptions.size
       sortedPush(instance.deps, dep)
       sortedPush(dep.subs, instance)
       return this.peek(s)
     })
+    if (
+      instance.type === 'effect' &&
+      instance.count + instance.subscriptions.size === 0
+    )
+      instance.value = undefined as S
   }
   send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
     switch (symbol.type) {
@@ -205,6 +218,25 @@ export class Store {
       }
     }
   }
+  peekInstance<S, E>(symbol: AtomSymbol<S, E>) {
+    const instance = this.getInstance(symbol)
+    if (instance.dirty) {
+      instance.dirty = false
+      switch (symbol.type) {
+        case 'primitive':
+          instance.value = fromInit(symbol.getter)
+          return instance.value
+        case 'derived':
+          this.updateValue(symbol, instance)
+          return instance.value
+        case 'effect':
+          return undefined as S
+        default:
+          return exhaustive(symbol)
+      }
+    }
+    return instance.type === 'effect' ? (undefined as S) : instance.value
+  }
   peek<S, E>(symbol: AtomSymbol<S, E>) {
     const instance = this.getInstance(symbol)
     if (instance.dirty) {
@@ -222,11 +254,17 @@ export class Store {
           return exhaustive(symbol)
       }
     }
-    return symbol.type === 'effect' ? (undefined as S) : instance.value
+    return instance.type === 'effect' ? (undefined as S) : instance.value
   }
   subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
     const instance = this.getInstance(symbol)
+    if (instance.count + instance.subscriptions.size === 0)
+      this.notify(instance)
     instance.subscriptions.add(notify)
-    return () => instance.subscriptions.delete(notify)
+    return () => {
+      instance.subscriptions.delete(notify)
+      if (instance.count + instance.subscriptions.size === 0)
+        this.notify(instance)
+    }
   }
 }
