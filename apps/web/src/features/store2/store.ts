@@ -28,18 +28,18 @@ type Instance<T> = {
   mounted: boolean
 }
 
-type CoreSymbol<S> = {
+type CoreSymbol<S, E> = {
   index: number
-  effect?: Effect<S>
+  effect?: Effect<S, E>
 }
 
-export type PrimitiveSymbol<S, E> = CoreSymbol<S> & {
+export type PrimitiveSymbol<S, E> = CoreSymbol<S, E> & {
   type: 'primitive'
   getter: (() => S) | S
   readonly event?: E
 }
 
-type DerivedSymbol<S, E> = CoreSymbol<S> & {
+type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
   type: 'derived'
   getter: Getter<S>
   setter: Setter<E>
@@ -47,23 +47,24 @@ type DerivedSymbol<S, E> = CoreSymbol<S> & {
 
 export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
 
-type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
-type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
-type Getter<T> = (read: Read) => T
+type Read = <S, E>(symbol: AtomSymbol<S, E>) => S
+type Write = <S, E>(symbol: AtomSymbol<S, E>, e: E) => void
+type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
-type Effect<S> = (
+type Effect<S, E> = (
   next: S | undefined,
   last: S | undefined,
+  send: (event: E) => void,
 ) => void | (() => void)
 
 // TODO: family
 // TODO: minimize symbol-instance handoffs
 // TODO: scope
 
-export function primitive<V>(
-  getter: V | (() => V),
-  effect?: Effect<NoInfer<V>>,
-): PrimitiveSymbol<V, SetStateWithReset<V>> {
+export function primitive<S>(
+  getter: S | (() => S),
+  effect?: Effect<NoInfer<S>, SetStateWithReset<S>>,
+): PrimitiveSymbol<S, SetStateWithReset<S>> {
   return {
     type: 'primitive' as const,
     getter,
@@ -72,11 +73,11 @@ export function primitive<V>(
   }
 }
 
-export function derived<V, E>(
-  getter: Getter<V>,
+export function derived<S, E>(
+  getter: Getter<S>,
   setter: Setter<E>,
-  effect?: Effect<NoInfer<V>>,
-): DerivedSymbol<V, E> {
+  effect?: Effect<NoInfer<S>, E>,
+): DerivedSymbol<S, E> {
   return {
     type: 'derived' as const,
     getter,
@@ -168,21 +169,25 @@ export class Store {
     })
     this.updateMounted(instance)
   }
-  private detachEffect<S>(instance: Instance<S>) {
-    const { effect } = instance.symbol
+  private detachEffect<S, E>(instance: Instance<S>) {
+    const symbol = instance.symbol as AtomSymbol<S, E>
+    const { effect } = symbol
     if (!effect) return
     const last = instance.effectValue
     instance.effectValue = undefined
     instance.effectCleanup?.()
-    instance.effectCleanup = effect(undefined, last) || undefined
+    instance.effectCleanup =
+      effect(undefined, last, (event) => this.send(symbol, event)) || undefined
   }
-  private runEffect<S>(symbol: AtomSymbol<S, any>, instance: Instance<S>) {
+  private runEffect<S, E>(symbol: AtomSymbol<S, E>, instance: Instance<S>) {
     const next = this.peek(symbol)
     if (!instance.mounted) return
     const last = instance.effectValue
     instance.effectValue = next
     instance.effectCleanup?.()
-    instance.effectCleanup = symbol.effect?.(next, last) || undefined
+    instance.effectCleanup =
+      symbol.effect?.(next, last, (event) => this.send(symbol, event)) ||
+      undefined
   }
   send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
     switch (symbol.type) {

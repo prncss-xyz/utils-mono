@@ -218,7 +218,22 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
+	})
+
+	it('defers sends from an effect until a later microtask', async () => {
+		const count = primitive(0, (next, _last, send) => {
+			if (next === 0) send(1)
+		})
+		const store = new Store()
+
+		store.subscribe(count, () => {})
+		await flushMicrotask()
+
+		expect(store.peek(count)).toBe(0)
+		await flushMicrotask()
+
+		expect(store.peek(count)).toBe(1)
 	})
 
 	it('coalesces mounting and dependency changes into one effect run', async () => {
@@ -231,7 +246,7 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
 	})
 
 	it('transitions effects on unmount and delays its cleanup until remount', async () => {
@@ -244,7 +259,7 @@ describe('Store', () => {
 		await flushMicrotask()
 		unsubscribe()
 
-		expect(doer).toHaveBeenLastCalledWith(undefined, 0)
+		expect(doer).toHaveBeenLastCalledWith(undefined, 0, expect.any(Function))
 		expect(cleanup).toHaveBeenCalledOnce()
 
 		store.send(count, 1)
@@ -257,7 +272,7 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(cleanup).toHaveBeenCalledTimes(2)
-		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
 	})
 
 	it('mounts a derived atom when one of its dependencies is mounted', async () => {
@@ -275,10 +290,10 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(2, undefined)
+		expect(doer).toHaveBeenLastCalledWith(2, undefined, expect.any(Function))
 
 		unsubscribe()
-		expect(doer).toHaveBeenLastCalledWith(undefined, 2)
+		expect(doer).toHaveBeenLastCalledWith(undefined, 2, expect.any(Function))
 	})
 
 	it('runs the previous cleanup before rerunning an effect', async () => {

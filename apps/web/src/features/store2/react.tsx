@@ -9,9 +9,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 	return <StoreCtx.Provider value={new Store()}>{children}</StoreCtx.Provider>
 }
 
-export function useAtomValue<V>(
-	atom: AtomSymbol<V, any> | AtomSymbol<V, never>,
-): V {
+export function useAtomValue<V, E>(atom: AtomSymbol<V, E>): V {
 	const store = useContext(StoreCtx)
 	const peek = () => store.peek(atom)
 	const res = useSyncExternalStore(
