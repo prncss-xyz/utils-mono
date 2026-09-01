@@ -3,7 +3,11 @@ import { createContext, useContext, useSyncExternalStore } from 'react'
 
 import { Store, type AtomSymbol } from './store'
 
-export const StoreCtx = createContext(new Store())
+const StoreCtx = createContext(new Store())
+
+export function StoreProvider({ children }: { children: React.ReactNode }) {
+	return <StoreCtx.Provider value={new Store()}>{children}</StoreCtx.Provider>
+}
 
 export function useAtomValue<V>(
 	atom: AtomSymbol<V, any> | AtomSymbol<V, never>,

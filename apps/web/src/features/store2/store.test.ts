@@ -8,7 +8,7 @@ const flushMicrotask = () => Promise.resolve()
 describe('Store', () => {
 	it('defers primitive values, updates, and resets to the next microtask', async () => {
 		const count = primitive(0)
-		const store = Store.init()
+		const store = new Store()
 
 		expect(store.peek(count)).toBe(0)
 
@@ -30,7 +30,7 @@ describe('Store', () => {
 
 	it('applies queued sends and evaluates updaters at flush time', async () => {
 		const count = primitive(1)
-		const store = Store.init()
+		const store = new Store()
 		const updater = vi.fn((value: number) => value + 2)
 
 		store.send(count, updater)
@@ -48,7 +48,7 @@ describe('Store', () => {
 	it('coalesces notifications per affected primitive instance', async () => {
 		const count = primitive(0)
 		const label = primitive('before')
-		const store = Store.init()
+		const store = new Store()
 		const countValues: number[] = []
 		const countSubscriber = vi.fn(() => countValues.push(store.peek(count)))
 		const labelSubscriber = vi.fn()
@@ -73,7 +73,7 @@ describe('Store', () => {
 	it('keeps RESET lazy and preserves its notification behavior', async () => {
 		const getter = vi.fn(() => 1)
 		const count = primitive(getter)
-		const store = Store.init()
+		const store = new Store()
 		const subscriber = vi.fn()
 
 		expect(store.peek(count)).toBe(1)
@@ -97,7 +97,7 @@ describe('Store', () => {
 
 	it('preserves RESET semantics when composed with updater callbacks', async () => {
 		const count = primitive(1)
-		const store = Store.init()
+		const store = new Store()
 
 		store.send(count, 5)
 		await flushMicrotask()
@@ -107,17 +107,19 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(store.peek(count)).toBe(2)
-
 	})
 
 	it('runs a writable derived setter synchronously and queues its primitive write', async () => {
 		const count = primitive(0)
 		const setter = vi.fn(
-			(read: (symbol: typeof count) => number, write: Store['send'], amount: number) =>
-				write(count, read(count) + amount),
+			(
+				read: (symbol: typeof count) => number,
+				write: Store['send'],
+				amount: number,
+			) => write(count, read(count) + amount),
 		)
 		const plus = derived((read) => read(count), setter)
-		const store = Store.init()
+		const store = new Store()
 
 		store.send(plus, 3)
 
@@ -131,7 +133,7 @@ describe('Store', () => {
 
 	it('defers a primitive send from a subscriber to a subsequent microtask', async () => {
 		const count = primitive(0)
-		const store = Store.init()
+		const store = new Store()
 		const subscriber = vi.fn(() => {
 			if (store.peek(count) === 1) store.send(count, 2)
 		})
@@ -156,7 +158,7 @@ describe('Store', () => {
 			(read) => read(count) * 2,
 			(read, write, amount: number) => write(count, read(count) + amount),
 		)
-		const store = Store.init()
+		const store = new Store()
 		const countSubscriber = vi.fn()
 		const doubleSubscriber = vi.fn()
 
@@ -192,7 +194,7 @@ describe('Store', () => {
 
 	it('skips notifying subscribers when a batch produces no committed change', async () => {
 		const count = primitive(0)
-		const store = Store.init()
+		const store = new Store()
 		const subscriber = vi.fn()
 
 		store.subscribe(count, subscriber)
