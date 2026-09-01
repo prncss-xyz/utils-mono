@@ -20,6 +20,7 @@ type Instance<T> = {
   symbol: AtomSymbol<any, any>
   dirty: boolean
   value: T
+  effectCleanup: (() => void) | undefined
   deps: Instance<any>[]
   subs: Instance<any>[]
   subscriptions: Set<() => void>
@@ -57,7 +58,7 @@ type Read = <T, E>(symbol: AtomSymbol<T, E>) => T
 type Write = <T, E>(symbol: AtomSymbol<T, E>, e: E) => void
 type Getter<T> = (read: Read) => T
 type Setter<E> = (read: Read, write: Write, e: E) => void
-type Doer<S> = (next: S | undefined, last: S | undefined) => void
+type Doer<S> = (next: S | undefined, last: S | undefined) => void | (() => void)
 
 // TODO: effect
 // TODO: external
@@ -105,6 +106,7 @@ type Tasks = {
 export class Store {
   private contents = new WeakMap<AtomSymbol<any, any>, Instance<any>>()
   private tasks: Tasks | undefined = undefined
+  private flushingEffects: Set<EffectSymbol<any>> | undefined
   constructor() { }
   private getTasks(): Tasks {
     if (this.tasks) return this.tasks
@@ -120,11 +122,12 @@ export class Store {
     if (instance) return instance
     instance = {
       symbol,
-      dirty: symbol.type !== 'primitive',
+      dirty: symbol.type === 'derived',
       value:
         symbol.type === 'primitive'
           ? fromInit(symbol.getter)
           : (undefined as any),
+      effectCleanup: undefined,
       deps: [],
       subs: [],
       subscriptions: new Set(),
@@ -133,12 +136,18 @@ export class Store {
     this.contents.set(symbol, instance)
     return instance
   }
+  private enqueueEffect(symbol: EffectSymbol<any>) {
+    if (this.flushingEffects) {
+      this.flushingEffects.add(symbol)
+      return
+    }
+    this.getTasks().effects.add(symbol)
+  }
   private notify<S>(instance: Instance<S>) {
     if (instance.symbol.type === 'derived') instance.dirty = true
     if (instance.symbol.type === 'effect') {
-      instance.dirty = true
-      const { effects } = this.getTasks()
-      effects.add(instance.symbol as EffectSymbol<any>)
+      if (instance.subscriptions.size > 0)
+        this.enqueueEffect(instance.symbol as EffectSymbol<any>)
     }
     for (const sub of instance.subs) this.notify(sub)
     instance.subscriptions.forEach(call)
@@ -160,9 +169,7 @@ export class Store {
     symbol: DerivedSymbol<S, E> | EffectSymbol<S>,
     instance: Instance<S>,
   ) {
-    for (const dep of instance.deps) {
-      sortedRemove(dep.subs, instance)
-    }
+    for (const dep of instance.deps) sortedRemove(dep.subs, instance)
     instance.deps = []
     const lastCount = instance.count
     instance.count = 0
@@ -176,8 +183,33 @@ export class Store {
     if (lastCount !== instance.count)
       for (const sub of instance.subs)
         this.mount(sub, instance.count - lastCount)
-    if (instance.symbol.type === 'effect' && instance.count === 0)
-      instance.value = undefined as S
+  }
+  private detachEffect<S>(
+    symbol: EffectSymbol<S>,
+    instance: Instance<any>,
+  ) {
+    for (const dep of instance.deps) sortedRemove(dep.subs, instance)
+    instance.deps = []
+
+    const last = instance.value as S | undefined
+    instance.value = undefined
+    instance.effectCleanup?.()
+    instance.effectCleanup = symbol.doer(undefined, last) || undefined
+  }
+  private runEffect<S>(symbol: EffectSymbol<S>, instance: Instance<any>) {
+    for (const dep of instance.deps) sortedRemove(dep.subs, instance)
+    instance.deps = []
+    const last = instance.value as S | undefined
+    const next = symbol.getter(<T, E>(dependency: AtomSymbol<T, E>) => {
+      const dep = this.getInstance(dependency)
+      sortedPush(instance.deps, dep)
+      sortedPush(dep.subs, instance)
+      return this.peek(dependency)
+    })
+
+    instance.value = next
+    instance.effectCleanup?.()
+    instance.effectCleanup = symbol.doer(next, last) || undefined
   }
   send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
     switch (symbol.type) {
@@ -211,6 +243,7 @@ export class Store {
   private flush() {
     const { primitives, effects } = this.tasks!
     this.tasks = undefined
+    this.flushingEffects = effects
     // oxlint-disable-next-line prefer-const
     for (let [symbol, next] of primitives) {
       const instance = this.getInstance(symbol)
@@ -219,11 +252,10 @@ export class Store {
         this.notify(instance)
       }
     }
+    this.flushingEffects = undefined
     for (const effect of effects) {
       const instance = this.getInstance(effect)
-      const last = instance.value
-      this.updateValue(effect, instance)
-      effect.doer(instance.value, last)
+      if (instance.subscriptions.size > 0) this.runEffect(effect, instance)
     }
   }
   peek<S, E>(symbol: AtomSymbol<S, E>) {
@@ -247,11 +279,21 @@ export class Store {
   }
   subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
     const instance = this.getInstance(symbol)
-    if (instance.subscriptions.size === 0) this.mount(instance, 1)
+    if (instance.subscriptions.size === 0) {
+      if (symbol.type === 'effect') this.enqueueEffect(symbol)
+      else this.mount(instance, 1)
+    }
     instance.subscriptions.add(notify)
     return () => {
       instance.subscriptions.delete(notify)
-      if (instance.subscriptions.size === 0) this.mount(instance, -1)
+      if (instance.subscriptions.size !== 0) return
+      if (symbol.type === 'effect') {
+        this.tasks?.effects.delete(symbol)
+        this.flushingEffects?.delete(symbol)
+        this.detachEffect(symbol, instance)
+      } else {
+        this.mount(instance, -1)
+      }
     }
   }
 }

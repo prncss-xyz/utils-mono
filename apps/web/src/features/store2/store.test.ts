@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESET } from '../store/functions'
-import { derived, primitive, Store } from './store'
+import { derived, effect, primitive, Store } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -207,5 +207,79 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(subscriber).not.toHaveBeenCalled()
+	})
+
+	it('runs an effect without requiring separate dependency subscribers', async () => {
+		const count = primitive(1)
+		const doer = vi.fn()
+		const logger = effect((read) => read(count), doer)
+		const store = new Store()
+
+		store.subscribe(logger, () => {})
+		await flushMicrotask()
+
+		expect(doer).toHaveBeenCalledOnce()
+		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+	})
+
+	it('coalesces mounting and dependency changes into one effect run', async () => {
+		const count = primitive(0)
+		const doer = vi.fn()
+		const logger = effect((read) => read(count), doer)
+		const store = new Store()
+
+		store.subscribe(logger, () => {})
+		store.send(count, 1)
+		await flushMicrotask()
+
+		expect(doer).toHaveBeenCalledOnce()
+		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+	})
+
+	it('transitions effects on unmount and delays its cleanup until remount', async () => {
+		const count = primitive(0)
+		const cleanup = vi.fn()
+		const doer = vi.fn(() => cleanup)
+		const logger = effect((read) => read(count), doer)
+		const store = new Store()
+		const unsubscribe = store.subscribe(logger, () => {})
+
+		await flushMicrotask()
+		unsubscribe()
+
+		expect(doer).toHaveBeenLastCalledWith(undefined, 0)
+		expect(cleanup).toHaveBeenCalledOnce()
+
+		store.send(count, 1)
+		await flushMicrotask()
+
+		expect(doer).toHaveBeenCalledTimes(2)
+		expect(cleanup).toHaveBeenCalledOnce()
+
+		store.subscribe(logger, () => {})
+		await flushMicrotask()
+
+		expect(cleanup).toHaveBeenCalledTimes(2)
+		expect(doer).toHaveBeenLastCalledWith(1, undefined)
+	})
+
+	it('runs the previous cleanup before rerunning an effect', async () => {
+		const count = primitive(0)
+		const events: string[] = []
+		const logger = effect(
+			(read) => read(count),
+			(next) => {
+				events.push(`run:${next}`)
+				return () => events.push(`cleanup:${next}`)
+			},
+		)
+		const store = new Store()
+
+		store.subscribe(logger, () => {})
+		await flushMicrotask()
+		store.send(count, 1)
+		await flushMicrotask()
+
+		expect(events).toEqual(['run:0', 'cleanup:0', 'run:1'])
 	})
 })
