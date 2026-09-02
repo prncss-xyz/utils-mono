@@ -1,3 +1,6 @@
+// TODO: family
+// TODO: scope
+
 import {
   fromInit,
   isFunction,
@@ -57,10 +60,6 @@ type Effect<S, E> = (
   send: (event: E) => void,
 ) => void | (() => void)
 
-// TODO: family
-// TODO: minimize symbol-instance handoffs
-// TODO: scope
-
 export function primitive<S>(
   getter: S | (() => S),
   effect?: Effect<NoInfer<S>, SetStateWithReset<S>>,
@@ -88,14 +87,14 @@ export function derived<S, E>(
 }
 
 type Tasks = {
-  primitives: Map<PrimitiveSymbol<any, any>, any>
-  effects: Set<AtomSymbol<any, any>>
+  primitives: Map<Instance<any>, any>
+  effects: Set<Instance<any>>
 }
 
 export class Store {
   private contents = new WeakMap<AtomSymbol<any, any>, Instance<any>>()
   private tasks: Tasks | undefined = undefined
-  private flushingEffects: Set<AtomSymbol<any, any>> | undefined
+  private flushingEffects: Set<Instance<any>> | undefined
   constructor() { }
   private getTasks(): Tasks {
     if (this.tasks) return this.tasks
@@ -126,17 +125,17 @@ export class Store {
     this.contents.set(symbol, instance)
     return instance
   }
-  private enqueueEffect(symbol: AtomSymbol<any, any>) {
-    if (!symbol.effect) return
+  private enqueueEffect(instance: Instance<any>) {
+    if (!instance.symbol.effect) return
     if (this.flushingEffects) {
-      this.flushingEffects.add(symbol)
+      this.flushingEffects.add(instance)
       return
     }
-    this.getTasks().effects.add(symbol)
+    this.getTasks().effects.add(instance)
   }
   private notify<S>(instance: Instance<S>) {
     if (instance.symbol.type === 'derived') instance.dirty = true
-    if (instance.mounted) this.enqueueEffect(instance.symbol)
+    if (instance.mounted) this.enqueueEffect(instance)
     for (const sub of instance.subs) this.notify(sub)
     instance.subscriptions.forEach(call)
   }
@@ -151,7 +150,7 @@ export class Store {
     const mounted = this.isMounted(instance)
     if (mounted === instance.mounted) return
     instance.mounted = mounted
-    if (mounted) this.enqueueEffect(instance.symbol)
+    if (mounted) this.enqueueEffect(instance)
     else this.unmountEffect(instance)
     for (const sub of instance.subs) this.updateMounted(sub)
   }
@@ -187,7 +186,8 @@ export class Store {
     if (!effect) return
     this.runEffect(symbol, instance, effect, undefined)
   }
-  private transitionEffect<S, E>(symbol: AtomSymbol<S, E>, instance: Instance<S>) {
+  private transitionEffect<S, E>(instance: Instance<S>) {
+    const symbol: AtomSymbol<S, E> = instance.symbol
     const next = this.peek(symbol)
     if (!instance.mounted) return
     if (Object.is(next, instance.effectValue)) return
@@ -197,10 +197,11 @@ export class Store {
     switch (symbol.type) {
       case 'primitive': {
         const { primitives } = this.getTasks()
+        const instance = this.getInstance(symbol)
         let res: any
         if (isFunction(next)) {
-          const last = primitives.has(symbol)
-            ? primitives.get(symbol)
+          const last = primitives.has(instance)
+            ? primitives.get(instance)
             : this.peek(symbol)
           res = next(last)
         } else if (isReset(next)) {
@@ -208,7 +209,7 @@ export class Store {
         } else {
           res = next
         }
-        primitives.set(symbol, res)
+        primitives.set(instance, res)
         return
       }
       case 'derived': {
@@ -224,18 +225,14 @@ export class Store {
     this.tasks = undefined
     this.flushingEffects = effects
     // oxlint-disable-next-line prefer-const
-    for (let [symbol, next] of primitives) {
-      const instance = this.getInstance(symbol)
+    for (let [instance, next] of primitives)
       if (!Object.is(next, instance.value)) {
         instance.value = next
         this.notify(instance)
       }
-    }
     this.flushingEffects = undefined
-    for (const symbol of effects) {
-      const instance = this.getInstance(symbol)
-      if (instance.mounted) this.transitionEffect(symbol, instance)
-    }
+    for (const instance of effects)
+      if (instance.mounted) this.transitionEffect(instance)
   }
   peek<S, E>(symbol: AtomSymbol<S, E>) {
     const instance = this.getInstance(symbol)
