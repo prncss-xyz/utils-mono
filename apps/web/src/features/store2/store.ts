@@ -1,6 +1,3 @@
-// TODO: family
-// TODO: scope
-
 import {
   fromInit,
   isFunction,
@@ -49,6 +46,16 @@ type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
 }
 
 export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
+export type AtomFamily<S, Arg, Rest extends any[], E> = {
+  type: 'family'
+  factory: (arg: Arg) => AtomLike<S, Rest, E>
+}
+export type AtomLike<S, Args extends any[], E> = Args extends [
+  infer Arg,
+  ...infer Rest,
+]
+  ? AtomFamily<S, Arg, Rest, E>
+  : AtomSymbol<S, E>
 
 type Read = <S, E>(symbol: AtomSymbol<S, E>) => S
 type Write = <S, E>(symbol: AtomSymbol<S, E>, e: E) => void
