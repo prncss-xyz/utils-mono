@@ -16,11 +16,11 @@ function exhaustive(n: never): never {
   throw new Error(`unexpected value ${n}`)
 }
 
-type Instance<T> = {
+type Instance<S> = {
   symbol: AtomSymbol<any, any>
   dirty: boolean
-  value: T
-  effectValue: T | undefined
+  value: S
+  effectValue: S | undefined
   effectCleanup: (() => void) | undefined
   deps: Instance<any>[]
   subs: Instance<any>[]
@@ -46,16 +46,11 @@ type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
 }
 
 export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
-export type AtomFamily<S, Arg, Rest extends any[], E> = {
+export type AtomFamily<S, Key, E> = {
   type: 'family'
-  factory: (arg: Arg) => AtomLike<S, Rest, E>
+  factory: (key: Key) => AtomSymbol<S, E>
 }
-export type AtomLike<S, Args extends any[], E> = Args extends [
-  infer Arg,
-  ...infer Rest,
-]
-  ? AtomFamily<S, Arg, Rest, E>
-  : AtomSymbol<S, E>
+export type AtomLike<S, Key, E> = AtomSymbol<S, E> | AtomFamily<S, Key, E>
 
 type Read = <S, E>(symbol: AtomSymbol<S, E>) => S
 type Write = <S, E>(symbol: AtomSymbol<S, E>, e: E) => void
@@ -99,7 +94,7 @@ type Tasks = {
 }
 
 export class Store {
-  private contents = new WeakMap<AtomSymbol<any, any>, Instance<any>>()
+  private contents = new WeakMap<any, any>()
   private tasks: Tasks | undefined = undefined
   private flushingEffects: Set<Instance<any>> | undefined
   constructor() { }
@@ -112,10 +107,37 @@ export class Store {
     queueMicrotask(this.flush.bind(this))
     return this.tasks
   }
-  private getInstance<R, S>(symbol: AtomSymbol<R, S>): Instance<R> {
-    let instance = this.contents.get(symbol)
-    if (instance) return instance
-    instance = {
+  private getInstance<S, Key, E>(
+    symbol: AtomFamily<S, Key, E>,
+    key: Key,
+  ): Instance<S>
+  private getInstance<S, E>(symbol: AtomSymbol<S, E>): Instance<S>
+  private getInstance<S, Key, E>(
+    symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+    key?: Key,
+  ): Instance<S> {
+    if (symbol.type === 'family') {
+      let entry = this.contents.get(symbol)
+      if (entry === undefined) {
+        entry = new Map()
+        this.contents.set(symbol, entry)
+      }
+      let res = this.contents.get(key)
+      if (res === undefined) {
+        res = symbol.factory(key!)
+        entry.set(symbol, res)
+      }
+      return res
+    }
+    let res = this.contents.get(symbol)
+    if (res === undefined) {
+      res = this.createInstance(symbol)
+      this.contents.set(symbol, res)
+    }
+    return res
+  }
+  private createInstance<S, E>(symbol: AtomSymbol<S, E>): Instance<S> {
+    return {
       symbol,
       dirty: symbol.type === 'derived',
       value:
@@ -129,8 +151,6 @@ export class Store {
       subscriptions: new Set(),
       mounted: false,
     }
-    this.contents.set(symbol, instance)
-    return instance
   }
   private enqueueEffect(instance: Instance<any>) {
     if (!instance.symbol.effect) return
@@ -171,7 +191,7 @@ export class Store {
       const dep = this.getInstance(s)
       sortedPush(instance.deps, dep)
       sortedPush(dep.subs, instance)
-      return this.peek(s)
+      return this.peekInstance(s, dep)
     })
     this.updateMounted(instance)
   }
@@ -195,7 +215,7 @@ export class Store {
   }
   private transitionEffect<S, E>(instance: Instance<S>) {
     const symbol: AtomSymbol<S, E> = instance.symbol
-    const next = this.peek(symbol)
+    const next = this.peekInstance(symbol, instance)
     if (!instance.mounted) return
     if (Object.is(next, instance.effectValue)) return
     this.runEffect(symbol, instance, symbol.effect, next)
@@ -209,7 +229,7 @@ export class Store {
         if (isFunction(next)) {
           const last = primitives.has(instance)
             ? primitives.get(instance)
-            : this.peek(symbol)
+            : this.peekInstance(symbol, instance)
           res = next(last)
         } else if (isReset(next)) {
           res = fromInit(symbol.getter)
@@ -241,8 +261,7 @@ export class Store {
     for (const instance of effects)
       if (instance.mounted) this.transitionEffect(instance)
   }
-  peek<S, E>(symbol: AtomSymbol<S, E>) {
-    const instance = this.getInstance(symbol)
+  private peekInstance<S, E>(symbol: AtomSymbol<S, E>, instance: Instance<S>) {
     if (instance.dirty) {
       instance.dirty = false
       switch (symbol.type) {
@@ -257,6 +276,9 @@ export class Store {
       }
     }
     return instance.value
+  }
+  peek<S, E>(symbol: AtomSymbol<S, E>) {
+    return this.peekInstance(symbol, this.getInstance(symbol))
   }
   subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
     const instance = this.getInstance(symbol)

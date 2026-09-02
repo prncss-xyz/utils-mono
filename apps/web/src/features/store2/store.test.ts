@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { RESET } from '../store/functions'
-import { derived, primitive, Store } from './store'
+import { RESET, type SetStateWithReset } from '../store/functions'
+import { derived, primitive, Store, type AtomLike } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -129,6 +129,127 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(store.peek(count)).toBe(3)
+	})
+
+	it('reads a one-argument atom family from a derived getter', () => {
+		const members = new Map<string, ReturnType<typeof primitive<string>>>()
+		const family: AtomLike<string, [string], SetStateWithReset<string>> = {
+			type: 'family',
+			factory: (key) => {
+				const member = members.get(key) ?? primitive(key.toUpperCase())
+				members.set(key, member)
+				return member
+			},
+		}
+		const selected = derived(
+			(read) => read(family, 'first'),
+			(_read, _write, _event: never) => {},
+		)
+		const store = new Store()
+
+		expect(store.peek(selected)).toBe('FIRST')
+	})
+
+	it('reads a multiple-argument atom family in order', () => {
+		const members = new Map<string, ReturnType<typeof primitive<string>>>()
+		const family: AtomLike<
+			string,
+			[string, number],
+			SetStateWithReset<string>
+		> = {
+			type: 'family',
+			factory: (group) => ({
+				type: 'family',
+				factory: (index) => {
+					const key = `${group}:${index}`
+					const member = members.get(key) ?? primitive(key)
+					members.set(key, member)
+					return member
+				},
+			}),
+		}
+		const selected = derived(
+			(read) => read(family, 'group', 2),
+			(_read, _write, _event: never) => {},
+		)
+		const store = new Store()
+
+		expect(store.peek(selected)).toBe('group:2')
+	})
+
+	it('reads and writes atom families from a derived setter', async () => {
+		const source = primitive(3)
+		const target = primitive(0)
+		const sourceFamily: AtomLike<
+			number,
+			[string],
+			SetStateWithReset<number>
+		> = {
+			type: 'family',
+			factory: () => source,
+		}
+		const targetFamily: AtomLike<
+			number,
+			[string],
+			SetStateWithReset<number>
+		> = {
+			type: 'family',
+			factory: () => target,
+		}
+		const selected = derived(
+			(read) => read(target),
+			(read, write, multiplier: number) =>
+				write(
+					targetFamily,
+					'target',
+					read(sourceFamily, 'source') * multiplier,
+				),
+		)
+		const store = new Store()
+
+		store.send(selected, 2)
+		await flushMicrotask()
+
+		expect(store.peek(target)).toBe(6)
+	})
+
+	it('keeps zero-argument derived reads unchanged', () => {
+		const count = primitive(2)
+		const double = derived(
+			(read) => read(count) * 2,
+			(_read, _write, _event: never) => {},
+		)
+		const store = new Store()
+
+		expect(store.peek(double)).toBe(4)
+	})
+
+	it('tracks dependencies on the resolved family member', async () => {
+		const first = primitive(1)
+		const second = primitive(10)
+		const family: AtomLike<number, [string], SetStateWithReset<number>> = {
+			type: 'family',
+			factory: (key) => (key === 'first' ? first : second),
+		}
+		const selected = derived(
+			(read) => read(family, 'first'),
+			(_read, _write, _event: never) => {},
+		)
+		const store = new Store()
+		const subscriber = vi.fn()
+
+		store.subscribe(selected, subscriber)
+		expect(store.peek(selected)).toBe(1)
+
+		store.send(second, 11)
+		await flushMicrotask()
+		expect(subscriber).not.toHaveBeenCalled()
+		expect(store.peek(selected)).toBe(1)
+
+		store.send(first, 2)
+		await flushMicrotask()
+		expect(subscriber).toHaveBeenCalledOnce()
+		expect(store.peek(selected)).toBe(2)
 	})
 
 	it('defers a primitive send from a subscriber to a subsequent microtask', async () => {
