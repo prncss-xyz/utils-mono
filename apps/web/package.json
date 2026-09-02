@@ -30,10 +30,12 @@
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
 		"@vitejs/plugin-react": "catalog:",
+		"@vitest/browser-playwright": "catalog:",
 		"babel-plugin-react-compiler": "catalog:",
 		"react-server-dom-webpack": "catalog:",
 		"typescript": "catalog:",
 		"vite": "catalog:",
-		"vite-plus": "catalog:"
+		"vite-plus": "catalog:",
+		"vitest": "catalog:"
 	}
 }

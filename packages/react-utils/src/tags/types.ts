@@ -9,8 +9,8 @@ export const PAYLOAD = 'payload'
 export type Payload = typeof PAYLOAD
 
 export type Tag<Type extends PropertyKey, Payload> = Prettify<{
-	[PAYLOAD]: Payload
-	[TYPE]: Type
+	payload: Payload
+	type: Type
 }>
 
 export type AnyTag = Tag<any, any>

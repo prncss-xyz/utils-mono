@@ -11,13 +11,19 @@ import type { getConfig as File_Dialog_getConfig } from './pages/dialog';
 import type { getConfig as File_Index_getConfig } from './pages/index';
 // prettier-ignore
 import type { getConfig as File_Multisteps_getConfig } from './pages/multisteps';
+// prettier-ignore
+import type { getConfig as File_Store_getConfig } from './pages/store';
+// prettier-ignore
+import type { getConfig as File_Store2_getConfig } from './pages/store2';
 
 // prettier-ignore
 type Page =
 | ({ path: '/_root' } & GetConfigResponse<typeof File_Root_getConfig>)
 | ({ path: '/dialog' } & GetConfigResponse<typeof File_Dialog_getConfig>)
 | ({ path: '/' } & GetConfigResponse<typeof File_Index_getConfig>)
-| ({ path: '/multisteps' } & GetConfigResponse<typeof File_Multisteps_getConfig>);
+| ({ path: '/multisteps' } & GetConfigResponse<typeof File_Multisteps_getConfig>)
+| ({ path: '/store' } & GetConfigResponse<typeof File_Store_getConfig>)
+| ({ path: '/store2' } & GetConfigResponse<typeof File_Store2_getConfig>);
 
 // prettier-ignore
 declare module 'waku/router' {
