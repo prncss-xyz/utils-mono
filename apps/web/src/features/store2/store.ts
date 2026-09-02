@@ -190,6 +190,7 @@ export class Store {
   private transitionEffect<S, E>(symbol: AtomSymbol<S, E>, instance: Instance<S>) {
     const next = this.peek(symbol)
     if (!instance.mounted) return
+    if (Object.is(next, instance.effectValue)) return
     this.runEffect(symbol, instance, symbol.effect, next)
   }
   send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
