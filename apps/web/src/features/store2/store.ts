@@ -65,6 +65,9 @@ type Write = {
 	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, event: E): void
 	<S, E>(symbol: AtomSymbol<S, E>, event: E): void
 }
+export type HydrateEntry =
+	| readonly [symbol: AtomSymbol<any, any>, event: any]
+	| readonly [symbol: AtomFamily<any, any, any>, key: any, event: any]
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
 type Effect<S, E> = (
@@ -121,7 +124,16 @@ class Store {
 	private contents = new WeakMap<any, any>()
 	private tasks: Tasks | undefined = undefined
 	private flushingEffects: Set<Instance<any>> | undefined
-	constructor() {}
+	private hydrating = true
+	constructor(hydrate: readonly HydrateEntry[] = []) {
+		for (const entry of hydrate) {
+			const [symbol, keyOrEvent, event] = entry
+			if (symbol.type === 'family') this.send(symbol, keyOrEvent, event)
+			else this.send(symbol, keyOrEvent)
+		}
+		if (this.tasks) this.flush()
+		this.hydrating = false
+	}
 	private getTasks(): Tasks {
 		if (this.tasks) return this.tasks
 		this.tasks = {
@@ -129,7 +141,7 @@ class Store {
 			effects: new Set(),
 			unmountedFamilyEntries: new Set(),
 		}
-		queueMicrotask(this.flush.bind(this))
+		if (!this.hydrating) queueMicrotask(this.flush.bind(this))
 		return this.tasks
 	}
 	private getInstance<S, Key, E>(
@@ -239,7 +251,8 @@ class Store {
 		this.runEffect(symbol, instance, symbol.effect, next)
 	}
 	private flush() {
-		const { primitives, effects, unmountedFamilyEntries } = this.tasks!
+		if (!this.tasks) return
+		const { primitives, effects, unmountedFamilyEntries } = this.tasks
 		this.tasks = undefined
 		this.flushingEffects = effects
 		// oxlint-disable-next-line prefer-const
@@ -370,6 +383,6 @@ class Store {
 	}
 }
 
-export function createStore() {
-	return new Store()
+export function createStore(hydrate?: readonly HydrateEntry[]) {
+	return new Store(hydrate)
 }

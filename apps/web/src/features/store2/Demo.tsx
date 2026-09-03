@@ -38,7 +38,7 @@ function Simple() {
 
 const double = derived(
 	(read) => read(simple) * 2,
-	(read, write, e: number) => write(simple, read(simple) + e),
+	(_read, write, e: number) => write(simple, Math.floor(e / 2)),
 )
 
 function Double() {
@@ -46,7 +46,7 @@ function Double() {
 	return (
 		<HStack gap={3}>
 			{value}
-			<Button label='+' onClick={() => setValue(3)} />
+			<Button label='16' onClick={() => setValue(16)} />
 		</HStack>
 	)
 }
@@ -62,7 +62,7 @@ function Demo0() {
 
 export function Demo() {
 	return (
-		<StoreProvider>
+		<StoreProvider hydrate={[[double, 4]]}>
 			<Demo0 />
 		</StoreProvider>
 	)

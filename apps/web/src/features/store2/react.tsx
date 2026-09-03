@@ -1,12 +1,27 @@
 'use client'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 
-import { createStore, type AtomFamily, type AtomSymbol } from './store'
+import {
+	createStore,
+	type AtomFamily,
+	type AtomSymbol,
+	type HydrateEntry,
+} from './store'
 
 const StoreCtx = createContext(createStore())
 
-export function StoreProvider({ children }: { children: React.ReactNode }) {
-	return <StoreCtx.Provider value={createStore()}>{children}</StoreCtx.Provider>
+export function StoreProvider({
+	children,
+	hydrate,
+}: {
+	children: React.ReactNode
+	hydrate?: readonly HydrateEntry[]
+}) {
+	return (
+		<StoreCtx.Provider value={createStore(hydrate)}>
+			{children}
+		</StoreCtx.Provider>
+	)
 }
 
 function useAtomValueInternal<V, Key, E>(
