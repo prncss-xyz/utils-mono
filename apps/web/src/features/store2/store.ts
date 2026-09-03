@@ -29,6 +29,7 @@ type FamilyEntry = {
 type Instance<S> = {
 	symbol: AtomSymbol<any, any>
 	familyEntries: FamilyEntry[]
+	familyRemovalTimeouts: Map<ReturnType<typeof setTimeout>, FamilyEntry>
 	dirty: boolean
 	value: S
 	effectValue: S | undefined
@@ -171,6 +172,7 @@ export class Store {
 		return {
 			symbol,
 			familyEntries: [],
+			familyRemovalTimeouts: new Map(),
 			dirty: symbol.type === 'derived',
 			value:
 				symbol.type === 'primitive'
@@ -209,8 +211,14 @@ export class Store {
 		const mounted = this.isMounted(instance)
 		if (mounted === instance.mounted) return
 		instance.mounted = mounted
-		if (mounted) this.enqueueEffect(instance)
-		else {
+		if (mounted) {
+			for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
+				clearTimeout(timeout)
+				instance.familyEntries.push(familyEntry)
+			}
+			instance.familyRemovalTimeouts.clear()
+			this.enqueueEffect(instance)
+		} else {
 			const symbol = instance.symbol as AtomSymbol<S, unknown>
 			if (symbol.effect)
 				this.runEffect(symbol, instance, symbol.effect, undefined)
@@ -253,9 +261,19 @@ export class Store {
 			if (instance.mounted) this.transitionEffect(instance)
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mounted) continue
-			for (const { entry, hashedKey, ttl } of instance.familyEntries) {
+			for (const familyEntry of instance.familyEntries) {
+				const { entry, hashedKey, ttl } = familyEntry
 				if (ttl === Infinity) continue
-				if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
+				if (ttl === 0) {
+					if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
+					continue
+				}
+				const timeout = setTimeout(() => {
+					instance.familyRemovalTimeouts.delete(timeout)
+					if (!instance.mounted && entry.get(hashedKey) === instance)
+						entry.delete(hashedKey)
+				}, ttl)
+				instance.familyRemovalTimeouts.set(timeout, familyEntry)
 			}
 			instance.familyEntries = []
 		}

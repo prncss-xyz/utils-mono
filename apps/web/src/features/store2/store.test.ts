@@ -443,6 +443,44 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledOnce()
 	})
 
+	it('removes an unmounted atom family member after its positive ttl', async () => {
+		vi.useFakeTimers()
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create, { ttl: 100 })
+		const store = new Store()
+		const unsubscribe = store.subscribe(names, 'first', () => {})
+
+		unsubscribe()
+		await flushMicrotask()
+		vi.advanceTimersByTime(99)
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledOnce()
+
+		vi.advanceTimersByTime(1)
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledTimes(2)
+		vi.useRealTimers()
+	})
+
+	it('cancels positive ttl removal when the member remounts', async () => {
+		vi.useFakeTimers()
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create, { ttl: 100 })
+		const store = new Store()
+		const unsubscribe = store.subscribe(names, 'first', () => {})
+
+		unsubscribe()
+		await flushMicrotask()
+		vi.advanceTimersByTime(50)
+		const unsubscribeAgain = store.subscribe(names, 'first', () => {})
+		vi.advanceTimersByTime(100)
+		store.peek(names, 'first')
+
+		expect(create).toHaveBeenCalledOnce()
+		unsubscribeAgain()
+		vi.useRealTimers()
+	})
+
 	it('runs the previous cleanup before rerunning an effect', async () => {
 		const events: string[] = []
 		const count = primitive(0, (next) => {
