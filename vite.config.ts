@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite-plus'
 
-import lint, { ignorePatterns } from './oxlint.config'
+import fmt from './oxfmt.config'
+import lint from './oxlint.config'
 import {
 	canRunBrowserTests,
 	storybookTestProject,
@@ -10,18 +11,7 @@ export default defineConfig({
 	staged: {
 		'*': 'vp check --fix',
 	},
-	fmt: {
-		arrowParens: 'always',
-		ignorePatterns,
-		jsxSingleQuote: true,
-		printWidth: 80,
-		semi: false,
-		singleQuote: true,
-		sortImports: true,
-		sortPackageJson: true,
-		trailingComma: 'all',
-		useTabs: true,
-	},
+	fmt,
 	lint,
 	run: {
 		tasks: {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { RESET, type SetStateWithReset } from '../store/functions'
-import { derived, family, primitive, Store, type AtomLike } from './store'
+import { RESET } from '../store/functions'
+import { derived, family, primitive, Store } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -133,16 +133,13 @@ describe('Store', () => {
 
 	it('reads a one-argument atom family from a derived getter', () => {
 		const members = new Map<string, ReturnType<typeof primitive<string>>>()
-		const family: AtomLike<string, string, SetStateWithReset<string>> = {
-			type: 'family',
-			create: (key) => {
-				const member = members.get(key) ?? primitive(key.toUpperCase())
-				members.set(key, member)
-				return member
-			},
-		}
+		const names = family((key: string) => {
+			const member = members.get(key) ?? primitive(key.toUpperCase())
+			members.set(key, member)
+			return member
+		})
 		const selected = derived(
-			(read) => read(family, 'first'),
+			(read) => read(names, 'first'),
 			(_read, _write, _event: never) => {},
 		)
 		const store = new Store()
@@ -153,22 +150,8 @@ describe('Store', () => {
 	it('reads and writes atom families from a derived setter', async () => {
 		const source = primitive(3)
 		const target = primitive(0)
-		const sourceFamily: AtomLike<
-			number,
-			string,
-			SetStateWithReset<number>
-		> = {
-			type: 'family',
-			create: () => source,
-		}
-		const targetFamily: AtomLike<
-			number,
-			string,
-			SetStateWithReset<number>
-		> = {
-			type: 'family',
-			create: () => target,
-		}
+		const sourceFamily = family((_key: string) => source)
+		const targetFamily = family((_key: string) => target)
 		const selected = derived(
 			(read) => read(target),
 			(read, write, multiplier: number) =>
@@ -200,12 +183,9 @@ describe('Store', () => {
 	it('tracks dependencies on the resolved family member', async () => {
 		const first = primitive(1)
 		const second = primitive(10)
-		const family: AtomLike<number, string, SetStateWithReset<number>> = {
-			type: 'family',
-			create: (key) => (key === 'first' ? first : second),
-		}
+		const numbers = family((key: string) => (key === 'first' ? first : second))
 		const selected = derived(
-			(read) => read(family, 'first'),
+			(read) => read(numbers, 'first'),
 			(_read, _write, _event: never) => {},
 		)
 		const store = new Store()

@@ -1,3 +1,5 @@
+import { id } from '@prncss-xyz/react-utils'
+
 import {
 	fromInit,
 	isFunction,
@@ -55,6 +57,8 @@ export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
 export type AtomFamily<S, Key, E> = {
 	type: 'family'
 	create: (key: Key) => AtomSymbol<S, E>
+	ttl: number
+	hash: (k: Key) => unknown
 }
 export type AtomLike<S, Key, E> = AtomSymbol<S, E> | AtomFamily<S, Key, E>
 
@@ -102,10 +106,13 @@ export function derived<S, E>(
 
 export function family<S, K, E>(
 	create: (key: K) => AtomSymbol<S, E>,
+	opts?: Partial<{ ttl: number; hash: (k: K) => unknown }>,
 ): AtomFamily<S, K, E> {
 	return {
 		type: 'family' as const,
 		create,
+		ttl: opts?.ttl ?? 0,
+		hash: opts?.hash ?? id,
 	}
 }
 
