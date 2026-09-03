@@ -7,9 +7,21 @@ import { defineConfig } from 'vite-plus'
 
 const systemChromium = '/usr/bin/chromium'
 
+const hasRuntimeGlibc = () => {
+	const report = process.report?.getReport()
+	const header = report && 'header' in report ? report.header : undefined
+
+	return Boolean(
+		header &&
+		typeof header === 'object' &&
+		'glibcVersionRuntime' in header &&
+		header.glibcVersionRuntime,
+	)
+}
+
 export const canRunBrowserTests =
 	process.platform !== 'linux' ||
-	Boolean(process.report?.getReport().header.glibcVersionRuntime) ||
+	hasRuntimeGlibc() ||
 	existsSync(systemChromium)
 
 export const storybookTestProject = {
