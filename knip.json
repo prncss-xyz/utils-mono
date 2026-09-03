@@ -2,7 +2,12 @@
 	"$schema": "https://unpkg.com/knip@6/schema.json",
 	"workspaces": {
 		"apps/web": {
-			"entry": ["waku.config.ts!", "src/waku.server.tsx!"],
+			"entry": [
+				"waku.config.ts!",
+				"src/waku.server.tsx!",
+				"src/features/store2/react.tsx!",
+				"src/features/store2/store.ts!"
+			],
 			"project": ["src/**/*.{ts,tsx}!"],
 			"ignore": ["src/pages.gen.ts"]
 		}

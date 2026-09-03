@@ -51,8 +51,8 @@ type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
 	setter: Setter<E>
 }
 
-type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
-type AtomFamily<S, Key, E> = {
+export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
+export type AtomFamily<S, Key, E> = {
 	type: 'family'
 	create: (key: Key) => AtomSymbol<S, E>
 }
@@ -200,7 +200,8 @@ export class Store {
 		if (mounted) this.enqueueEffect(instance)
 		else {
 			const symbol = instance.symbol as AtomSymbol<S, unknown>
-			if (symbol.effect) this.runEffect(symbol, instance, symbol.effect, undefined)
+			if (symbol.effect)
+				this.runEffect(symbol, instance, symbol.effect, undefined)
 			if (instance.familyEntries.length > 0)
 				this.getTasks().unmountedFamilyEntries.add(instance)
 		}
