@@ -33,3 +33,7 @@ export function sortedRemove<T extends { symbol: { index: number } }>(
 export function call(cb: () => void) {
 	cb()
 }
+
+export function isMounted(value: { mounted: boolean }) {
+	return value.mounted
+}

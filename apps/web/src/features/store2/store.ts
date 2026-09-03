@@ -6,7 +6,7 @@ import {
 	isReset,
 	type SetStateWithReset,
 } from '../store/functions'
-import { call, sortedPush, sortedRemove } from './utils'
+import { call, isMounted, sortedPush, sortedRemove } from './utils'
 
 export const TRANSIENT = -1
 
@@ -205,11 +205,7 @@ class Store {
 		instance.subscriptions.forEach(call)
 	}
 	private isMounted<S>(instance: Instance<S>) {
-		return (
-			instance.subscriptions.size > 0 ||
-			(instance.symbol.type === 'derived' &&
-				instance.deps.some((dependency) => dependency.mounted))
-		)
+		return instance.subscriptions.size > 0 || instance.deps.some(isMounted)
 	}
 	private updateMounted<S>(instance: Instance<S>) {
 		const mounted = this.isMounted(instance)
