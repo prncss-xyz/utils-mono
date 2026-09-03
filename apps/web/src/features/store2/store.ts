@@ -1,4 +1,4 @@
-import { id } from '@prncss-xyz/react-utils'
+import { id, exhaustive } from '@prncss-xyz/react-utils'
 
 import {
 	fromInit,
@@ -6,24 +6,16 @@ import {
 	isReset,
 	type SetStateWithReset,
 } from '../store/functions'
-import { sortedPush, sortedRemove } from './utils'
+import { call, sortedPush, sortedRemove } from './utils'
 
 export const TRANSIENT = -1
 
 let nextIndex = 0
 
-function call(cb: () => void) {
-	cb()
-}
-
-function exhaustive(n: never): never {
-	throw new Error(`unexpected value ${n}`)
-}
-
 type FamilyEntry = {
 	entry: Map<unknown, Instance<any>>
 	hashedKey: unknown
-	ttl: number
+	TTL: number
 }
 
 type Instance<S> = {
@@ -61,7 +53,7 @@ export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
 export type AtomFamily<S, Key, E> = {
 	type: 'family'
 	create: (key: Key) => AtomSymbol<S, E>
-	ttl: number
+	TTL: number
 	hash: (k: Key) => unknown
 }
 
@@ -109,12 +101,12 @@ export function derived<S, E>(
 
 export function family<S, K, E>(
 	create: (key: K) => AtomSymbol<S, E>,
-	opts?: Partial<{ ttl: number; hash: (k: K) => unknown }>,
+	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
 ): AtomFamily<S, K, E> {
 	return {
 		type: 'family' as const,
 		create,
-		ttl: opts?.ttl ?? 0,
+		TTL: opts?.TTL ?? 0,
 		hash: opts?.hash ?? id,
 	}
 }
@@ -125,7 +117,7 @@ type Tasks = {
 	unmountedFamilyEntries: Set<Instance<any>>
 }
 
-export class Store {
+class Store {
 	private contents = new WeakMap<any, any>()
 	private tasks: Tasks | undefined = undefined
 	private flushingEffects: Set<Instance<any>> | undefined
@@ -145,7 +137,7 @@ export class Store {
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
-			if (symbol.ttl < 0) return this.getInstance(symbol.create(key!))
+			if (symbol.TTL < 0) return this.getInstance(symbol.create(key!))
 			let entry: Map<unknown, Instance<S>> | undefined =
 				this.contents.get(symbol)
 			if (entry === undefined) {
@@ -157,7 +149,7 @@ export class Store {
 			if (res === undefined) {
 				res = this.getInstance(symbol.create(key!))
 				entry.set(hashedKey, res)
-				res.familyEntries.push({ entry, hashedKey, ttl: symbol.ttl })
+				res.familyEntries.push({ entry, hashedKey, TTL: symbol.TTL })
 			}
 			return res
 		}
@@ -262,9 +254,9 @@ export class Store {
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mounted) continue
 			for (const familyEntry of instance.familyEntries) {
-				const { entry, hashedKey, ttl } = familyEntry
-				if (ttl === Infinity) continue
-				if (ttl === 0) {
+				const { entry, hashedKey, TTL } = familyEntry
+				if (TTL === Infinity) continue
+				if (TTL === 0) {
 					if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
 					continue
 				}
@@ -272,7 +264,7 @@ export class Store {
 					instance.familyRemovalTimeouts.delete(timeout)
 					if (!instance.mounted && entry.get(hashedKey) === instance)
 						entry.delete(hashedKey)
-				}, ttl)
+				}, TTL)
 				instance.familyRemovalTimeouts.set(timeout, familyEntry)
 			}
 			instance.familyEntries = []
@@ -376,4 +368,8 @@ export class Store {
 			symbol.type === 'family' ? notify! : (keyOrNotify as () => void)
 		return this.subscribeInstance(instance, callback)
 	}
+}
+
+export function createStore() {
+	return new Store()
 }

@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESET } from '../store/functions'
-import { derived, family, primitive, Store, TRANSIENT } from './store'
+import { createStore, derived, family, primitive, TRANSIENT } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
 describe('Store', () => {
 	it('defers primitive values, updates, and resets to the next microtask', async () => {
 		const count = primitive(0)
-		const store = new Store()
+		const store = createStore()
 
 		expect(store.peek(count)).toBe(0)
 
@@ -30,7 +30,7 @@ describe('Store', () => {
 
 	it('applies queued sends and evaluates updaters at flush time', async () => {
 		const count = primitive(1)
-		const store = new Store()
+		const store = createStore()
 		const updater = vi.fn((value: number) => value + 2)
 
 		store.send(count, updater)
@@ -48,7 +48,7 @@ describe('Store', () => {
 	it('coalesces notifications per affected primitive instance', async () => {
 		const count = primitive(0)
 		const label = primitive('before')
-		const store = new Store()
+		const store = createStore()
 		const countValues: number[] = []
 		const countSubscriber = vi.fn(() => countValues.push(store.peek(count)))
 		const labelSubscriber = vi.fn()
@@ -73,7 +73,7 @@ describe('Store', () => {
 	it('keeps RESET lazy and preserves its notification behavior', async () => {
 		const getter = vi.fn(() => 1)
 		const count = primitive(getter)
-		const store = new Store()
+		const store = createStore()
 		const subscriber = vi.fn()
 
 		expect(store.peek(count)).toBe(1)
@@ -97,7 +97,7 @@ describe('Store', () => {
 
 	it('preserves RESET semantics when composed with updater callbacks', async () => {
 		const count = primitive(1)
-		const store = new Store()
+		const store = createStore()
 
 		store.send(count, 5)
 		await flushMicrotask()
@@ -112,14 +112,11 @@ describe('Store', () => {
 	it('runs a writable derived setter synchronously and queues its primitive write', async () => {
 		const count = primitive(0)
 		const setter = vi.fn(
-			(
-				read: (symbol: typeof count) => number,
-				write: Store['send'],
-				amount: number,
-			) => write(count, read(count) + amount),
+			(read: (symbol: typeof count) => number, write: any, amount: number) =>
+				write(count, read(count) + amount),
 		)
 		const plus = derived((read) => read(count), setter)
-		const store = new Store()
+		const store = createStore()
 
 		store.send(plus, 3)
 
@@ -142,7 +139,7 @@ describe('Store', () => {
 			(read) => read(names, 'first'),
 			(_read, _write, _event: never) => {},
 		)
-		const store = new Store()
+		const store = createStore()
 
 		expect(store.peek(selected)).toBe('FIRST')
 	})
@@ -161,7 +158,7 @@ describe('Store', () => {
 					read(sourceFamily, 'source') * multiplier,
 				),
 		)
-		const store = new Store()
+		const store = createStore()
 
 		store.send(selected, 2)
 		await flushMicrotask()
@@ -175,7 +172,7 @@ describe('Store', () => {
 			(read) => read(count) * 2,
 			(_read, _write, _event: never) => {},
 		)
-		const store = new Store()
+		const store = createStore()
 
 		expect(store.peek(double)).toBe(4)
 	})
@@ -188,7 +185,7 @@ describe('Store', () => {
 			(read) => read(numbers, 'first'),
 			(_read, _write, _event: never) => {},
 		)
-		const store = new Store()
+		const store = createStore()
 		const subscriber = vi.fn()
 
 		store.subscribe(selected, subscriber)
@@ -207,7 +204,7 @@ describe('Store', () => {
 
 	it('defers a primitive send from a subscriber to a subsequent microtask', async () => {
 		const count = primitive(0)
-		const store = new Store()
+		const store = createStore()
 		const subscriber = vi.fn(() => {
 			if (store.peek(count) === 1) store.send(count, 2)
 		})
@@ -232,7 +229,7 @@ describe('Store', () => {
 			(read) => read(count) * 2,
 			(read, write, amount: number) => write(count, read(count) + amount),
 		)
-		const store = new Store()
+		const store = createStore()
 		const countSubscriber = vi.fn()
 		const doubleSubscriber = vi.fn()
 
@@ -268,7 +265,7 @@ describe('Store', () => {
 
 	it('skips notifying subscribers when a batch produces no committed change', async () => {
 		const count = primitive(0)
-		const store = new Store()
+		const store = createStore()
 		const subscriber = vi.fn()
 
 		store.subscribe(count, subscriber)
@@ -286,7 +283,7 @@ describe('Store', () => {
 	it('runs an effect without requiring separate dependency subscribers', async () => {
 		const doer = vi.fn()
 		const count = primitive(1, doer)
-		const store = new Store()
+		const store = createStore()
 
 		store.subscribe(count, () => {})
 		await flushMicrotask()
@@ -299,7 +296,7 @@ describe('Store', () => {
 		const count = primitive(0, (next, _last, send) => {
 			if (next === 0) send(1)
 		})
-		const store = new Store()
+		const store = createStore()
 
 		store.subscribe(count, () => {})
 		await flushMicrotask()
@@ -313,7 +310,7 @@ describe('Store', () => {
 	it('coalesces mounting and dependency changes into one effect run', async () => {
 		const doer = vi.fn()
 		const count = primitive(0, doer)
-		const store = new Store()
+		const store = createStore()
 
 		store.subscribe(count, () => {})
 		store.send(count, 1)
@@ -327,7 +324,7 @@ describe('Store', () => {
 		const cleanup = vi.fn()
 		const doer = vi.fn(() => cleanup)
 		const count = primitive(0, doer)
-		const store = new Store()
+		const store = createStore()
 		const unsubscribe = store.subscribe(count, () => {})
 
 		await flushMicrotask()
@@ -357,7 +354,7 @@ describe('Store', () => {
 			(_read, _write, _event: never) => {},
 			doer,
 		)
-		const store = new Store()
+		const store = createStore()
 
 		expect(store.peek(double)).toBe(2)
 		const unsubscribe = store.subscribe(count, () => {})
@@ -372,7 +369,7 @@ describe('Store', () => {
 
 	it('subscribes to an atom family member', () => {
 		const names = family((key: string) => primitive(key))
-		const store = new Store()
+		const store = createStore()
 
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -383,17 +380,17 @@ describe('Store', () => {
 	it('uses the family hash to identify members', () => {
 		const create = vi.fn((key: { id: string }) => primitive(key.id))
 		const names = family(create, { hash: (key) => key.id })
-		const store = new Store()
+		const store = createStore()
 
 		expect(store.peek(names, { id: 'first' })).toBe('first')
 		expect(store.peek(names, { id: 'first' })).toBe('first')
 		expect(create).toHaveBeenCalledOnce()
 	})
 
-	it('does not cache atom family members when ttl is negative', () => {
+	it('does not cache atom family members when TTL is negative', () => {
 		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { ttl: TRANSIENT })
-		const store = new Store()
+		const names = family(create, { TTL: TRANSIENT })
+		const store = createStore()
 
 		expect(store.peek(names, 'first')).toBe('first')
 		expect(store.peek(names, 'first')).toBe('first')
@@ -403,7 +400,7 @@ describe('Store', () => {
 	it('removes an unmounted atom family member in the next microtask', async () => {
 		const create = vi.fn((key: string) => primitive(key))
 		const names = family(create)
-		const store = new Store()
+		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		unsubscribe()
@@ -418,7 +415,7 @@ describe('Store', () => {
 	it('keeps an atom family member that remounts before the next microtask', async () => {
 		const create = vi.fn((key: string) => primitive(key))
 		const names = family(create)
-		const store = new Store()
+		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		unsubscribe()
@@ -430,10 +427,10 @@ describe('Store', () => {
 		unsubscribeAgain()
 	})
 
-	it('keeps an unmounted atom family member when ttl is Infinity', async () => {
+	it('keeps an unmounted atom family member when TTL is Infinity', async () => {
 		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { ttl: Infinity })
-		const store = new Store()
+		const names = family(create, { TTL: Infinity })
+		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		unsubscribe()
@@ -443,11 +440,11 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledOnce()
 	})
 
-	it('removes an unmounted atom family member after its positive ttl', async () => {
+	it('removes an unmounted atom family member after its positive TTL', async () => {
 		vi.useFakeTimers()
 		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { ttl: 100 })
-		const store = new Store()
+		const names = family(create, { TTL: 100 })
+		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		unsubscribe()
@@ -462,11 +459,11 @@ describe('Store', () => {
 		vi.useRealTimers()
 	})
 
-	it('cancels positive ttl removal when the member remounts', async () => {
+	it('cancels positive TTL removal when the member remounts', async () => {
 		vi.useFakeTimers()
 		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { ttl: 100 })
-		const store = new Store()
+		const names = family(create, { TTL: 100 })
+		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		unsubscribe()
@@ -487,7 +484,7 @@ describe('Store', () => {
 			events.push(`run:${next}`)
 			return () => events.push(`cleanup:${next}`)
 		})
-		const store = new Store()
+		const store = createStore()
 
 		store.subscribe(count, () => {})
 		await flushMicrotask()

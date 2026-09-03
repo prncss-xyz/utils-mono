@@ -1,12 +1,12 @@
 'use client'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 
-import { Store, type AtomFamily, type AtomSymbol } from './store'
+import { createStore, type AtomFamily, type AtomSymbol } from './store'
 
-const StoreCtx = createContext(new Store())
+const StoreCtx = createContext(createStore())
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
-	return <StoreCtx.Provider value={new Store()}>{children}</StoreCtx.Provider>
+	return <StoreCtx.Provider value={createStore()}>{children}</StoreCtx.Provider>
 }
 
 function useAtomValueInternal<V, Key, E>(

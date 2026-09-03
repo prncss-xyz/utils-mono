@@ -6,7 +6,7 @@ function findIndex<T extends { symbol: { index: number } }>(
 	return position === -1 ? ts.length : position
 }
 
-// do we really nead the order, if not a direct lookup might be faster
+// do we really need the order, if not a direct lookup might be faster
 export function sortedPush<T extends { symbol: { index: number } }>(
 	ts: T[],
 	t: T,
@@ -28,4 +28,8 @@ export function sortedRemove<T extends { symbol: { index: number } }>(
 	if (ts[position]?.symbol.index !== t.symbol.index) return ts
 
 	ts.splice(position, 1)
+}
+
+export function call(cb: () => void) {
+	cb()
 }
