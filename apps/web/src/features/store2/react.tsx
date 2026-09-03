@@ -1,7 +1,7 @@
 'use client'
 import { createContext, useContext, useSyncExternalStore } from 'react'
 
-import { Store, type AtomSymbol } from './store'
+import { Store, type AtomFamily, type AtomSymbol } from './store'
 
 const StoreCtx = createContext(new Store())
 
@@ -9,22 +9,68 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 	return <StoreCtx.Provider value={new Store()}>{children}</StoreCtx.Provider>
 }
 
-export function useAtomValue<V, E>(atom: AtomSymbol<V, E>): V {
+function useAtomValueInternal<V, Key, E>(
+	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+	key?: Key,
+) {
 	const store = useContext(StoreCtx)
-	const peek = () => store.peek(atom)
-	const res = useSyncExternalStore(
-		(notify: () => void) => store.subscribe(atom, notify),
-		peek,
-		peek,
-	)
-	return res
+	const peek = () =>
+		atom.type === 'family' ? store.peek(atom, key!) : store.peek(atom)
+	const subscribe = (notify: () => void) =>
+		atom.type === 'family'
+			? store.subscribe(atom, key!, notify)
+			: store.subscribe(atom, notify)
+	return useSyncExternalStore(subscribe, peek, peek)
 }
 
-export function useSetAtom<V, E>(atom: AtomSymbol<V, E>) {
-	const store = useContext(StoreCtx)
-	return (e: E) => store.send(atom, e)
+export function useAtomValue<V, Key, E>(
+	atom: AtomFamily<V, Key, E>,
+	key: Key,
+): V
+export function useAtomValue<V, E>(atom: AtomSymbol<V, E>): V
+export function useAtomValue<V, Key, E>(
+	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+	key?: Key,
+) {
+	return useAtomValueInternal(atom, key)
 }
 
-export function useAtom<V, E>(atom: AtomSymbol<V, E>) {
-	return [useAtomValue(atom), useSetAtom(atom)] as const
+function useSetAtomInternal<V, Key, E>(
+	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+	key?: Key,
+) {
+	const store = useContext(StoreCtx)
+	return (event: E) =>
+		atom.type === 'family'
+			? store.send(atom, key!, event)
+			: store.send(atom, event)
+}
+
+export function useSetAtom<V, Key, E>(
+	atom: AtomFamily<V, Key, E>,
+	key: Key,
+): (event: E) => void
+export function useSetAtom<V, E>(atom: AtomSymbol<V, E>): (event: E) => void
+export function useSetAtom<V, Key, E>(
+	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+	key?: Key,
+) {
+	return useSetAtomInternal(atom, key)
+}
+
+export function useAtom<V, Key, E>(
+	atom: AtomFamily<V, Key, E>,
+	key: Key,
+): readonly [V, (event: E) => void]
+export function useAtom<V, E>(
+	atom: AtomSymbol<V, E>,
+): readonly [V, (event: E) => void]
+export function useAtom<V, Key, E>(
+	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+	key?: Key,
+) {
+	return [
+		useAtomValueInternal(atom, key),
+		useSetAtomInternal(atom, key),
+	] as const
 }

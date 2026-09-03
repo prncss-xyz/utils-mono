@@ -133,9 +133,9 @@ describe('Store', () => {
 
 	it('reads a one-argument atom family from a derived getter', () => {
 		const members = new Map<string, ReturnType<typeof primitive<string>>>()
-		const family: AtomLike<string, [string], SetStateWithReset<string>> = {
+		const family: AtomLike<string, string, SetStateWithReset<string>> = {
 			type: 'family',
-			factory: (key) => {
+			create: (key) => {
 				const member = members.get(key) ?? primitive(key.toUpperCase())
 				members.set(key, member)
 				return member
@@ -158,9 +158,9 @@ describe('Store', () => {
 			SetStateWithReset<string>
 		> = {
 			type: 'family',
-			factory: (group) => ({
+			create: (group) => ({
 				type: 'family',
-				factory: (index) => {
+				create: (index) => {
 					const key = `${group}:${index}`
 					const member = members.get(key) ?? primitive(key)
 					members.set(key, member)
@@ -186,7 +186,7 @@ describe('Store', () => {
 			SetStateWithReset<number>
 		> = {
 			type: 'family',
-			factory: () => source,
+			create: () => source,
 		}
 		const targetFamily: AtomLike<
 			number,
@@ -194,7 +194,7 @@ describe('Store', () => {
 			SetStateWithReset<number>
 		> = {
 			type: 'family',
-			factory: () => target,
+			create: () => target,
 		}
 		const selected = derived(
 			(read) => read(target),
@@ -229,7 +229,7 @@ describe('Store', () => {
 		const second = primitive(10)
 		const family: AtomLike<number, [string], SetStateWithReset<number>> = {
 			type: 'family',
-			factory: (key) => (key === 'first' ? first : second),
+			create: (key) => (key === 'first' ? first : second),
 		}
 		const selected = derived(
 			(read) => read(family, 'first'),
@@ -415,6 +415,19 @@ describe('Store', () => {
 
 		unsubscribe()
 		expect(doer).toHaveBeenLastCalledWith(undefined, 2, expect.any(Function))
+	})
+
+	it('subscribes to an atom family member', () => {
+		const family = {
+			type: 'family' as const,
+			create: (key: string) => primitive(key),
+		}
+		const store = new Store()
+
+		const unsubscribe = store.subscribe(family, 'first', () => {})
+
+		expect(unsubscribe).toBeTypeOf('function')
+		unsubscribe()
 	})
 
 	it('runs the previous cleanup before rerunning an effect', async () => {

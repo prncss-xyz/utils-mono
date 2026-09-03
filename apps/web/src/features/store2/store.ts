@@ -33,7 +33,7 @@ type CoreSymbol<S, E> = {
   effect?: Effect<S, E>
 }
 
-export type PrimitiveSymbol<S, E> = CoreSymbol<S, E> & {
+type PrimitiveSymbol<S, E> = CoreSymbol<S, E> & {
   type: 'primitive'
   getter: (() => S) | S
   readonly event?: E
@@ -45,15 +45,21 @@ type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
   setter: Setter<E>
 }
 
-export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
-export type AtomFamily<S, Key, E> = {
+type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
+type AtomFamily<S, Key, E> = {
   type: 'family'
-  factory: (key: Key) => AtomSymbol<S, E>
+  create: (key: Key) => AtomSymbol<S, E>
 }
 export type AtomLike<S, Key, E> = AtomSymbol<S, E> | AtomFamily<S, Key, E>
 
-type Read = <S, E>(symbol: AtomSymbol<S, E>) => S
-type Write = <S, E>(symbol: AtomSymbol<S, E>, e: E) => void
+type Read = {
+  <S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
+  <S, E>(symbol: AtomSymbol<S, E>): S
+}
+type Write = {
+  <S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, event: E): void
+  <S, E>(symbol: AtomSymbol<S, E>, event: E): void
+}
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
 type Effect<S, E> = (
@@ -65,7 +71,7 @@ type Effect<S, E> = (
 export function primitive<S>(
   getter: S | (() => S),
   effect?: Effect<NoInfer<S>, SetStateWithReset<S>>,
-): PrimitiveSymbol<S, SetStateWithReset<S>> {
+): AtomSymbol<S, SetStateWithReset<S>> {
   return {
     type: 'primitive' as const,
     getter,
@@ -78,13 +84,22 @@ export function derived<S, E>(
   getter: Getter<S>,
   setter: Setter<E>,
   effect?: Effect<NoInfer<S>, E>,
-): DerivedSymbol<S, E> {
+): AtomSymbol<S, E> {
   return {
     type: 'derived' as const,
     getter,
     setter,
     effect,
     index: nextIndex++,
+  }
+}
+
+export function family<S, K, E>(
+  create: (key: K) => AtomSymbol<S, E>,
+): AtomFamily<S, K, E> {
+  return {
+    type: 'family' as const,
+    create,
   }
 }
 
@@ -124,7 +139,7 @@ export class Store {
       }
       let res = entry.get(key)
       if (res === undefined) {
-        res = symbol.factory(key!)
+        res = this.getInstance(symbol.create(key!))
         entry.set(key, res)
       }
       return res
@@ -187,12 +202,19 @@ export class Store {
   ) {
     for (const dep of instance.deps) sortedRemove(dep.subs, instance)
     instance.deps = []
-    instance.value = symbol.getter(<T, E>(s: AtomSymbol<T, E>) => {
-      const dep = this.getInstance(s)
+    const read = (<T, Key, Event>(
+      target: AtomFamily<T, Key, Event> | AtomSymbol<T, Event>,
+      key?: Key,
+    ) => {
+      const dep =
+        target.type === 'family'
+          ? this.getInstance(target, key!)
+          : this.getInstance(target)
       sortedPush(instance.deps, dep)
       sortedPush(dep.subs, instance)
-      return this.peekInstance(s, dep)
-    })
+      return this.peekInstance(dep)
+    }) as Read
+    instance.value = symbol.getter(read)
     this.updateMounted(instance)
   }
   private runEffect<S, E>(
@@ -269,7 +291,7 @@ export class Store {
         if (isFunction(event)) {
           const last = primitives.has(instance)
             ? primitives.get(instance)
-            : this.peekInstance(symbol, instance)
+            : this.peekInstance(instance)
           res = event(last)
         } else if (isReset(event)) {
           res = fromInit(symbol.getter)
