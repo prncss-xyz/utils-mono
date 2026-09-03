@@ -16,8 +16,14 @@ function exhaustive(n: never): never {
 	throw new Error(`unexpected value ${n}`)
 }
 
+type FamilyEntry = {
+	contents: Map<any, Instance<any>>
+	key: any
+}
+
 type Instance<S> = {
 	symbol: AtomSymbol<any, any>
+	familyEntries: FamilyEntry[]
 	dirty: boolean
 	value: S
 	effectValue: S | undefined
@@ -106,6 +112,7 @@ export function family<S, K, E>(
 type Tasks = {
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
+	unmountedFamilyEntries: Set<Instance<any>>
 }
 
 export class Store {
@@ -118,6 +125,7 @@ export class Store {
 		this.tasks = {
 			primitives: new Map(),
 			effects: new Set(),
+			unmountedFamilyEntries: new Set(),
 		}
 		queueMicrotask(this.flush.bind(this))
 		return this.tasks
@@ -136,6 +144,7 @@ export class Store {
 			if (res === undefined) {
 				res = this.getInstance(symbol.create(key!))
 				entry.set(key, res)
+				res.familyEntries.push({ contents: entry, key })
 			}
 			return res
 		}
@@ -149,6 +158,7 @@ export class Store {
 	private createInstance<S, E>(symbol: AtomSymbol<S, E>): Instance<S> {
 		return {
 			symbol,
+			familyEntries: [],
 			dirty: symbol.type === 'derived',
 			value:
 				symbol.type === 'primitive'
@@ -188,7 +198,12 @@ export class Store {
 		if (mounted === instance.mounted) return
 		instance.mounted = mounted
 		if (mounted) this.enqueueEffect(instance)
-		else this.unmountEffect(instance)
+		else {
+			const symbol = instance.symbol as AtomSymbol<S, unknown>
+			if (symbol.effect) this.runEffect(symbol, instance, symbol.effect, undefined)
+			if (instance.familyEntries.length > 0)
+				this.getTasks().unmountedFamilyEntries.add(instance)
+		}
 		for (const sub of instance.subs) this.updateMounted(sub)
 	}
 	private runEffect<S, E>(
@@ -203,12 +218,6 @@ export class Store {
 		instance.effectCleanup =
 			effect?.(next, last, (event) => this.send(symbol, event)) || undefined
 	}
-	private unmountEffect<S, E>(instance: Instance<S>) {
-		const symbol = instance.symbol as AtomSymbol<S, E>
-		const { effect } = symbol
-		if (!effect) return
-		this.runEffect(symbol, instance, effect, undefined)
-	}
 	private transitionEffect<S, E>(instance: Instance<S>) {
 		const symbol: AtomSymbol<S, E> = instance.symbol
 		const next = this.peekInstance(instance)
@@ -217,7 +226,7 @@ export class Store {
 		this.runEffect(symbol, instance, symbol.effect, next)
 	}
 	private flush() {
-		const { primitives, effects } = this.tasks!
+		const { primitives, effects, unmountedFamilyEntries } = this.tasks!
 		this.tasks = undefined
 		this.flushingEffects = effects
 		// oxlint-disable-next-line prefer-const
@@ -229,6 +238,12 @@ export class Store {
 		this.flushingEffects = undefined
 		for (const instance of effects)
 			if (instance.mounted) this.transitionEffect(instance)
+		for (const instance of unmountedFamilyEntries) {
+			if (instance.mounted) continue
+			for (const { contents, key } of instance.familyEntries)
+				if (contents.get(key) === instance) contents.delete(key)
+			instance.familyEntries = []
+		}
 	}
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance

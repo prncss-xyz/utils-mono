@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESET, type SetStateWithReset } from '../store/functions'
-import { derived, primitive, Store, type AtomLike } from './store'
+import { derived, family, primitive, Store, type AtomLike } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -391,16 +391,43 @@ describe('Store', () => {
 	})
 
 	it('subscribes to an atom family member', () => {
-		const family = {
-			type: 'family' as const,
-			create: (key: string) => primitive(key),
-		}
+		const names = family((key: string) => primitive(key))
 		const store = new Store()
 
-		const unsubscribe = store.subscribe(family, 'first', () => {})
+		const unsubscribe = store.subscribe(names, 'first', () => {})
 
 		expect(unsubscribe).toBeTypeOf('function')
 		unsubscribe()
+	})
+
+	it('removes an unmounted atom family member in the next microtask', async () => {
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create)
+		const store = new Store()
+		const unsubscribe = store.subscribe(names, 'first', () => {})
+
+		unsubscribe()
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledOnce()
+
+		await flushMicrotask()
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('keeps an atom family member that remounts before the next microtask', async () => {
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create)
+		const store = new Store()
+		const unsubscribe = store.subscribe(names, 'first', () => {})
+
+		unsubscribe()
+		const unsubscribeAgain = store.subscribe(names, 'first', () => {})
+		await flushMicrotask()
+		store.peek(names, 'first')
+
+		expect(create).toHaveBeenCalledOnce()
+		unsubscribeAgain()
 	})
 
 	it('runs the previous cleanup before rerunning an effect', async () => {
