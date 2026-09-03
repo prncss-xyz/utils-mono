@@ -152,7 +152,7 @@ export class Store {
       mounted: false,
     }
   }
-  private enqueueEffect(instance: Instance<any>) {
+  private enqueueEffect<S>(instance: Instance<S>) {
     if (!instance.symbol.effect) return
     if (this.flushingEffects) {
       this.flushingEffects.add(instance)
@@ -166,14 +166,14 @@ export class Store {
     for (const sub of instance.subs) this.notify(sub)
     instance.subscriptions.forEach(call)
   }
-  private isMounted(instance: Instance<any>) {
+  private isMounted<S>(instance: Instance<S>) {
     return (
       instance.subscriptions.size > 0 ||
       (instance.symbol.type === 'derived' &&
         instance.deps.some((dependency) => dependency.mounted))
     )
   }
-  private updateMounted(instance: Instance<any>) {
+  private updateMounted<S>(instance: Instance<S>) {
     const mounted = this.isMounted(instance)
     if (mounted === instance.mounted) return
     instance.mounted = mounted
@@ -220,33 +220,6 @@ export class Store {
     if (Object.is(next, instance.effectValue)) return
     this.runEffect(symbol, instance, symbol.effect, next)
   }
-  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
-    switch (symbol.type) {
-      case 'primitive': {
-        const { primitives } = this.getTasks()
-        const instance = this.getInstance(symbol)
-        let res: any
-        if (isFunction(next)) {
-          const last = primitives.has(instance)
-            ? primitives.get(instance)
-            : this.peekInstance(symbol, instance)
-          res = next(last)
-        } else if (isReset(next)) {
-          res = fromInit(symbol.getter)
-        } else {
-          res = next
-        }
-        primitives.set(instance, res)
-        return
-      }
-      case 'derived': {
-        symbol.setter(this.peek.bind(this), this.send.bind(this), next)
-        return
-      }
-      default:
-        return exhaustive(symbol)
-    }
-  }
   private flush() {
     const { primitives, effects } = this.tasks!
     this.tasks = undefined
@@ -276,6 +249,33 @@ export class Store {
       }
     }
     return instance.value
+  }
+  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
+    switch (symbol.type) {
+      case 'primitive': {
+        const { primitives } = this.getTasks()
+        const instance = this.getInstance(symbol)
+        let res: any
+        if (isFunction(next)) {
+          const last = primitives.has(instance)
+            ? primitives.get(instance)
+            : this.peekInstance(symbol, instance)
+          res = next(last)
+        } else if (isReset(next)) {
+          res = fromInit(symbol.getter)
+        } else {
+          res = next
+        }
+        primitives.set(instance, res)
+        return
+      }
+      case 'derived': {
+        symbol.setter(this.peek.bind(this), this.send.bind(this), next)
+        return
+      }
+      default:
+        return exhaustive(symbol)
+    }
   }
   peek<S, E>(symbol: AtomSymbol<S, E>) {
     return this.peekInstance(symbol, this.getInstance(symbol))
