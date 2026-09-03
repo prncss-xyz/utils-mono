@@ -8,6 +8,8 @@ import {
 } from '../store/functions'
 import { sortedPush, sortedRemove } from './utils'
 
+export const TRANSIENT = -1
+
 let nextIndex = 0
 
 function call(cb: () => void) {
@@ -142,6 +144,7 @@ export class Store {
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
+			if (symbol.ttl < 0) return this.getInstance(symbol.create(key!))
 			let entry: Map<unknown, Instance<S>> | undefined =
 				this.contents.get(symbol)
 			if (entry === undefined) {

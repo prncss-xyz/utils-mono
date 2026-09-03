@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESET } from '../store/functions'
-import { derived, family, primitive, Store } from './store'
+import { derived, family, primitive, Store, TRANSIENT } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -388,6 +388,16 @@ describe('Store', () => {
 		expect(store.peek(names, { id: 'first' })).toBe('first')
 		expect(store.peek(names, { id: 'first' })).toBe('first')
 		expect(create).toHaveBeenCalledOnce()
+	})
+
+	it('does not cache atom family members when ttl is negative', () => {
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create, { ttl: TRANSIENT })
+		const store = new Store()
+
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(2)
 	})
 
 	it('removes an unmounted atom family member in the next microtask', async () => {
