@@ -19,8 +19,9 @@ function exhaustive(n: never): never {
 }
 
 type FamilyEntry = {
-	contents: Map<unknown, Instance<any>>
+	entry: Map<unknown, Instance<any>>
 	hashedKey: unknown
+	ttl: number
 }
 
 type Instance<S> = {
@@ -152,7 +153,7 @@ export class Store {
 			if (res === undefined) {
 				res = this.getInstance(symbol.create(key!))
 				entry.set(hashedKey, res)
-				res.familyEntries.push({ contents: entry, hashedKey })
+				res.familyEntries.push({ entry, hashedKey, ttl: symbol.ttl })
 			}
 			return res
 		}
@@ -249,8 +250,10 @@ export class Store {
 			if (instance.mounted) this.transitionEffect(instance)
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mounted) continue
-			for (const { contents, hashedKey: key } of instance.familyEntries)
-				if (contents.get(key) === instance) contents.delete(key)
+			for (const { entry, hashedKey, ttl } of instance.familyEntries) {
+				if (ttl === Infinity) continue
+				if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
+			}
 			instance.familyEntries = []
 		}
 	}

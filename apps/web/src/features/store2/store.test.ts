@@ -420,6 +420,19 @@ describe('Store', () => {
 		unsubscribeAgain()
 	})
 
+	it('keeps an unmounted atom family member when ttl is Infinity', async () => {
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create, { ttl: Infinity })
+		const store = new Store()
+		const unsubscribe = store.subscribe(names, 'first', () => {})
+
+		unsubscribe()
+		await flushMicrotask()
+		store.peek(names, 'first')
+
+		expect(create).toHaveBeenCalledOnce()
+	})
+
 	it('runs the previous cleanup before rerunning an effect', async () => {
 		const events: string[] = []
 		const count = primitive(0, (next) => {

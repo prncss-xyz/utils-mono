@@ -11,7 +11,7 @@ const simple = primitive(
 	(next, last) => console.log(next, last),
 )
 
-const group = family((k: number) => primitive(k))
+const group = family((k: number) => primitive(k), { ttl: Infinity })
 
 function Simple() {
 	const [value, setValue] = useAtom(simple)
