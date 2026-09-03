@@ -122,10 +122,10 @@ export class Store {
         entry = new Map()
         this.contents.set(symbol, entry)
       }
-      let res = this.contents.get(key)
+      let res = entry.get(key)
       if (res === undefined) {
         res = symbol.factory(key!)
-        entry.set(symbol, res)
+        entry.set(key, res)
       }
       return res
     }
@@ -215,7 +215,7 @@ export class Store {
   }
   private transitionEffect<S, E>(instance: Instance<S>) {
     const symbol: AtomSymbol<S, E> = instance.symbol
-    const next = this.peekInstance(symbol, instance)
+    const next = this.peekInstance(instance)
     if (!instance.mounted) return
     if (Object.is(next, instance.effectValue)) return
     this.runEffect(symbol, instance, symbol.effect, next)
@@ -234,7 +234,8 @@ export class Store {
     for (const instance of effects)
       if (instance.mounted) this.transitionEffect(instance)
   }
-  private peekInstance<S, E>(symbol: AtomSymbol<S, E>, instance: Instance<S>) {
+  private peekInstance<S>(instance: Instance<S>) {
+    const { symbol } = instance
     if (instance.dirty) {
       instance.dirty = false
       switch (symbol.type) {
@@ -250,43 +251,81 @@ export class Store {
     }
     return instance.value
   }
-  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void {
+  peek<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
+  peek<S, E>(symbol: AtomSymbol<S, E>): S
+  peek<S, Key, E>(symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>, key?: Key) {
+    const instance =
+      symbol.type === 'family'
+        ? this.getInstance(symbol, key!)
+        : this.getInstance(symbol)
+    return this.peekInstance(instance)
+  }
+  private sendInstance<S, E>(instance: Instance<S>, event: E) {
+    const { symbol } = instance
     switch (symbol.type) {
       case 'primitive': {
         const { primitives } = this.getTasks()
-        const instance = this.getInstance(symbol)
         let res: any
-        if (isFunction(next)) {
+        if (isFunction(event)) {
           const last = primitives.has(instance)
             ? primitives.get(instance)
             : this.peekInstance(symbol, instance)
-          res = next(last)
-        } else if (isReset(next)) {
+          res = event(last)
+        } else if (isReset(event)) {
           res = fromInit(symbol.getter)
         } else {
-          res = next
+          res = event
         }
         primitives.set(instance, res)
         return
       }
       case 'derived': {
-        symbol.setter(this.peek.bind(this), this.send.bind(this), next)
+        symbol.setter(this.peek.bind(this), this.send.bind(this), event)
         return
       }
       default:
         return exhaustive(symbol)
     }
   }
-  peek<S, E>(symbol: AtomSymbol<S, E>) {
-    return this.peekInstance(symbol, this.getInstance(symbol))
+  send<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, next: E): void
+  send<S, E>(symbol: AtomSymbol<S, E>, next: E): void
+  send<S, Key, E>(
+    symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+    keyOrNext: Key | E,
+    next?: E,
+  ): void {
+    const instance =
+      symbol.type === 'family'
+        ? this.getInstance(symbol, keyOrNext as Key)
+        : this.getInstance(symbol)
+    const event = symbol.type === 'family' ? next! : (keyOrNext as E)
+    this.sendInstance(instance, event)
   }
-  subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void {
-    const instance = this.getInstance(symbol)
+  private subscribeInstance<S>(instance: Instance<S>, notify: () => void) {
     instance.subscriptions.add(notify)
     this.updateMounted(instance)
     return () => {
       instance.subscriptions.delete(notify)
       this.updateMounted(instance)
     }
+  }
+  subscribe<S, Key, E>(
+    symbol: AtomFamily<S, Key, E>,
+    key: Key,
+    notify: () => void,
+  ): () => void
+  subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void
+  subscribe<S, Key, E>(
+    symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+    keyOrNotify: Key | (() => void),
+    notify?: () => void,
+  ): () => void {
+    const instance =
+      symbol.type === 'family'
+        ? this.getInstance(symbol, keyOrNotify as Key)
+        : this.getInstance(symbol)
+    const callback =
+      symbol.type === 'family' ? notify! : (keyOrNotify as () => void)
+    return this.subscribeInstance(instance, callback)
   }
 }
