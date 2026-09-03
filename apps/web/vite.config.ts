@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 
-import babel from '@rolldown/plugin-babel'
-import viteReact, { reactCompilerPreset } from '@vitejs/plugin-react'
+import viteReact from '@vitejs/plugin-react'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vite-plus'
 
@@ -13,7 +12,7 @@ const config = defineConfig({
 		exclude: ['@astryxdesign/core'],
 	},
 	resolve: { tsconfigPaths: true },
-	plugins: [viteReact(), babel({ presets: [reactCompilerPreset()] })],
+	plugins: [viteReact({ compiler: true })],
 	test: {
 		browser: {
 			enabled: true,
