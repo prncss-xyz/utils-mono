@@ -380,6 +380,16 @@ describe('Store', () => {
 		unsubscribe()
 	})
 
+	it('uses the family hash to identify members', () => {
+		const create = vi.fn((key: { id: string }) => primitive(key.id))
+		const names = family(create, { hash: (key) => key.id })
+		const store = new Store()
+
+		expect(store.peek(names, { id: 'first' })).toBe('first')
+		expect(store.peek(names, { id: 'first' })).toBe('first')
+		expect(create).toHaveBeenCalledOnce()
+	})
+
 	it('removes an unmounted atom family member in the next microtask', async () => {
 		const create = vi.fn((key: string) => primitive(key))
 		const names = family(create)

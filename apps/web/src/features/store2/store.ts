@@ -19,8 +19,8 @@ function exhaustive(n: never): never {
 }
 
 type FamilyEntry = {
-	contents: Map<any, Instance<any>>
-	key: any
+	contents: Map<unknown, Instance<any>>
+	hashedKey: unknown
 }
 
 type Instance<S> = {
@@ -60,7 +60,6 @@ export type AtomFamily<S, Key, E> = {
 	ttl: number
 	hash: (k: Key) => unknown
 }
-export type AtomLike<S, Key, E> = AtomSymbol<S, E> | AtomFamily<S, Key, E>
 
 type Read = {
 	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
@@ -142,16 +141,18 @@ export class Store {
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
-			let entry = this.contents.get(symbol)
+			let entry: Map<unknown, Instance<S>> | undefined =
+				this.contents.get(symbol)
 			if (entry === undefined) {
 				entry = new Map()
 				this.contents.set(symbol, entry)
 			}
-			let res = entry.get(key)
+			const hashedKey = symbol.hash(key!)
+			let res = entry.get(hashedKey)
 			if (res === undefined) {
 				res = this.getInstance(symbol.create(key!))
-				entry.set(key, res)
-				res.familyEntries.push({ contents: entry, key })
+				entry.set(hashedKey, res)
+				res.familyEntries.push({ contents: entry, hashedKey })
 			}
 			return res
 		}
@@ -248,7 +249,7 @@ export class Store {
 			if (instance.mounted) this.transitionEffect(instance)
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mounted) continue
-			for (const { contents, key } of instance.familyEntries)
+			for (const { contents, hashedKey: key } of instance.familyEntries)
 				if (contents.get(key) === instance) contents.delete(key)
 			instance.familyEntries = []
 		}
