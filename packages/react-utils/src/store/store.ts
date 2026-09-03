@@ -1,11 +1,11 @@
-import { id, exhaustive } from '@prncss-xyz/react-utils'
-
 import {
+	exhaustive,
 	fromInit,
+	id,
 	isFunction,
 	isReset,
 	type SetStateWithReset,
-} from '../store/functions'
+} from '../functions'
 import { call, isMounted, sortedPush, sortedRemove } from './utils'
 
 export const TRANSIENT = -1

@@ -1,9 +1,13 @@
 'use client'
 import { Button, HStack, VStack } from '@astryxdesign/core'
-
-import { RESET } from '../store/functions'
-import { StoreProvider, useAtom } from './react'
-import { derived, family, primitive } from './store'
+import {
+	RESET,
+	StoreProvider,
+	derived,
+	useAtom,
+	family,
+	primitive,
+} from '@prncss-xyz/react-utils'
 
 const simple = primitive(
 	0,
@@ -60,7 +64,7 @@ function Demo0() {
 	)
 }
 
-export function Demo() {
+export function StoreDemo() {
 	return (
 		<StoreProvider hydrate={[[double, 4]]}>
 			<Demo0 />

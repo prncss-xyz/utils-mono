@@ -1,4 +1,4 @@
-import { getHash } from './hash'
+import { getHash } from '.'
 
 describe('objects/hash', () => {
 	it('generates consistent hash for objects with different key order', () => {
