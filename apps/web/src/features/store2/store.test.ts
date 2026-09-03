@@ -150,39 +150,12 @@ describe('Store', () => {
 		expect(store.peek(selected)).toBe('FIRST')
 	})
 
-	it('reads a multiple-argument atom family in order', () => {
-		const members = new Map<string, ReturnType<typeof primitive<string>>>()
-		const family: AtomLike<
-			string,
-			[string, number],
-			SetStateWithReset<string>
-		> = {
-			type: 'family',
-			create: (group) => ({
-				type: 'family',
-				create: (index) => {
-					const key = `${group}:${index}`
-					const member = members.get(key) ?? primitive(key)
-					members.set(key, member)
-					return member
-				},
-			}),
-		}
-		const selected = derived(
-			(read) => read(family, 'group', 2),
-			(_read, _write, _event: never) => {},
-		)
-		const store = new Store()
-
-		expect(store.peek(selected)).toBe('group:2')
-	})
-
 	it('reads and writes atom families from a derived setter', async () => {
 		const source = primitive(3)
 		const target = primitive(0)
 		const sourceFamily: AtomLike<
 			number,
-			[string],
+			string,
 			SetStateWithReset<number>
 		> = {
 			type: 'family',
@@ -190,7 +163,7 @@ describe('Store', () => {
 		}
 		const targetFamily: AtomLike<
 			number,
-			[string],
+			string,
 			SetStateWithReset<number>
 		> = {
 			type: 'family',
@@ -227,7 +200,7 @@ describe('Store', () => {
 	it('tracks dependencies on the resolved family member', async () => {
 		const first = primitive(1)
 		const second = primitive(10)
-		const family: AtomLike<number, [string], SetStateWithReset<number>> = {
+		const family: AtomLike<number, string, SetStateWithReset<number>> = {
 			type: 'family',
 			create: (key) => (key === 'first' ? first : second),
 		}
