@@ -21,6 +21,7 @@ describe('Store', () => {
 
 		expect(store.peek(count)).toBe(6)
 		expect(store.peek(doubled)).toBe(12)
+		expect(store.peek(str)).toBe('a')
 	})
 
 	it('hydrates atom family members before the store is returned', () => {
