@@ -1,11 +1,19 @@
 'use client'
-import { createContext, useContext, useSyncExternalStore } from 'react'
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useMemo,
+	useRef,
+	useSyncExternalStore,
+} from 'react'
 
 import {
 	createStore,
 	type AtomFamily,
 	type AtomSymbol,
 	type Hydrate,
+	type ResolvedAtom,
 } from './store'
 
 const StoreCtx = createContext(createStore())
@@ -24,18 +32,20 @@ export function StoreProvider({
 	)
 }
 
-function useAtomValueInternal<V, Key, E>(
+function useResolvedAtom<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
 	const store = useContext(StoreCtx)
-	const peek = () =>
-		atom.type === 'family' ? store.peek(atom, key!) : store.peek(atom)
-	const subscribe = (notify: () => void) =>
-		atom.type === 'family'
-			? store.subscribe(atom, key!, notify)
-			: store.subscribe(atom, notify)
-	return useSyncExternalStore(subscribe, peek, peek)
+	return useMemo(
+		() =>
+			atom.type === 'family' ? store.resolve(atom, key!) : store.resolve(atom),
+		[atom, key, store],
+	)
+}
+
+function useResolvedAtomValue<V, E>(atom: ResolvedAtom<V, E>) {
+	return useSyncExternalStore(atom.subscribe, atom.peek, atom.peek)
 }
 
 export function useAtomValue<V, Key, E>(
@@ -47,18 +57,7 @@ export function useAtomValue<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
-	return useAtomValueInternal(atom, key)
-}
-
-function useSetAtomInternal<V, Key, E>(
-	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
-	key?: Key,
-) {
-	const store = useContext(StoreCtx)
-	return (event: E) =>
-		atom.type === 'family'
-			? store.send(atom, key!, event)
-			: store.send(atom, event)
+	return useResolvedAtomValue(useResolvedAtom(atom, key))
 }
 
 export function useSetAtom<V, Key, E>(
@@ -70,7 +69,16 @@ export function useSetAtom<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
-	return useSetAtomInternal(atom, key)
+	const store = useContext(StoreCtx)
+	const resolvedAtomRef = useRef<ResolvedAtom<V, E> | undefined>(undefined)
+	return useCallback(
+		(event: E) => {
+			resolvedAtomRef.current ??=
+				atom.type === 'family' ? store.resolve(atom, key!) : store.resolve(atom)
+			resolvedAtomRef.current.send(event)
+		},
+		[atom, key, store],
+	)
 }
 
 export function useAtom<V, Key, E>(
@@ -84,8 +92,6 @@ export function useAtom<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
-	return [
-		useAtomValueInternal(atom, key),
-		useSetAtomInternal(atom, key),
-	] as const
+	const resolvedAtom = useResolvedAtom(atom, key)
+	return [useResolvedAtomValue(resolvedAtom), resolvedAtom.send] as const
 }

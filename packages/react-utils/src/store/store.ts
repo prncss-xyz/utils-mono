@@ -93,6 +93,12 @@ export type Effect<S, E> = (
 	selfSend: (event: E) => void,
 ) => void | (() => void)
 
+export type ResolvedAtom<S, E> = {
+	peek: () => S
+	send: (event: E) => void
+	subscribe: (notify: () => void) => () => void
+}
+
 export function primitive<S>(
 	getter: S | (() => S),
 	effect?: Effect<NoInfer<S>, SetStateWithReset<S>>,
@@ -395,6 +401,22 @@ class Store {
 		return () => {
 			instance.subscriptions.delete(notify)
 			this.updateMounted(instance)
+		}
+	}
+	resolve<S, Key, E>(
+		symbol: AtomFamily<S, Key, E>,
+		key: Key,
+	): ResolvedAtom<S, E>
+	resolve<S, E>(symbol: AtomSymbol<S, E>): ResolvedAtom<S, E>
+	resolve<S, Key, E>(
+		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+		key?: Key,
+	): ResolvedAtom<S, E> {
+		const instance = this.getInstance(symbol, key)
+		return {
+			peek: () => this.peekInstance(instance),
+			send: (event) => this.sendInstance(instance, event),
+			subscribe: (notify) => this.subscribeInstance(instance, notify),
 		}
 	}
 	subscribe<S, Key, E>(

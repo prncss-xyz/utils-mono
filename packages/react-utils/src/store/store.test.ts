@@ -455,6 +455,23 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledTimes(2)
 	})
 
+	it('reuses one resolved transient family member for all operations', async () => {
+		const create = vi.fn((key: string) => primitive(key))
+		const names = family(create, { TTL: TRANSIENT })
+		const store = createStore()
+		const member = store.resolve(names, 'first')
+		const subscriber = vi.fn()
+
+		const unsubscribe = member.subscribe(subscriber)
+		member.send('updated')
+		await flushMicrotask()
+
+		expect(member.peek()).toBe('updated')
+		expect(subscriber).toHaveBeenCalledOnce()
+		expect(create).toHaveBeenCalledOnce()
+		unsubscribe()
+	})
+
 	it('removes an unmounted atom family member in the next microtask', async () => {
 		const create = vi.fn((key: string) => primitive(key))
 		const names = family(create)
