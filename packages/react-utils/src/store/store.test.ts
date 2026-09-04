@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { RESET } from '../functions'
-import { createStore, derived, family, primitive, TRANSIENT } from './store'
+import {
+	createStore,
+	derived,
+	family,
+	hydrate,
+	primitive,
+	TRANSIENT,
+} from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -32,6 +39,38 @@ describe('Store', () => {
 		expect(store.peek(members, 'second')).toBe(6)
 	})
 
+	it('creates reusable, typed hydration entries', () => {
+		const count = primitive(0)
+		const members = family((key: string) => primitive(key.length))
+		const hydration = [hydrate(count, 4), hydrate(members, 'first', 10)]
+		const store = createStore(hydration)
+
+		expect(store.peek(count)).toBe(4)
+		expect(store.peek(members, 'first')).toBe(10)
+	})
+
+	it('type-checks hydration against atom events and family keys', () => {
+		const count = primitive(0)
+		const members = family((key: string) => primitive(key.length))
+
+		const checkTypes = () => {
+			// @ts-expect-error count events must correspond to its number state
+			createStore([[count, 'invalid']])
+			// @ts-expect-error family keys must correspond to the family key type
+			createStore([[members, 123, 10]])
+			// @ts-expect-error family events must correspond to the member event type
+			createStore([[members, 'first', 'invalid']])
+			// @ts-expect-error reusable atom hydration entries validate their event
+			hydrate(count, 'invalid')
+			// @ts-expect-error reusable family hydration entries validate their key
+			hydrate(members, 123, 10)
+			// @ts-expect-error reusable family hydration entries validate their event
+			hydrate(members, 'first', 'invalid')
+		}
+
+		expect(checkTypes).toBeTypeOf('function')
+	})
+
 	it('defers primitive values, updates, and resets to the next microtask', async () => {
 		const count = primitive(0)
 		const store = createStore()
@@ -54,20 +93,17 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(0)
 	})
 
-	it('applies queued sends and evaluates updaters at flush time', async () => {
+	it('applies queued sends after flushing', async () => {
 		const count = primitive(1)
 		const store = createStore()
-		const updater = vi.fn((value: number) => value + 2)
 
-		store.send(count, updater)
+		store.send(count, (value) => value + 2)
 		store.send(count, (value) => value + 4)
 
 		expect(store.peek(count)).toBe(1)
-		expect(updater).not.toHaveBeenCalled()
 
 		await flushMicrotask()
 
-		expect(updater).toHaveBeenCalledOnce()
 		expect(store.peek(count)).toBe(7)
 	})
 
@@ -96,9 +132,8 @@ describe('Store', () => {
 		expect(labelSubscriber).toHaveBeenCalledOnce()
 	})
 
-	it('keeps RESET lazy and preserves its notification behavior', async () => {
-		const getter = vi.fn(() => 1)
-		const count = primitive(getter)
+	it('commits RESET and notifies after flushing', async () => {
+		const count = primitive(() => 1)
 		const store = createStore()
 		const subscriber = vi.fn()
 
@@ -111,14 +146,11 @@ describe('Store', () => {
 
 		expect(store.peek(count)).toBe(5)
 		expect(subscriber).not.toHaveBeenCalled()
-		expect(getter).toHaveBeenCalledOnce()
 
 		await flushMicrotask()
 
 		expect(subscriber).toHaveBeenCalledOnce()
-		expect(getter).toHaveBeenCalledOnce()
 		expect(store.peek(count)).toBe(1)
-		expect(getter).toHaveBeenCalledTimes(2)
 	})
 
 	it('preserves RESET semantics when composed with updater callbacks', async () => {

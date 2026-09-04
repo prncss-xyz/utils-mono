@@ -69,6 +69,22 @@ export type Hydrate = readonly HydrateEntry[]
 type HydrateEntry =
 	| readonly [symbol: AtomSymbol<any, any>, event: any]
 	| readonly [symbol: AtomFamily<any, any, any>, key: any, event: any]
+type ValidHydrateEntry<Entry> = Entry extends readonly [
+	infer Symbol extends AtomFamily<any, any, any>,
+	unknown,
+	unknown,
+]
+	? [Symbol] extends [AtomFamily<any, infer Key, infer Event>]
+		? readonly [Symbol, Key, Event]
+		: never
+	: Entry extends readonly [infer Symbol extends AtomSymbol<any, any>, unknown]
+		? [Symbol] extends [AtomSymbol<any, infer Event>]
+			? readonly [Symbol, Event]
+			: never
+		: never
+type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
+	readonly [Index in keyof Entries]: ValidHydrateEntry<Entries[Index]>
+}
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
 export type Effect<S, E> = (
@@ -113,6 +129,25 @@ export function family<S, K, E>(
 		TTL: opts?.TTL ?? 0,
 		hash: opts?.hash ?? id,
 	}
+}
+
+export function hydrate<S, E>(
+	symbol: AtomSymbol<S, E>,
+	event: NoInfer<E>,
+): readonly [AtomSymbol<S, E>, E]
+export function hydrate<S, Key, E>(
+	symbol: AtomFamily<S, Key, E>,
+	key: NoInfer<Key>,
+	event: NoInfer<E>,
+): readonly [AtomFamily<S, Key, E>, Key, E]
+export function hydrate(
+	symbol: AtomSymbol<any, any> | AtomFamily<any, any, any>,
+	keyOrEvent: any,
+	event?: any,
+) {
+	return symbol.type === 'family'
+		? ([symbol, keyOrEvent, event] as const)
+		: ([symbol, keyOrEvent] as const)
 }
 
 type Tasks = {
@@ -380,6 +415,10 @@ class Store {
 	}
 }
 
+export function createStore(): Store
+export function createStore<
+	const Entries extends readonly (readonly unknown[])[],
+>(hydrate: Entries & ValidHydrate<Entries>): Store
 export function createStore(hydrate?: Hydrate) {
 	return new Store(hydrate)
 }

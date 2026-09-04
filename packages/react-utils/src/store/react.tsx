@@ -18,7 +18,7 @@ export function StoreProvider({
 	hydrate?: Hydrate
 }) {
 	return (
-		<StoreCtx.Provider value={createStore(hydrate)}>
+		<StoreCtx.Provider value={hydrate ? createStore(hydrate) : createStore()}>
 			{children}
 		</StoreCtx.Provider>
 	)
