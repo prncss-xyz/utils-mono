@@ -57,11 +57,11 @@ export type AtomFamily<S, Key, E> = {
 	hash: (k: Key) => unknown
 }
 
-type Read = {
+export type Read = {
 	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
 	<S, E>(symbol: AtomSymbol<S, E>): S
 }
-type Write = {
+export type Write = {
 	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, event: E): void
 	<S, E>(symbol: AtomSymbol<S, E>, event: E): void
 }
@@ -70,10 +70,10 @@ export type HydrateEntry =
 	| readonly [symbol: AtomFamily<any, any, any>, key: any, event: any]
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
-type Effect<S, E> = (
+export type Effect<S, E> = (
 	next: S | undefined,
 	last: S | undefined,
-	send: (event: E) => void,
+	selfSend: (event: E) => void,
 ) => void | (() => void)
 
 export function primitive<S>(
