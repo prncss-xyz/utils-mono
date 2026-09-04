@@ -17,9 +17,6 @@ export default async function Page() {
 				</Section>
 				<Section variant='section' padding={10} dividers={['top']}>
 					<VStack>
-						<Link as={RouterLink} href='/store2' isStandalone>
-							Store2
-						</Link>
 						<Link as={RouterLink} href='/store' isStandalone>
 							Store
 						</Link>
