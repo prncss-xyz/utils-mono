@@ -289,7 +289,7 @@ class Store {
 		this.runEffect(symbol, instance, symbol.effect, next)
 	}
 	private flush() {
-		if (!this.tasks) return
+		if (!this.tasks) throw new Error('unexpected call to flush')
 		const { primitives, effects, unmountedFamilyEntries } = this.tasks
 		this.tasks = undefined
 		this.flushingEffects = effects
