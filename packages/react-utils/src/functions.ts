@@ -22,6 +22,15 @@ export function cached<K, V, Args extends any[]>(
 	}
 }
 
+export function merge<P extends object>(p: P, q: Partial<P>): P {
+	let res: P | undefined = undefined
+	for (const k in q) {
+		if (res) (res as any)[k] = q[k]
+		else if (p[k] !== q[k]) res = { ...p, [k]: q[k] }
+	}
+	return res ?? p
+}
+
 export type AnyFunction = (...args: any[]) => any
 export function isFunction(u: unknown): u is AnyFunction {
 	return typeof u === 'function'
