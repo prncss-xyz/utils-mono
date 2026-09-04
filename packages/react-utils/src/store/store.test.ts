@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { RESET } from '../store/functions'
+import { RESET } from '../functions'
 import { createStore, derived, family, primitive, TRANSIENT } from './store'
 
 const flushMicrotask = () => Promise.resolve()
@@ -8,6 +8,7 @@ const flushMicrotask = () => Promise.resolve()
 describe('Store', () => {
 	it('hydrates atoms before the store is returned', () => {
 		const count = primitive(0)
+		const str = primitive('')
 		const doubled = derived(
 			(read) => read(count) * 2,
 			(_read, write, value: number) => write(count, value / 2),
@@ -15,6 +16,7 @@ describe('Store', () => {
 		const store = createStore([
 			[count, 4],
 			[doubled, 12],
+			[str, 'a'],
 		])
 
 		expect(store.peek(count)).toBe(6)

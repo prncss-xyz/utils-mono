@@ -65,7 +65,8 @@ export type Write = {
 	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, event: E): void
 	<S, E>(symbol: AtomSymbol<S, E>, event: E): void
 }
-export type HydrateEntry =
+export type Hydrate = readonly HydrateEntry[]
+type HydrateEntry =
 	| readonly [symbol: AtomSymbol<any, any>, event: any]
 	| readonly [symbol: AtomFamily<any, any, any>, key: any, event: any]
 type Getter<S> = (read: Read) => S
@@ -125,7 +126,7 @@ class Store {
 	private tasks: Tasks | undefined = undefined
 	private flushingEffects: Set<Instance<any>> | undefined
 	private hydrating = true
-	constructor(hydrate: readonly HydrateEntry[] = []) {
+	constructor(hydrate: Hydrate = []) {
 		for (const entry of hydrate) {
 			const [symbol, keyOrEvent, event] = entry
 			if (symbol.type === 'family') this.send(symbol, keyOrEvent, event)
@@ -379,6 +380,6 @@ class Store {
 	}
 }
 
-export function createStore(hydrate?: readonly HydrateEntry[]) {
+export function createStore(hydrate?: Hydrate) {
 	return new Store(hydrate)
 }

@@ -5,7 +5,7 @@ import {
 	createStore,
 	type AtomFamily,
 	type AtomSymbol,
-	type HydrateEntry,
+	type Hydrate,
 } from './store'
 
 const StoreCtx = createContext(createStore())
@@ -15,7 +15,7 @@ export function StoreProvider({
 	hydrate,
 }: {
 	children: React.ReactNode
-	hydrate?: readonly HydrateEntry[]
+	hydrate?: Hydrate
 }) {
 	return (
 		<StoreCtx.Provider value={createStore(hydrate)}>
