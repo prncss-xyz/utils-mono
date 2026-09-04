@@ -26,6 +26,9 @@ export default async function Page() {
 						<Link as={RouterLink} href='/multisteps' isStandalone>
 							Multisteps
 						</Link>
+						<Link as={RouterLink} href='/scope' isStandalone>
+							Scope
+						</Link>
 					</VStack>
 				</Section>
 			</VStack>

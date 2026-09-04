@@ -12,6 +12,8 @@ import type { getConfig as File_Index_getConfig } from './pages/index';
 // prettier-ignore
 import type { getConfig as File_Multisteps_getConfig } from './pages/multisteps';
 // prettier-ignore
+import type { getConfig as File_Scope_getConfig } from './pages/scope';
+// prettier-ignore
 import type { getConfig as File_Store_getConfig } from './pages/store';
 
 // prettier-ignore
@@ -20,6 +22,7 @@ type Page =
 | ({ path: '/dialog' } & GetConfigResponse<typeof File_Dialog_getConfig>)
 | ({ path: '/' } & GetConfigResponse<typeof File_Index_getConfig>)
 | ({ path: '/multisteps' } & GetConfigResponse<typeof File_Multisteps_getConfig>)
+| ({ path: '/scope' } & GetConfigResponse<typeof File_Scope_getConfig>)
 | ({ path: '/store' } & GetConfigResponse<typeof File_Store_getConfig>);
 
 // prettier-ignore

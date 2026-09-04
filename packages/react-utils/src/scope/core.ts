@@ -52,7 +52,6 @@ type ScopeEntry = Readonly<{
 type ScopeInstance<Value> = {
 	readonly value: Value
 	count: number
-	mounted: boolean
 	readonly scopes: ScopeEntry[]
 	readonly subscribers: ScopeInstance<any>[]
 	readonly dependents: ScopeInstance<any>[]
@@ -81,10 +80,15 @@ export class ScopeContext {
 
 export class ScopeStore {
 	private readonly contents = new Map<ScopeLike<any>, ScopeInstance<any>[]>()
-	private tasks: { mountChange: ScopeInstance<any>[] } | undefined
+	private tasks:
+		| {
+				mount: ScopeInstance<any>[]
+				unmount: ScopeInstance<any>[]
+		  }
+		| undefined
 	private getTasks() {
 		if (!this.tasks) {
-			this.tasks = { mountChange: [] }
+			this.tasks = { mount: [], unmount: [] }
 			queueMicrotask(this.flush.bind(this))
 		}
 		return this.tasks
@@ -93,17 +97,14 @@ export class ScopeStore {
 		if (!this.tasks) throw new Error('unexpected call to flush')
 		const tasks = this.tasks
 		this.tasks = undefined
-		for (const instance of tasks.mountChange) {
-			if (!instance.mounted && instance.count > 0) {
-				instance.mounted = true
+		for (const instance of tasks.mount) {
+			if (instance.count > 0)
 				instance.cleanup = instance.symbol.onMount?.(instance.value)
-				continue
-			}
-			if (instance.mounted && instance.count === 0) {
-				instance.mounted = false
+		}
+		for (const instance of tasks.unmount) {
+			if (instance.count === 0) {
 				instance.cleanup?.()
 				// TODO: remove entry
-				continue
 			}
 		}
 	}
@@ -136,7 +137,6 @@ export class ScopeStore {
 		const entry: ScopeInstance<Value> = {
 			value,
 			count: 0,
-			mounted: false,
 			cleanup: undefined,
 			scopes,
 			subscribers,
@@ -150,14 +150,13 @@ export class ScopeStore {
 		entries.push(entry)
 		return entry
 	}
-	// TODO: figure out order
 	private modifyMount<T>(instance: ScopeInstance<T>, delta: -1 | 1) {
-		if (instance.count === 0) this.getTasks().mountChange.push(instance)
+		const mounting = instance.count === 0
 		instance.count += delta
-		for (const subscriber of instance.subscribers) {
+		for (const subscriber of instance.subscribers)
 			this.modifyMount(subscriber, delta)
-		}
-		if (instance.count === 0) this.getTasks().mountChange.push(instance)
+		if (mounting) this.getTasks().mount.push(instance)
+		if (instance.count === 0) this.getTasks().unmount.unshift(instance)
 	}
 	mount<T>(instance: ScopeInstance<T>) {
 		this.modifyMount(instance, 1)
