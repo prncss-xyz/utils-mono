@@ -1,5 +1,6 @@
 import { isoAssert } from '../functions'
 import { sortedPush } from '../utils'
+import { findLeaf, insertLeaf, removeLeaf, type LatticeNode } from './lattice'
 
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
 
@@ -69,31 +70,6 @@ type ScopeInstance<Value> = {
 	cleanup: void | (() => void)
 }
 
-type ScopeStep = {
-	readonly type: 'step'
-	readonly symbol: PrimitiveScopeSymbol<any>
-	readonly values: Map<any, StoredScope>
-}
-
-type StoredScope = ScopeStep | ScopeInstance<any>
-
-function buildScopeSteps(
-	instance: ScopeInstance<any>,
-	depth: number,
-): ScopeStep {
-	const scope = instance.scopes[depth]
-	isoAssert(scope, 'scope lattice invariant: scope path is missing')
-	const step: ScopeStep = {
-		type: 'step',
-		symbol: scope.symbol,
-		values: new Map(),
-	}
-	const isTerminal = depth === instance.scopes.length - 1
-	const child = isTerminal ? instance : buildScopeSteps(instance, depth + 1)
-	step.values.set(scope.value, child)
-	return step
-}
-
 export class ScopeContext {
 	private readonly scopeValues
 	private constructor(scopeValues: Map<PrimitiveScopeSymbol<any>, any>) {
@@ -116,7 +92,10 @@ export class ScopeContext {
 }
 
 export class ScopeStore {
-	private readonly contents = new Map<ScopeLike<any>, StoredScope>()
+	private readonly contents = new Map<
+		ScopeLike<any>,
+		LatticeNode<ScopeInstance<any>>
+	>()
 	private tasks:
 		| {
 				mount: ScopeInstance<any>[]
@@ -129,101 +108,6 @@ export class ScopeStore {
 			queueMicrotask(this.flush.bind(this))
 		}
 		return this.tasks
-	}
-	private findInstance(
-		context: ScopeContext,
-		root: StoredScope | undefined,
-	): ScopeInstance<any> | undefined {
-		let stored = root
-		while (stored?.type === 'step') {
-			const value = context.resolveScope(stored.symbol)
-			stored = stored.values.get(value)
-		}
-		return stored
-	}
-	private insertInstance(instance: ScopeInstance<any>) {
-		const root = this.contents.get(instance.symbol)
-		if (!root) {
-			const newRoot =
-				instance.scopes.length === 0 ? instance : buildScopeSteps(instance, 0)
-			this.contents.set(instance.symbol, newRoot)
-			return
-		}
-		isoAssert(
-			instance.scopes.length > 0 && root.type === 'step',
-			'scope lattice invariant: scope instance prefix collision',
-		)
-		let step = root
-		for (let depth = 0; depth < instance.scopes.length; depth++) {
-			const scope = instance.scopes[depth]
-			isoAssert(scope, 'scope lattice invariant: scope path is missing')
-			isoAssert(
-				step.symbol === scope.symbol,
-				'scope lattice invariant: conflicting scope step symbol',
-			)
-			const key = scope.value
-			const stored = step.values.get(key)
-			const isTerminal = depth === instance.scopes.length - 1
-			if (!stored) {
-				const child = isTerminal
-					? instance
-					: buildScopeSteps(instance, depth + 1)
-				step.values.set(key, child)
-				return
-			}
-			isoAssert(
-				!isTerminal && stored.type === 'step',
-				'scope lattice invariant: scope instance prefix collision',
-			)
-			step = stored
-		}
-		isoAssert(false, 'scope lattice invariant: insertion did not terminate')
-	}
-	private removeStoredInstance(instance: ScopeInstance<any>) {
-		const root = this.contents.get(instance.symbol)
-		isoAssert(root, 'scope instance root is missing')
-		if (root.type === 'scopeInstance') {
-			isoAssert(root === instance, 'scope instance root identity is mismatched')
-			this.contents.delete(instance.symbol)
-			return
-		}
-		isoAssert(
-			instance.scopes.length > 0,
-			'scope lattice invariant: scope path is missing',
-		)
-		const path: { step: ScopeStep; key: any }[] = []
-		let stored: StoredScope = root
-		for (let depth = 0; depth < instance.scopes.length; depth++) {
-			const scope = instance.scopes[depth]
-			isoAssert(scope, 'scope lattice invariant: scope path is missing')
-			isoAssert(
-				stored.type === 'step' && stored.symbol === scope.symbol,
-				'scope lattice invariant: removal path symbol is mismatched',
-			)
-			const key = scope.value
-			path.push({ step: stored, key })
-			const child = stored.values.get(key)
-			isoAssert(child, 'scope lattice invariant: removal path is missing')
-			stored = child
-		}
-		isoAssert(
-			stored === instance,
-			'scope lattice invariant: removal identity is mismatched',
-		)
-		const terminal = path.at(-1)
-		isoAssert(terminal, 'scope lattice invariant: removal path is empty')
-		terminal.step.values.delete(terminal.key)
-		for (let index = path.length - 2; index >= 0; index--) {
-			const parent = path[index]
-			const child = path[index + 1]
-			isoAssert(
-				parent && child,
-				'scope lattice invariant: removal path is invalid',
-			)
-			if (child.step.values.size > 0) break
-			parent.step.values.delete(parent.key)
-		}
-		if (root.values.size === 0) this.contents.delete(instance.symbol)
 	}
 	private removeInstance(
 		instance: ScopeInstance<any>,
@@ -240,7 +124,7 @@ export class ScopeStore {
 			isoAssert(index !== -1, 'scope dependency link is missing')
 			subscriber.dependents.splice(index, 1)
 		}
-		this.removeStoredInstance(instance)
+		removeLeaf(this.contents, instance)
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
@@ -262,7 +146,7 @@ export class ScopeStore {
 		context: ScopeContext,
 		symbol: ScopeLike<Value>,
 	): ScopeInstance<Value> {
-		const cached = this.findInstance(context, this.contents.get(symbol))
+		const cached = findLeaf(context, this.contents.get(symbol))
 		if (cached) return cached
 		const scopes: ScopeEntry[] = []
 		const subscribers: ScopeInstance<any>[] = []
@@ -292,7 +176,7 @@ export class ScopeStore {
 		}
 		for (const subscriber of subscribers)
 			for (const scope of subscriber.scopes) sortedPush(scopes, scope)
-		this.insertInstance(entry)
+		insertLeaf(this.contents, entry)
 		for (const subscriber of subscribers)
 			sortedPush(subscriber.dependents, entry)
 		return entry
