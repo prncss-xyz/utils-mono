@@ -6,18 +6,18 @@ type Getter<Value> = (read: Read) => Value
 
 let nextIndex = 0
 
-export type PrimaryScopeSymbol<Value> = Readonly<{
-	type: 'primaryScope'
+export type PrimitiveScopeSymbol<Value> = Readonly<{
+	type: 'primitiveScope'
 	index: number
 	onMount: OnMount<Value> | undefined
 	value?: Value
 }>
 
-export function primaryScope<Value>(
+export function primitiveScope<Value>(
 	onMount?: OnMount<Value>,
-): PrimaryScopeSymbol<Value> {
+): PrimitiveScopeSymbol<Value> {
 	return {
-		type: 'primaryScope',
+		type: 'primitiveScope',
 		index: nextIndex++,
 		onMount,
 	}
@@ -25,22 +25,24 @@ export function primaryScope<Value>(
 
 export type OnMount<Value> = (value: Value) => void | (() => void)
 
-type ScopedSymbol<Value> = Readonly<{
-	type: 'secondaryScope'
+type DerivedScopeSymbol<Value> = Readonly<{
+	type: 'derivedScope'
 	index: number
 	onMount: OnMount<Value> | undefined
 	getter: Getter<Value>
 	value?: Value
 }>
 
-export type ScopeLike<Value> = PrimaryScopeSymbol<Value> | ScopedSymbol<Value>
+export type ScopeLike<Value> =
+	| PrimitiveScopeSymbol<Value>
+	| DerivedScopeSymbol<Value>
 
 export function derivedScope<Value>(
 	getter: Getter<Value>,
 	onMount?: OnMount<Value>,
-): ScopedSymbol<Value> {
+): DerivedScopeSymbol<Value> {
 	return {
-		type: 'secondaryScope',
+		type: 'derivedScope',
 		index: nextIndex++,
 		onMount,
 		getter,
@@ -48,7 +50,7 @@ export function derivedScope<Value>(
 }
 
 type ScopeEntry = Readonly<{
-	symbol: PrimaryScopeSymbol<any>
+	symbol: PrimitiveScopeSymbol<any>
 	value: any
 }>
 
@@ -64,18 +66,20 @@ type ScopeInstance<Value> = {
 
 export class ScopeContext {
 	private readonly scopeValues
-	private constructor(scopeValues: Map<PrimaryScopeSymbol<any>, any>) {
+	private constructor(scopeValues: Map<PrimitiveScopeSymbol<any>, any>) {
 		this.scopeValues = scopeValues
 	}
 	static init() {
 		return new ScopeContext(new Map())
 	}
-	childScope<T>(symbol: PrimaryScopeSymbol<T>, value: T) {
-		const scopeValues = new Map<PrimaryScopeSymbol<any>, any>(this.scopeValues)
+	childScope<T>(symbol: PrimitiveScopeSymbol<T>, value: T) {
+		const scopeValues = new Map<PrimitiveScopeSymbol<any>, any>(
+			this.scopeValues,
+		)
 		scopeValues.set(symbol, value)
 		return new ScopeContext(scopeValues)
 	}
-	resolveScope<T>(symbol: PrimaryScopeSymbol<T>): T {
+	resolveScope<T>(symbol: PrimitiveScopeSymbol<T>): T {
 		if (this.scopeValues.has(symbol)) return this.scopeValues.get(symbol)
 		throw new Error(`You are trying to access a scope where it is not provided`)
 	}
@@ -130,7 +134,7 @@ export class ScopeStore {
 		for (const instance of tasks.unmount) {
 			if (instance.count === 0) {
 				instance.cleanup?.()
-				if (instance.symbol.type === 'primaryScope')
+				if (instance.symbol.type === 'primitiveScope')
 					this.removeInstance(instance)
 			}
 		}
@@ -142,21 +146,23 @@ export class ScopeStore {
 		const entries = this.contents.get(symbol) ?? []
 		this.contents.set(symbol, entries)
 		outer: for (const entry of entries) {
-			for (const { symbol: s, value } of entry.scopes)
-				if (!Object.is(context.resolveScope(s), value)) continue outer
+			for (const { symbol: scope, value } of entry.scopes) {
+				if (!Object.is(context.resolveScope(scope), value)) continue outer
+			}
 			return entry
 		}
 		const scopes: ScopeEntry[] = []
 		const subscribers: ScopeInstance<any>[] = []
 		let value: Value
-		if (symbol.type === 'primaryScope') {
+		if (symbol.type === 'primitiveScope') {
 			value = context.resolveScope(symbol)
 			sortedPush(scopes, { symbol, value })
 		} else {
-			value = symbol.getter((s) => {
-				const instance = this.resolve(context, s)
-				if (s.type === 'primaryScope')
-					sortedPush(scopes, { symbol: s, value: instance.value })
+			value = symbol.getter((dependency) => {
+				const instance = this.resolve(context, dependency)
+				if (dependency.type === 'primitiveScope') {
+					sortedPush(scopes, { symbol: dependency, value: instance.value })
+				}
 				sortedPush(subscribers, instance)
 				return instance.value
 			})

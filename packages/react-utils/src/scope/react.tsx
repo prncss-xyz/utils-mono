@@ -1,11 +1,11 @@
 import { createContext, use, useEffect, type FC, type ReactNode } from 'react'
 
 import {
-	primaryScope as corePrimaryScope,
+	primitiveScope as corePrimitiveScope,
 	ScopeContext,
 	ScopeStore,
 	type OnMount,
-	type PrimaryScopeSymbol,
+	type PrimitiveScopeSymbol,
 	type ScopeLike,
 } from './core'
 
@@ -19,27 +19,25 @@ type Props<Value> = Readonly<{
 	children: ReactNode
 }>
 
-export function primaryScope<Value>(
+export function primitiveScope<Value>(
 	onMount?: OnMount<Value>,
-): FC<Props<Value>> & PrimaryScopeSymbol<Value> {
-	const s = corePrimaryScope(onMount)
-	function Component({ value, children }: Props<Value>) {
+): FC<Props<Value>> & PrimitiveScopeSymbol<Value> {
+	const symbol = corePrimitiveScope(onMount)
+	function ScopeProvider({ value, children }: Props<Value>) {
 		const { store, context } = use(ScopingProvider)
+		const scope = ScopeProvider as unknown as PrimitiveScopeSymbol<Value>
 		return (
 			<ScopingProvider
 				value={{
 					store,
-					context: context.childScope(Component as unknown as typeof s, value),
+					context: context.childScope(scope, value),
 				}}
 			>
 				{children}
 			</ScopingProvider>
 		)
 	}
-	for (const [k, v] of Object.entries(s)) {
-		;(Component as any)[k] = v
-	}
-	return Component as any
+	return Object.assign(ScopeProvider, symbol)
 }
 
 export function useScope<Value>(scope: ScopeLike<Value>) {

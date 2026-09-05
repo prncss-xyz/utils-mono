@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { derivedScope, primaryScope, ScopeContext, ScopeStore } from './core'
+import { derivedScope, primitiveScope, ScopeContext, ScopeStore } from './core'
 
 const flushMicrotask = () => Promise.resolve()
 
 describe('ScopeStore', () => {
 	it('mounts dependencies before dependents and unmounts them in reverse order', async () => {
 		const lifecycle: string[] = []
-		const dependency = primaryScope(() => {
+		const dependency = primitiveScope(() => {
 			lifecycle.push('mount dependency')
 			return () => lifecycle.push('unmount dependency')
 		})
@@ -35,8 +35,8 @@ describe('ScopeStore', () => {
 		])
 	})
 
-	it('removes an unmounted primary instance from the cache', async () => {
-		const scope = primaryScope<string>()
+	it('removes an unmounted primitive instance from the cache', async () => {
+		const scope = primitiveScope<string>()
 		const store = new ScopeStore()
 		const context = ScopeContext.init().childScope(scope, 'value')
 		const instance = store.resolve(context, scope)
@@ -49,8 +49,8 @@ describe('ScopeStore', () => {
 		expect(store.resolve(context, scope)).not.toBe(instance)
 	})
 
-	it('removes every transitive dependent of an unmounted primary instance', async () => {
-		const scope = primaryScope<string>()
+	it('removes every transitive dependent of an unmounted primitive instance', async () => {
+		const scope = primitiveScope<string>()
 		const dependent = derivedScope((read) => read(scope).toUpperCase())
 		const transitive = derivedScope((read) => `${read(dependent)}!`)
 		const store = new ScopeStore()
@@ -69,8 +69,8 @@ describe('ScopeStore', () => {
 		expect(store.resolve(context, transitive)).not.toBe(transitiveInstance)
 	})
 
-	it('preserves entries belonging to another primary scope instance', async () => {
-		const scope = primaryScope<string>()
+	it('preserves entries belonging to another primitive scope instance', async () => {
+		const scope = primitiveScope<string>()
 		const dependent = derivedScope((read) => read(scope).toUpperCase())
 		const store = new ScopeStore()
 		const firstContext = ScopeContext.init().childScope(scope, 'first')
@@ -94,7 +94,7 @@ describe('ScopeStore', () => {
 	})
 
 	it('removes shared dependents only once', async () => {
-		const scope = primaryScope<string>()
+		const scope = primitiveScope<string>()
 		const left = derivedScope((read) => read(scope).toUpperCase())
 		const right = derivedScope((read) => read(scope).toLowerCase())
 		const shared = derivedScope((read) => `${read(left)}:${read(right)}`)

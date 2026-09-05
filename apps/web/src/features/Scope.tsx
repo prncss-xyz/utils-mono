@@ -4,7 +4,7 @@ import { Card } from '@astryxdesign/core/Card'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
-import { derivedScope, primaryScope, useScope } from '@prncss-xyz/react-utils'
+import { derivedScope, primitiveScope, useScope } from '@prncss-xyz/react-utils'
 import { useEffect } from 'react'
 
 const logLifecycle = (name: string) => (value: string) => {
@@ -16,8 +16,8 @@ const logLifecycle = (name: string) => (value: string) => {
 	}
 }
 
-const PlaceScope = primaryScope<string>(logLifecycle('place'))
-const ColorScope = primaryScope<string>(logLifecycle('color'))
+const PlaceScope = primitiveScope<string>(logLifecycle('place'))
+const ColorScope = primitiveScope<string>(logLifecycle('color'))
 
 const descriptionScope = derivedScope(
 	(read) => `${read(ColorScope)} in the ${read(PlaceScope)} scope`,
