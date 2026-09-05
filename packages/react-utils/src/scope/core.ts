@@ -70,7 +70,7 @@ type ScopeInstance<Value> = {
 }
 
 type ScopeStep = {
-	readonly type: 'scopeStep'
+	readonly type: 'step'
 	readonly symbol: PrimitiveScopeSymbol<any>
 	readonly values: Map<any, StoredScope>
 }
@@ -84,7 +84,7 @@ function buildScopeSteps(
 	const scope = instance.scopes[depth]
 	isoAssert(scope, 'scope lattice invariant: scope path is missing')
 	const step: ScopeStep = {
-		type: 'scopeStep',
+		type: 'step',
 		symbol: scope.symbol,
 		values: new Map(),
 	}
@@ -135,7 +135,7 @@ export class ScopeStore {
 		root: StoredScope | undefined,
 	): ScopeInstance<any> | undefined {
 		let stored = root
-		while (stored?.type === 'scopeStep') {
+		while (stored?.type === 'step') {
 			const value = context.resolveScope(stored.symbol)
 			stored = stored.values.get(value)
 		}
@@ -150,7 +150,7 @@ export class ScopeStore {
 			return
 		}
 		isoAssert(
-			instance.scopes.length > 0 && root.type === 'scopeStep',
+			instance.scopes.length > 0 && root.type === 'step',
 			'scope lattice invariant: scope instance prefix collision',
 		)
 		let step = root
@@ -172,7 +172,7 @@ export class ScopeStore {
 				return
 			}
 			isoAssert(
-				!isTerminal && stored.type === 'scopeStep',
+				!isTerminal && stored.type === 'step',
 				'scope lattice invariant: scope instance prefix collision',
 			)
 			step = stored
@@ -197,7 +197,7 @@ export class ScopeStore {
 			const scope = instance.scopes[depth]
 			isoAssert(scope, 'scope lattice invariant: scope path is missing')
 			isoAssert(
-				stored.type === 'scopeStep' && stored.symbol === scope.symbol,
+				stored.type === 'step' && stored.symbol === scope.symbol,
 				'scope lattice invariant: removal path symbol is mismatched',
 			)
 			const key = scope.value
