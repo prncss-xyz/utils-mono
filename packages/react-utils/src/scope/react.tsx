@@ -26,7 +26,12 @@ export function primaryScope<Value>(
 	function Component({ value, children }: Props<Value>) {
 		const { store, context } = use(ScopingProvider)
 		return (
-			<ScopingProvider value={{ store, context: context.childScope(s, value) }}>
+			<ScopingProvider
+				value={{
+					store,
+					context: context.childScope(Component as unknown as typeof s, value),
+				}}
+			>
 				{children}
 			</ScopingProvider>
 		)
