@@ -6,7 +6,7 @@ import {
 	isReset,
 	type SetStateWithReset,
 } from '../functions'
-import { call, isMounted, sortedPush, sortedRemove } from './utils'
+import { call, isMounted, sortedPush, sortedRemove } from '../utils'
 
 export const TRANSIENT = -1
 

@@ -1,3 +1,5 @@
+import { sortedPush } from '../utils'
+
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
 type Getter<Value> = (read: Read) => Value
 
@@ -124,13 +126,13 @@ export class ScopeStore {
 		let value: Value
 		if (symbol.type === 'scope') {
 			value = context.resolveScope(symbol)
-			scopes.push({ symbol, value })
+			sortedPush(scopes, { symbol, value })
 		} else {
 			value = symbol.getter((s) => {
 				const instance = this.resolve(context, s)
 				if (s.type === 'scope')
-					scopes.push({ symbol: s, value: instance.value })
-				subscribers.push(instance)
+					sortedPush(scopes, { symbol: s, value: instance.value })
+				sortedPush(subscribers, instance)
 				return instance.value
 			})
 		}
@@ -144,8 +146,8 @@ export class ScopeStore {
 			dependents: [],
 		}
 		for (const subscriber of subscribers) {
-			subscriber.dependents.push(entry)
-			for (const scope of subscriber.scopes) scopes.push(scope)
+			sortedPush(subscriber.dependents, entry)
+			for (const scope of subscriber.scopes) sortedPush(scopes, scope)
 		}
 		entries.push(entry)
 		return entry

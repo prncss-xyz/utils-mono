@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { sortedPush, sortedRemove } from './utils'
+import { sortedPush, sortedRemove } from '.'
 
 type IndexedValue = { symbol: { index: number } }
 
