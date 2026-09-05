@@ -12,6 +12,13 @@ export function exhaustive(n: never): never {
 	throw new Error(`unexpected value ${n}`)
 }
 
+export function isoAssert(
+	condition: unknown,
+	message?: string,
+): asserts condition {
+	if (!condition) throw new Error(message ?? 'Assertion failed')
+}
+
 export function cached<K, V, Args extends any[]>(
 	fn: (k: K, ...args: Args) => V,
 ) {

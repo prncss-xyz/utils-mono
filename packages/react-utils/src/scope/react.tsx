@@ -1,7 +1,7 @@
 import { createContext, use, useEffect, type FC, type ReactNode } from 'react'
 
 import {
-	corePrimaryScope,
+	primaryScope as corePrimaryScope,
 	ScopeContext,
 	ScopeStore,
 	type OnMount,

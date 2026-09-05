@@ -1,3 +1,4 @@
+import { isoAssert } from '../functions'
 import { sortedPush } from '../utils'
 
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
@@ -6,17 +7,17 @@ type Getter<Value> = (read: Read) => Value
 let nextIndex = 0
 
 export type PrimaryScopeSymbol<Value> = Readonly<{
-	type: 'scope'
+	type: 'primaryScope'
 	index: number
 	onMount: OnMount<Value> | undefined
 	value?: Value
 }>
 
-export function corePrimaryScope<Value>(
+export function primaryScope<Value>(
 	onMount?: OnMount<Value>,
 ): PrimaryScopeSymbol<Value> {
 	return {
-		type: 'scope',
+		type: 'primaryScope',
 		index: nextIndex++,
 		onMount,
 	}
@@ -25,7 +26,7 @@ export function corePrimaryScope<Value>(
 export type OnMount<Value> = (value: Value) => void | (() => void)
 
 type ScopedSymbol<Value> = Readonly<{
-	type: 'scoped'
+	type: 'secondaryScope'
 	index: number
 	onMount: OnMount<Value> | undefined
 	getter: Getter<Value>
@@ -39,7 +40,7 @@ export function derivedScope<Value>(
 	onMount?: OnMount<Value>,
 ): ScopedSymbol<Value> {
 	return {
-		type: 'scoped',
+		type: 'secondaryScope',
 		index: nextIndex++,
 		onMount,
 		getter,
@@ -95,8 +96,31 @@ export class ScopeStore {
 		}
 		return this.tasks
 	}
+	private removeInstance(
+		instance: ScopeInstance<any>,
+		removed = new Set<ScopeInstance<any>>(),
+	) {
+		if (removed.has(instance)) return
+		removed.add(instance)
+		isoAssert(instance.count === 0, 'cannot remove a mounted scope instance')
+
+		for (const dependent of [...instance.dependents])
+			this.removeInstance(dependent, removed)
+		for (const subscriber of instance.subscribers) {
+			const index = subscriber.dependents.indexOf(instance)
+			isoAssert(index !== -1, 'scope dependency link is missing')
+			subscriber.dependents.splice(index, 1)
+		}
+
+		const entries = this.contents.get(instance.symbol)
+		isoAssert(entries, 'scope instance entries are missing')
+		const index = entries.indexOf(instance)
+		isoAssert(index !== -1, 'scope instance entry is missing')
+		entries.splice(index, 1)
+		if (entries.length === 0) this.contents.delete(instance.symbol)
+	}
 	private flush() {
-		if (!this.tasks) throw new Error('unexpected call to flush')
+		isoAssert(this.tasks, 'unexpected call to flush')
 		const tasks = this.tasks
 		this.tasks = undefined
 		for (const instance of tasks.mount) {
@@ -106,7 +130,8 @@ export class ScopeStore {
 		for (const instance of tasks.unmount) {
 			if (instance.count === 0) {
 				instance.cleanup?.()
-				// TODO: remove entry
+				if (instance.symbol.type === 'primaryScope')
+					this.removeInstance(instance)
 			}
 		}
 	}
@@ -124,13 +149,13 @@ export class ScopeStore {
 		const scopes: ScopeEntry[] = []
 		const subscribers: ScopeInstance<any>[] = []
 		let value: Value
-		if (symbol.type === 'scope') {
+		if (symbol.type === 'primaryScope') {
 			value = context.resolveScope(symbol)
 			sortedPush(scopes, { symbol, value })
 		} else {
 			value = symbol.getter((s) => {
 				const instance = this.resolve(context, s)
-				if (s.type === 'scope')
+				if (s.type === 'primaryScope')
 					sortedPush(scopes, { symbol: s, value: instance.value })
 				sortedPush(subscribers, instance)
 				return instance.value
