@@ -6,15 +6,15 @@
 		},
 		"apps/web": {
 			"entry": [
-				"waku.config.ts!",
-				"src/waku.server.tsx!",
 				"src/features/store2/react.tsx!",
-				"src/features/store2/store.ts!"
+				"src/features/store2/store.ts!",
+				"index.html!",
+				"src/main.tsx!"
 			],
-			"project": ["src/**/*.{ts,tsx}!"],
-			"ignore": ["src/pages.gen.ts"]
+			"project": ["src/**/*.{ts,tsx}!"]
 		}
 	},
+	"ignoreBinaries": ["vp"],
 	"ignoreDependencies": [
 		"@astryxdesign/theme-neutral",
 		"@astryxdesign/cli",

@@ -6,7 +6,7 @@ import { VStack } from '@astryxdesign/core/VStack'
 
 import { ScopeDemo } from '@/features/Scope'
 
-export default async function Page() {
+export default function Page() {
 	return (
 		<AppShell contentPadding={0} height='auto' variant='wash'>
 			<VStack gap={0}>
@@ -28,10 +28,4 @@ export default async function Page() {
 			</VStack>
 		</AppShell>
 	)
-}
-
-export async function getConfig() {
-	return {
-		render: 'static',
-	} as const
 }

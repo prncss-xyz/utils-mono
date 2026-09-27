@@ -34,7 +34,7 @@ export default defineConfig({
 		trace: 'on-first-retry',
 	},
 	webServer: {
-		command: './node_modules/.bin/waku start',
+		command: 'pnpm --prefix apps/web start',
 		timeout: 120 * 1000,
 		reuseExistingServer: !process.env.CI,
 	},

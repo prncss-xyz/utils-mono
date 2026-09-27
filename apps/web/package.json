@@ -8,11 +8,10 @@
 	},
 	"scripts": {
 		"astryx": "node node_modules/@astryxdesign/cli/bin/astryx.mjs",
-		"dev": "waku dev",
+		"dev": "vp dev",
 		"tsc": "vp run vp:tsc",
-		"build": "waku build",
-		"start": "waku start",
-		"typegen": "waku router typegen",
+		"build": "vp build",
+		"start": "vp preview",
 		"preview": "vp preview"
 	},
 	"dependencies": {
@@ -20,9 +19,9 @@
 		"@astryxdesign/core": "catalog:",
 		"@astryxdesign/theme-neutral": "catalog:",
 		"@prncss-xyz/react-utils": "workspace:*",
+		"@tanstack/react-router": "^1.170.39",
 		"react": "catalog:",
-		"react-dom": "catalog:",
-		"waku": "catalog:"
+		"react-dom": "catalog:"
 	},
 	"devDependencies": {
 		"@types/node": "catalog:",
@@ -31,7 +30,6 @@
 		"@vitejs/plugin-react": "catalog:",
 		"@vitest/browser-playwright": "catalog:",
 		"oxc-transform-react": "catalog:",
-		"react-server-dom-webpack": "catalog:",
 		"typescript": "catalog:",
 		"vite": "catalog:",
 		"vite-plus": "catalog:",
