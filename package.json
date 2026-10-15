@@ -18,6 +18,7 @@
 		"tsc": "tsc -p tsconfig.config.json && pnpm run -r tsc",
 		"knip": "knip --production --cache",
 		"sherif": "sherif",
+		"typos": "typos",
 		"check": "vp check",
 		"test": "vp run vp:test",
 		"test:changed": "vp run vp:test:changed"

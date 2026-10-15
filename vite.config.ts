@@ -17,11 +17,26 @@ export default defineConfig({
 		tasks: {
 			verify: {
 				command: 'true',
-				dependsOn: ['sherif', 'tsc', 'vp:test:changed', 'knip', 'build'],
+				dependsOn: [
+					'sherif',
+					'typos',
+					'tsc',
+					'vp:test:changed',
+					'knip',
+					'build',
+				],
 			},
 			ci: {
 				command: 'true',
-				dependsOn: ['check', 'sherif', 'tsc', 'vp:test', 'knip', 'build'],
+				dependsOn: [
+					'check',
+					'sherif',
+					'typos',
+					'tsc',
+					'vp:test',
+					'knip',
+					'build',
+				],
 			},
 			'vp:test': {
 				command: 'vp test',

@@ -1,0 +1,3 @@
+[default.extend-words]
+# Name of the monorepo linting tool.
+sherif = "sherif"
