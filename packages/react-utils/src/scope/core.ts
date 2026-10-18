@@ -126,6 +126,16 @@ export class ScopeStore {
 		}
 		removeLeaf(this.contents, instance)
 	}
+	private cleanupInstance(
+		instance: ScopeInstance<any>,
+		pending: Set<ScopeInstance<any>>,
+	) {
+		if (!pending.delete(instance) || instance.count !== 0) return
+		for (const dependent of instance.dependents)
+			this.cleanupInstance(dependent, pending)
+		instance.cleanup?.()
+		instance.cleanup = undefined
+	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
 		const tasks = this.tasks
@@ -134,13 +144,12 @@ export class ScopeStore {
 			if (instance.count > 0)
 				instance.cleanup = instance.symbol.onMount?.(instance.value)
 		}
-		for (const instance of tasks.unmount) {
-			if (instance.count === 0) {
-				instance.cleanup?.()
-				if (instance.symbol.type === 'primitiveScope')
-					this.removeInstance(instance)
-			}
-		}
+		const pending = new Set(tasks.unmount)
+		for (const instance of tasks.unmount)
+			this.cleanupInstance(instance, pending)
+		for (const instance of tasks.unmount)
+			if (instance.count === 0 && instance.symbol.type === 'primitiveScope')
+				this.removeInstance(instance)
 	}
 	resolve<Value>(
 		context: ScopeContext,
@@ -177,8 +186,7 @@ export class ScopeStore {
 		for (const subscriber of subscribers)
 			for (const scope of subscriber.scopes) sortedPush(scopes, scope)
 		insertLeaf(this.contents, entry)
-		for (const subscriber of subscribers)
-			sortedPush(subscriber.dependents, entry)
+		for (const subscriber of subscribers) subscriber.dependents.push(entry)
 		return entry
 	}
 	private modifyMount<T>(instance: ScopeInstance<T>, delta: -1 | 1) {

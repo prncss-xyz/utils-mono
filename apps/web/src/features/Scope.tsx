@@ -5,7 +5,6 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import { derivedScope, primitiveScope, useScope } from '@prncss-xyz/react-utils'
-import { useEffect } from 'react'
 
 const logLifecycle = (name: string) => (value: string) => {
 	// oxlint-disable-next-line no-console
@@ -32,15 +31,6 @@ function ScopeValue({
 	scope: typeof PlaceScope | typeof descriptionScope
 }) {
 	const value = useScope(scope)
-
-	useEffect(() => {
-		// oxlint-disable-next-line no-console
-		console.log(`[component] mount ${label}:`, value)
-		return () => {
-			// oxlint-disable-next-line no-console
-			console.log(`[component] unmount ${label}:`, value)
-		}
-	}, [label, value])
 
 	return (
 		<Text>

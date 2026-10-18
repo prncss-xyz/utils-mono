@@ -5,6 +5,72 @@ import { derivedScope, primitiveScope, ScopeContext, ScopeStore } from './core'
 const flushMicrotask = () => Promise.resolve()
 
 describe('ScopeStore', () => {
+	it('cleans up every dependent before a shared dependency', async () => {
+		const lifecycle: string[] = []
+		const place = primitiveScope<string>((value) => () => {
+			lifecycle.push(value)
+		})
+		const color = primitiveScope<string>(() => () => {
+			lifecycle.push('color')
+		})
+		const description = derivedScope(
+			(read) => `${read(color)}:${read(place)}`,
+			(value) => () => {
+				lifecycle.push(value)
+			},
+		)
+		const store = new ScopeStore()
+		const outer = ScopeContext.init()
+			.childScope(color, 'blue')
+			.childScope(place, 'outer')
+		const inner = outer.childScope(place, 'inner')
+		const unmountOuter = store.mount(store.resolve(outer, description))
+		const unmountInner = store.mount(store.resolve(inner, description))
+		await flushMicrotask()
+		unmountOuter()
+		unmountInner()
+		await flushMicrotask()
+
+		expect(lifecycle).toHaveLength(5)
+		for (const value of ['outer', 'inner']) {
+			expect(lifecycle.indexOf(`blue:${value}`)).toBeLessThan(
+				lifecycle.indexOf('color'),
+			)
+			expect(lifecycle.indexOf(`blue:${value}`)).toBeLessThan(
+				lifecycle.indexOf(value),
+			)
+		}
+	})
+
+	it('tracks distinct instances of the same derived scope sharing a dependency', async () => {
+		const place = primitiveScope<string>()
+		const color = primitiveScope<string>()
+		const description = derivedScope(
+			(read) => `${read(color)} in ${read(place)}`,
+		)
+		const store = new ScopeStore()
+		const outer = ScopeContext.init()
+			.childScope(color, 'blue')
+			.childScope(place, 'outer')
+		const inner = outer.childScope(place, 'inner')
+		const outerInstance = store.resolve(outer, description)
+		const innerInstance = store.resolve(inner, description)
+		const colorInstance = store.resolve(outer, color)
+
+		expect(colorInstance.dependents).toEqual([outerInstance, innerInstance])
+
+		const unmountOuter = store.mount(outerInstance)
+		const unmountInner = store.mount(innerInstance)
+		await flushMicrotask()
+		unmountOuter()
+		unmountInner()
+		await flushMicrotask()
+
+		expect(colorInstance.dependents).toEqual([])
+		expect(store.resolve(outer, description)).not.toBe(outerInstance)
+		expect(store.resolve(inner, description)).not.toBe(innerInstance)
+	})
+
 	it('mounts dependencies before dependents and unmounts them in reverse order', async () => {
 		const lifecycle: string[] = []
 		const dependency = primitiveScope(() => {
