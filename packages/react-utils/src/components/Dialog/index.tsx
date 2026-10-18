@@ -12,72 +12,36 @@ import {
 
 import { noop } from '../../functions'
 
-function cannotClose() {
-	throw new Error('close must be called inside a dialog')
-}
-
 type SetState<S> = [S, Dispatch<SetStateAction<S>>]
-type DialogState = { node: ReactNode; close: () => void }
 
-const Ctx0 = createContext<SetState<DialogState>>([
-	{ node: undefined, close: noop },
-	noop,
-])
+const Ctx0 = createContext<SetState<ReactNode>>([undefined, noop])
 
 function CtxProvider0({ children }: { children: ReactNode }) {
-	const [{ node }, setCtx] = useContext(Ctx0)
-	const close = () => setCtx((ctx) => ({ ...ctx, node: undefined }))
+	const [node] = useContext(Ctx0)
 	return (
 		<>
 			{children}
-			{node && (
-				<InternalDialogProvider dialogClose={close}>
-					{node}
-				</InternalDialogProvider>
-			)}
+			{node && <DialogProvider>{node}</DialogProvider>}
 		</>
-	)
-}
-
-function InternalDialogProvider({
-	children,
-	dialogClose,
-}: {
-	children: ReactNode
-	dialogClose: () => void
-}) {
-	return (
-		<Ctx0
-			value={useState<DialogState>({ node: undefined, close: dialogClose })}
-		>
-			<CtxProvider0>{children}</CtxProvider0>
-		</Ctx0>
 	)
 }
 
 export function DialogProvider({ children }: { children: ReactNode }) {
 	return (
-		<InternalDialogProvider dialogClose={cannotClose}>
-			{children}
-		</InternalDialogProvider>
+		<Ctx0 value={useState<ReactNode>(undefined)}>
+			<CtxProvider0>{children}</CtxProvider0>
+		</Ctx0>
 	)
 }
 
-export function useCloseDialog() {
-	const [{ close }] = useContext(Ctx0)
-	return close
-}
-
-export function useCallDialog() {
+export function useDialog() {
 	const [, setNode] = useContext(Ctx0)
-	function call<Props extends object>(
+	function call<Props extends { close: () => void }>(
 		Comp: (props: Props) => ReactNode,
-		...[props]: keyof Props extends never ? [props?: Props] : [props: Props]
+		props: Omit<Props, 'close'>,
 	) {
-		setNode((ctx) => ({
-			...ctx,
-			node: createElement(Comp, props),
-		}))
+		const close = () => setNode(undefined)
+		setNode(createElement(Comp, { ...props, close } as Props))
 	}
 	return call
 }

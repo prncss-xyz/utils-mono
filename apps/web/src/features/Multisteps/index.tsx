@@ -8,18 +8,16 @@ import {
 	useToast,
 	VStack,
 } from '@astryxdesign/core'
-import {
-	tag,
-	useCallDialog,
-	useCloseDialog,
-	DialogProvider,
-} from '@prncss-xyz/react-utils'
+import { tag, useDialog, DialogProvider } from '@prncss-xyz/react-utils'
 import { createElement, type ReactElement, useState } from 'react'
 
 import { multistep, type ShellProps } from './multistep'
 
-function InDialog<State>({ state0, getStep }: ShellProps<ReactElement, State>) {
-	const close = useCloseDialog()
+function InDialog<State>({
+	state0,
+	getStep,
+	close,
+}: ShellProps<ReactElement, State> & { close: () => void }) {
 	const [now] = useState(() => Date.now())
 	return (
 		<Dialog isOpen onOpenChange={close}>
@@ -48,9 +46,8 @@ const Multistep = multistep<
 	},
 })
 
-function FlowDialog() {
+function FlowDialog({ close }: { close: () => void }) {
 	const toast = useToast()
-	const close = useCloseDialog()
 	return (
 		<Multistep
 			init={4}
@@ -85,14 +82,14 @@ function FlowDialog() {
 					)
 				},
 			}}
-			shell={InDialog}
+			shell={(props) => <InDialog {...props} close={close} />}
 		/>
 	)
 }
 
 function Content() {
-	const call = useCallDialog()
-	return <Button label='start' onClick={() => call(FlowDialog)} />
+	const call = useDialog()
+	return <Button label='start' onClick={() => call(FlowDialog, {})} />
 }
 
 export function Demo() {
