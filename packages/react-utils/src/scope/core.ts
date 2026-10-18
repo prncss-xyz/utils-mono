@@ -63,6 +63,7 @@ type ScopeInstance<Value> = {
 	readonly type: 'scopeInstance'
 	readonly value: Value
 	count: number
+	active: boolean
 	readonly scopes: ScopeEntry[]
 	readonly subscribers: ScopeInstance<any>[]
 	readonly dependents: ScopeInstance<any>[]
@@ -111,7 +112,7 @@ export class ScopeStore {
 	}
 	private removeInstance(
 		instance: ScopeInstance<any>,
-		removed = new Set<ScopeInstance<any>>(),
+		removed: Set<ScopeInstance<any>>,
 	) {
 		if (removed.has(instance)) return
 		removed.add(instance)
@@ -133,23 +134,29 @@ export class ScopeStore {
 		if (!pending.delete(instance) || instance.count !== 0) return
 		for (const dependent of instance.dependents)
 			this.cleanupInstance(dependent, pending)
-		instance.cleanup?.()
+		if (instance.count !== 0 || !instance.active) return
+		const cleanup = instance.cleanup
+		instance.active = false
 		instance.cleanup = undefined
+		cleanup?.()
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
 		const tasks = this.tasks
 		this.tasks = undefined
 		for (const instance of tasks.mount) {
-			if (instance.count > 0)
-				instance.cleanup = instance.symbol.onMount?.(instance.value)
+			if (instance.count === 0 || instance.active) continue
+			// Activity is separate from cleanup: onMount may return nothing.
+			instance.active = true
+			instance.cleanup = instance.symbol.onMount?.(instance.value)
 		}
 		const pending = new Set(tasks.unmount)
 		for (const instance of tasks.unmount)
 			this.cleanupInstance(instance, pending)
+		const removed = new Set<ScopeInstance<any>>()
 		for (const instance of tasks.unmount)
 			if (instance.count === 0 && instance.symbol.type === 'primitiveScope')
-				this.removeInstance(instance)
+				this.removeInstance(instance, removed)
 	}
 	resolve<Value>(
 		context: ScopeContext,
@@ -177,6 +184,7 @@ export class ScopeStore {
 			type: 'scopeInstance',
 			value,
 			count: 0,
+			active: false,
 			cleanup: undefined,
 			scopes,
 			subscribers,
@@ -199,6 +207,11 @@ export class ScopeStore {
 	}
 	mount<T>(instance: ScopeInstance<T>) {
 		this.modifyMount(instance, 1)
-		return () => this.modifyMount(instance, -1)
+		let released = false
+		return () => {
+			if (released) return
+			released = true
+			this.modifyMount(instance, -1)
+		}
 	}
 }

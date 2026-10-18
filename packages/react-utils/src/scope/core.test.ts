@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { derivedScope, primitiveScope, ScopeContext, ScopeStore } from './core'
 
@@ -174,5 +174,106 @@ describe('ScopeStore', () => {
 		await flushMicrotask()
 
 		expect(store.resolve(context, shared)).not.toBe(instance)
+	})
+})
+
+describe('batched scope lifecycle', () => {
+	it('skips effects when released before the first flush', async () => {
+		const start = vi.fn()
+		const scope = primitiveScope(start)
+		const store = new ScopeStore()
+		const context = ScopeContext.init().childScope(scope, 'value')
+		const instance = store.resolve(context, scope)
+		store.mount(instance)()
+		await flushMicrotask()
+		expect(start).not.toHaveBeenCalled()
+		expect(store.resolve(context, scope)).not.toBe(instance)
+	})
+
+	it.each([false, true])(
+		'coalesces remounts with existing activity: %s',
+		async (alreadyActive) => {
+			const cleanup = vi.fn()
+			const start = vi.fn(() => cleanup)
+			const scope = primitiveScope(start)
+			const store = new ScopeStore()
+			const context = ScopeContext.init().childScope(scope, 'value')
+			const instance = store.resolve(context, scope)
+			const release = store.mount(instance)
+			if (alreadyActive) await flushMicrotask()
+			release()
+			const releaseAgain = store.mount(instance)
+			await flushMicrotask()
+			expect(start).toHaveBeenCalledTimes(1)
+			expect(cleanup).not.toHaveBeenCalled()
+			expect(store.resolve(context, scope)).toBe(instance)
+			releaseAgain()
+			await flushMicrotask()
+			expect(cleanup).toHaveBeenCalledTimes(1)
+		},
+	)
+
+	it('cleans and evicts a shared graph once after repeated releases in one batch', async () => {
+		const cleanup = vi.fn()
+		const start = vi.fn(() => cleanup)
+		const dependency = primitiveScope(start)
+		const left = derivedScope((read) => read(dependency))
+		const right = derivedScope((read) => read(dependency))
+		const root = derivedScope((read) => [read(left), read(right)])
+		const store = new ScopeStore()
+		const context = ScopeContext.init().childScope(dependency, 'value')
+		const instance = store.resolve(context, root)
+		const release = store.mount(instance)
+		await flushMicrotask()
+		release()
+		store.mount(instance)()
+		store.mount(instance)()
+		await flushMicrotask()
+		expect(start).toHaveBeenCalledTimes(1)
+		expect(cleanup).toHaveBeenCalledTimes(1)
+		expect(store.resolve(context, root)).not.toBe(instance)
+	})
+
+	it('preserves active effects that return no cleanup', async () => {
+		const start = vi.fn()
+		const scope = derivedScope(() => 'value', start)
+		const store = new ScopeStore()
+		const instance = store.resolve(ScopeContext.init(), scope)
+		const release = store.mount(instance)
+		await flushMicrotask()
+		release()
+		const releaseAgain = store.mount(instance)
+		await flushMicrotask()
+		expect(start).toHaveBeenCalledTimes(1)
+		releaseAgain()
+		await flushMicrotask()
+		const releaseLater = store.mount(instance)
+		await flushMicrotask()
+		expect(start).toHaveBeenCalledTimes(2)
+		releaseLater()
+		await flushMicrotask()
+	})
+
+	it('releases each consumer only once, including shared dependencies', async () => {
+		const cleanup = vi.fn()
+		const dependency = primitiveScope(() => cleanup)
+		const left = derivedScope((read) => read(dependency))
+		const right = derivedScope((read) => read(dependency))
+		const store = new ScopeStore()
+		const context = ScopeContext.init().childScope(dependency, 'value')
+		const dependencyInstance = store.resolve(context, dependency)
+		const releaseLeft = store.mount(store.resolve(context, left))
+		const releaseRight = store.mount(store.resolve(context, right))
+		await flushMicrotask()
+		releaseLeft()
+		releaseLeft()
+		await flushMicrotask()
+		expect(dependencyInstance.count).toBe(1)
+		expect(cleanup).not.toHaveBeenCalled()
+		releaseRight()
+		releaseRight()
+		await flushMicrotask()
+		expect(dependencyInstance.count).toBe(0)
+		expect(cleanup).toHaveBeenCalledTimes(1)
 	})
 })
