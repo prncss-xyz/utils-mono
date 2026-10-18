@@ -7,6 +7,7 @@ import {
 	createContext,
 	createElement,
 	useContext,
+	useEffect,
 	useState,
 } from 'react'
 
@@ -14,10 +15,18 @@ import { noop } from '../../functions'
 
 type SetState<S> = [S, Dispatch<SetStateAction<S>>]
 
-const Ctx0 = createContext<SetState<ReactNode>>([undefined, noop])
+type DialogState = { node: ReactNode; onClose: () => void }
+
+const Ctx0 = createContext<SetState<DialogState>>([
+	{ node: undefined, onClose: noop },
+	noop,
+])
 
 function CtxProvider0({ children }: { children: ReactNode }) {
-	const [node] = useContext(Ctx0)
+	const [{ node, onClose }] = useContext(Ctx0)
+	useEffect(() => {
+		if (node === undefined) onClose()
+	}, [node, onClose])
 	return (
 		<>
 			{children}
@@ -28,20 +37,27 @@ function CtxProvider0({ children }: { children: ReactNode }) {
 
 export function DialogProvider({ children }: { children: ReactNode }) {
 	return (
-		<Ctx0 value={useState<ReactNode>(undefined)}>
+		<Ctx0 value={useState<DialogState>({ node: undefined, onClose: noop })}>
 			<CtxProvider0>{children}</CtxProvider0>
 		</Ctx0>
 	)
 }
 
 export function useDialog() {
-	const [, setNode] = useContext(Ctx0)
-	function call<Props extends { close: () => void }>(
+	const [, setDialog] = useContext(Ctx0)
+	function call<Props extends { close: (payload: never) => void }>(
 		Comp: (props: Props) => ReactNode,
 		props: Omit<Props, 'close'>,
+		...[onClose = noop]: undefined extends Parameters<Props['close']>[0]
+			? [onClose?: (payload: Parameters<Props['close']>[0]) => void]
+			: [onClose: (payload: Parameters<Props['close']>[0]) => void]
 	) {
-		const close = () => setNode(undefined)
-		setNode(createElement(Comp, { ...props, close } as Props))
+		const close = (payload: Parameters<Props['close']>[0]) =>
+			setDialog({ node: undefined, onClose: () => onClose(payload) })
+		setDialog({
+			node: createElement(Comp, { ...props, close } as Props),
+			onClose: noop,
+		})
 	}
 	return call
 }
