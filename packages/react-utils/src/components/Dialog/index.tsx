@@ -47,10 +47,22 @@ export function useDialog() {
 	const [, setDialog] = useContext(Ctx0)
 	function call<Props extends { close: (payload: never) => void }>(
 		Comp: (props: Props) => ReactNode,
-		props: Omit<Props, 'close'>,
-		...[onClose = noop]: undefined extends Parameters<Props['close']>[0]
-			? [onClose?: (payload: Parameters<Props['close']>[0]) => void]
-			: [onClose: (payload: Parameters<Props['close']>[0]) => void]
+		...[props, onClose = noop]: undefined extends Parameters<Props['close']>[0]
+			? {} extends Omit<Props, 'close'>
+				? [
+						props?: Omit<Props, 'close'>,
+						onClose?: (payload: Parameters<Props['close']>[0]) => void,
+					]
+				: [
+						props: Omit<Props, 'close'>,
+						onClose?: (payload: Parameters<Props['close']>[0]) => void,
+					]
+			: [
+					props: {} extends Omit<Props, 'close'>
+						? Omit<Props, 'close'> | undefined
+						: Omit<Props, 'close'>,
+					onClose: (payload: Parameters<Props['close']>[0]) => void,
+				]
 	) {
 		const close = (payload: Parameters<Props['close']>[0]) =>
 			setDialog({ node: undefined, onClose: () => onClose(payload) })
