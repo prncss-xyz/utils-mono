@@ -525,35 +525,118 @@ describe('Store', () => {
 		)
 	})
 
-	it('mounts a derived atom when one of its dependencies is mounted', async () => {
+	it('does not mount dependants just because their dependency is subscribed', async () => {
 		const count = primitive(1)
-		const doer = vi.fn()
+		const effect = vi.fn()
 		const double = derived(
 			(read) => read(count) * 2,
-			(_read, _write, _event: never) => {},
-			doer,
+			() => {},
+			effect,
 		)
 		const store = createStore()
-
-		expect(store.peek(double)).toBe(2)
+		store.peek(double)
 		const unsubscribe = store.subscribe(count, () => {})
 		await flushMicrotask()
-
-		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(
-			2,
-			undefined,
-			expect.any(Function),
-			expect.any(Function),
-		)
-
+		expect(effect).not.toHaveBeenCalled()
 		unsubscribe()
-		expect(doer).toHaveBeenLastCalledWith(
-			undefined,
-			2,
-			expect.any(Function),
-			expect.any(Function),
+		expect(effect).not.toHaveBeenCalled()
+	})
+
+	it('mounts dependencies first and unmounts dependants first across a diamond', async () => {
+		const events: string[] = []
+		const effect = (name: string) => (next: number | undefined) => {
+			events.push(`${name}:${next === undefined ? 'unmount' : 'mount'}`)
+			return () => {
+				events.push(`${name}:cleanup`)
+			}
+		}
+		const source = primitive(1, effect('source'))
+		const left = derived<number, never>(
+			(read) => read(source),
+			() => {},
+			effect('left'),
 		)
+		const right = derived<number, never>(
+			(read) => read(source),
+			() => {},
+			effect('right'),
+		)
+		const leaf = derived<number, never>(
+			(read) => read(left) + read(right),
+			() => {},
+			effect('leaf'),
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(leaf, () => {})
+		await flushMicrotask()
+		expect(events).toEqual([
+			'source:mount',
+			'left:mount',
+			'right:mount',
+			'leaf:mount',
+		])
+		events.length = 0
+		unsubscribe()
+		expect(events).toEqual([
+			'leaf:cleanup',
+			'leaf:unmount',
+			'left:cleanup',
+			'left:unmount',
+			'right:cleanup',
+			'right:unmount',
+			'source:cleanup',
+			'source:unmount',
+		])
+	})
+
+	it('keeps shared dependencies mounted until their last consumer releases them', async () => {
+		const effect = vi.fn()
+		const source = primitive(1, effect)
+		const left = derived(
+			(read) => read(source),
+			() => {},
+		)
+		const right = derived(
+			(read) => read(source),
+			() => {},
+		)
+		const store = createStore()
+		const unsubscribeSource = store.subscribe(source, () => {})
+		const unsubscribeLeft = store.subscribe(left, () => {})
+		const unsubscribeRight = store.subscribe(right, () => {})
+		await flushMicrotask()
+		unsubscribeLeft()
+		unsubscribeSource()
+		expect(effect).toHaveBeenCalledOnce()
+		unsubscribeRight()
+		expect(effect).toHaveBeenCalledTimes(2)
+		expect(effect.mock.calls[1]?.[0]).toBeUndefined()
+	})
+
+	it('mounts new conditional dependencies and releases old ones', async () => {
+		const firstEffect = vi.fn()
+		const secondEffect = vi.fn()
+		const first = primitive(1, firstEffect)
+		const second = primitive(2, secondEffect)
+		const selectFirst = primitive(true)
+		const selected = derived(
+			(read) => (read(selectFirst) ? read(first) : read(second)),
+			() => {},
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(selected, () => {})
+		await flushMicrotask()
+		expect(firstEffect).toHaveBeenCalledOnce()
+		expect(secondEffect).not.toHaveBeenCalled()
+		store.send(selectFirst, false)
+		await flushMicrotask()
+		store.peek(selected)
+		await flushMicrotask()
+		expect(firstEffect).toHaveBeenCalledTimes(2)
+		expect(firstEffect.mock.calls[1]?.[0]).toBeUndefined()
+		expect(secondEffect).toHaveBeenCalledOnce()
+		unsubscribe()
+		expect(secondEffect).toHaveBeenCalledTimes(2)
 	})
 
 	it('subscribes to an atom family member', () => {
@@ -682,6 +765,122 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledOnce()
 		unsubscribeAgain()
 		vi.useRealTimers()
+	})
+
+	it('cleans dependants first and reruns dependencies first after a batched value change', async () => {
+		const events: string[] = []
+		const effect =
+			(name: string) =>
+			(next: number | undefined, last: number | undefined) => {
+				events.push(`run:${name}:${last}->${next}`)
+				return () => {
+					events.push(`cleanup:${name}:${next}`)
+				}
+			}
+		const source = primitive(0, effect('source'))
+		const left = derived<number, never>(
+			(read) => read(source) + 1,
+			() => {},
+			effect('left'),
+		)
+		const right = derived<number, never>(
+			(read) => read(source) + 2,
+			() => {},
+			effect('right'),
+		)
+		const leaf = derived<number, never>(
+			(read) => read(left) + read(right),
+			() => {},
+			effect('leaf'),
+		)
+		const store = createStore()
+		store.subscribe(leaf, () => {})
+		await flushMicrotask()
+		events.length = 0
+
+		store.send(source, 1)
+		store.send(source, 2)
+		await flushMicrotask()
+
+		expect(events).toEqual([
+			'cleanup:leaf:3',
+			'cleanup:right:2',
+			'cleanup:left:1',
+			'cleanup:source:0',
+			'run:source:0->2',
+			'run:left:1->3',
+			'run:right:2->4',
+			'run:leaf:3->7',
+		])
+	})
+
+	it('leaves unchanged effects and their cleanups intact during updates', async () => {
+		const events: string[] = []
+		const source = primitive(0, (next) => {
+			events.push(`run:source:${next}`)
+			return () => {
+				events.push(`cleanup:source:${next}`)
+			}
+		})
+		const parity = derived<number, never>(
+			(read) => read(source) % 2,
+			() => {},
+			(next) => {
+				events.push(`run:parity:${next}`)
+				return () => {
+					events.push(`cleanup:parity:${next}`)
+				}
+			},
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(parity, () => {})
+		await flushMicrotask()
+		events.length = 0
+		store.send(source, 2)
+		await flushMicrotask()
+		expect(events).toEqual(['cleanup:source:0', 'run:source:2'])
+		events.length = 0
+		unsubscribe()
+		expect(events).toEqual([
+			'cleanup:parity:0',
+			'run:parity:undefined',
+			'cleanup:source:2',
+			'run:source:undefined',
+		])
+	})
+
+	it('does not repeat cleanup or rerun effects when cleanup unsubscribes the consumer', async () => {
+		const events: string[] = []
+		let unsubscribe = () => {}
+		const source = primitive(0, (next) => {
+			events.push(`run:source:${next}`)
+			return () => {
+				events.push(`cleanup:source:${next}`)
+			}
+		})
+		const consumer = derived<number, never>(
+			(read) => read(source),
+			() => {},
+			(next) => {
+				events.push(`run:consumer:${next}`)
+				return () => {
+					events.push(`cleanup:consumer:${next}`)
+					unsubscribe()
+				}
+			},
+		)
+		const store = createStore()
+		unsubscribe = store.subscribe(consumer, () => {})
+		await flushMicrotask()
+		events.length = 0
+		store.send(source, 1)
+		await flushMicrotask()
+		expect(events).toEqual([
+			'cleanup:consumer:0',
+			'run:consumer:undefined',
+			'cleanup:source:0',
+			'run:source:undefined',
+		])
 	})
 
 	it('runs the previous cleanup before rerunning an effect', async () => {

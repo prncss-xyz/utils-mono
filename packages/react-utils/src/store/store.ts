@@ -250,7 +250,7 @@ class Store {
 	}
 	private isMounted<S>(instance: Instance<S>) {
 		if (instance.subscriptions.size > 0) return true
-		for (const dep of instance.deps) if (dep.mounted) return true
+		for (const sub of instance.subs) if (sub.mounted) return true
 		return false
 	}
 	private updateMounted<S>(instance: Instance<S>) {
@@ -258,6 +258,8 @@ class Store {
 		if (mounted === instance.mounted) return
 		instance.mounted = mounted
 		if (mounted) {
+			this.peekInstance(instance)
+			for (const dep of instance.deps) this.updateMounted(dep)
 			for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
 				clearTimeout(timeout)
 				instance.familyEntries.push(familyEntry)
@@ -270,7 +272,8 @@ class Store {
 			if (instance.familyEntries.length > 0)
 				this.getTasks().unmountedFamilyEntries.add(instance)
 		}
-		for (const sub of Array.from(instance.subs)) this.updateMounted(sub)
+		// Snapshot dependencies: cleanup/effects can mutate the set during traversal.
+		for (const dep of Array.from(instance.deps)) this.updateMounted(dep)
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
@@ -279,17 +282,12 @@ class Store {
 	) {
 		const last = instance.effectValue
 		instance.effectValue = next
-		instance.effectCleanup?.()
+		const cleanup = instance.effectCleanup
+		instance.effectCleanup = undefined
+		cleanup?.()
 		instance.effectCleanup =
 			effect?.(next, last, this.peek.bind(this), this.send.bind(this)) ||
 			undefined
-	}
-	private transitionEffect<S>(instance: Instance<S>) {
-		const symbol = instance.symbol
-		const next = this.peekInstance(instance)
-		if (!instance.mounted) return
-		if (Object.is(next, instance.effectValue)) return
-		this.runEffect(instance, symbol.effect, next)
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
@@ -302,9 +300,30 @@ class Store {
 				instance.value = next
 				this.notify(instance)
 			}
+		const visited = new Set<Instance<any>>()
+		const transitions: { instance: Instance<any>; next: any }[] = []
+		const collect = (instance: Instance<any>) => {
+			if (visited.has(instance) || !instance.mounted) return
+			visited.add(instance)
+			const next = this.peekInstance(instance)
+			for (const dep of instance.deps) collect(dep)
+			if (effects.has(instance) && !Object.is(next, instance.effectValue))
+				transitions.push({ instance, next })
+		}
+		for (const instance of effects) collect(instance)
 		this.flushingEffects = undefined
-		for (const instance of effects)
-			if (instance.mounted) this.transitionEffect(instance)
+		// Release consumers before the resources provided by their dependencies.
+		for (let index = transitions.length - 1; index >= 0; index--) {
+			const { instance } = transitions[index]!
+			if (!instance.mounted) continue
+			const cleanup = instance.effectCleanup
+			instance.effectCleanup = undefined
+			cleanup?.()
+		}
+		// Recreate dependency resources before their consumers run.
+		for (const { instance, next } of transitions)
+			if (instance.mounted)
+				this.runEffect(instance, instance.symbol.effect, next)
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mounted) continue
 			for (const familyEntry of instance.familyEntries) {
@@ -333,8 +352,8 @@ class Store {
 					instance.value = fromInit(symbol.getter)
 					return instance.value
 				case 'derived': {
-					for (const dep of instance.deps) dep.subs.delete(instance)
-					instance.deps.clear()
+					const previousDeps = instance.deps
+					instance.deps = new Set()
 					const read = (<T, Key, Event>(
 						target: AtomFamily<T, Key, Event> | AtomSymbol<T, Event>,
 						key?: Key,
@@ -345,7 +364,13 @@ class Store {
 						return this.peekInstance(dep)
 					}) as Read
 					instance.value = symbol.getter(read)
-					this.updateMounted(instance)
+					for (const dep of previousDeps)
+						if (!instance.deps.has(dep)) dep.subs.delete(instance)
+					if (instance.mounted) {
+						for (const dep of instance.deps) this.updateMounted(dep)
+						for (const dep of previousDeps)
+							if (!instance.deps.has(dep)) this.updateMounted(dep)
+					}
 					return instance.value
 				}
 				default:
