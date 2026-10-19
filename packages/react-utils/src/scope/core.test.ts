@@ -114,9 +114,7 @@ describe('ScopeStore', () => {
 		const innerInstance = store.resolve(inner, description)
 		const colorInstance = store.resolve(outer, color)
 
-		expect(colorInstance.dependents).toEqual(
-			new Set([outerInstance, innerInstance]),
-		)
+		expect(colorInstance.subs).toEqual(new Set([outerInstance, innerInstance]))
 
 		const unmountOuter = store.mount(outerInstance)
 		const unmountInner = store.mount(innerInstance)
@@ -125,7 +123,7 @@ describe('ScopeStore', () => {
 		unmountInner()
 		await flushMicrotask()
 
-		expect(colorInstance.dependents.size).toBe(0)
+		expect(colorInstance.subs.size).toBe(0)
 		expect(store.resolve(outer, description)).not.toBe(outerInstance)
 		expect(store.resolve(inner, description)).not.toBe(innerInstance)
 	})
@@ -315,15 +313,15 @@ describe('conditional scope dependencies', () => {
 		const releaseA = store.mount(instanceA)
 		const releaseB = store.mount(instanceB)
 		await flushMicrotask()
-		expect(sharedInstance.count).toBe(2)
+		expect(sharedInstance.mountCount).toBe(2)
 		expect(mount).toHaveBeenCalledTimes(1)
 		releaseA()
 		await flushMicrotask()
-		expect(sharedInstance.count).toBe(1)
+		expect(sharedInstance.mountCount).toBe(1)
 		expect(cleanup).not.toHaveBeenCalled()
 		releaseB()
 		await flushMicrotask()
-		expect(sharedInstance.count).toBe(0)
+		expect(sharedInstance.mountCount).toBe(0)
 		expect(cleanup).toHaveBeenCalledTimes(1)
 	})
 
@@ -517,12 +515,12 @@ describe('batched scope lifecycle', () => {
 		releaseLeft()
 		releaseLeft()
 		await flushMicrotask()
-		expect(dependencyInstance.count).toBe(1)
+		expect(dependencyInstance.mountCount).toBe(1)
 		expect(cleanup).not.toHaveBeenCalled()
 		releaseRight()
 		releaseRight()
 		await flushMicrotask()
-		expect(dependencyInstance.count).toBe(0)
+		expect(dependencyInstance.mountCount).toBe(0)
 		expect(cleanup).toHaveBeenCalledTimes(1)
 	})
 })

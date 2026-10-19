@@ -3,11 +3,8 @@ import { isoAssert } from '../functions'
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
 type Getter<Value> = (read: Read) => Value
 
-let nextIndex = 0
-
 export type PrimitiveScopeSymbol<Value> = Readonly<{
 	type: 'primitiveScope'
-	index: number
 	onMount: OnMount<Value> | undefined
 	value?: Value
 }>
@@ -17,7 +14,6 @@ export function primitiveScope<Value>(
 ): PrimitiveScopeSymbol<Value> {
 	return {
 		type: 'primitiveScope',
-		index: nextIndex++,
 		onMount,
 	}
 }
@@ -26,7 +22,6 @@ export type OnMount<Value> = (value: Value) => void | (() => void)
 
 type DerivedScopeSymbol<Value> = Readonly<{
 	type: 'derivedScope'
-	index: number
 	onMount: OnMount<Value> | undefined
 	getter: Getter<Value>
 	value?: Value
@@ -42,7 +37,6 @@ export function derivedScope<Value>(
 ): DerivedScopeSymbol<Value> {
 	return {
 		type: 'derivedScope',
-		index: nextIndex++,
 		onMount,
 		getter,
 	}
@@ -51,13 +45,13 @@ export function derivedScope<Value>(
 type ScopeInstance<Value> = {
 	readonly type: 'scopeInstance'
 	readonly value: Value
-	count: number
-	active: boolean
+	mountCount: number
+	mounted: boolean
 	readonly scopes: ReadonlyMap<PrimitiveScopeSymbol<any>, any>
-	readonly subscribers: Set<ScopeInstance<any>>
-	readonly dependents: Set<ScopeInstance<any>>
+	readonly deps: Set<ScopeInstance<any>>
+	readonly subs: Set<ScopeInstance<any>>
 	readonly symbol: ScopeLike<Value>
-	cleanup: void | (() => void)
+	mountCleanup: void | (() => void)
 }
 
 export class ScopeContext {
@@ -89,22 +83,21 @@ export class ScopeContext {
 	}
 }
 
+type Tasks = {
+	mount: ScopeInstance<any>[]
+	unmount: ScopeInstance<any>[]
+	unmountStore: boolean
+}
+
 export class ScopeStore {
 	private disposed = false
 	private storeMountCount = 0
 	private readonly contents = new Map<ScopeLike<any>, ScopeInstance<any>[]>()
-	private tasks:
-		| {
-				mount: ScopeInstance<any>[]
-				unmount: ScopeInstance<any>[]
-				unmountStore: boolean
-		  }
-		| undefined
-	private getTasks() {
-		if (!this.tasks) {
-			this.tasks = { mount: [], unmount: [], unmountStore: false }
-			queueMicrotask(this.flush.bind(this))
-		}
+	private tasks: Tasks | undefined
+	private getTasks(): Tasks {
+		if (this.tasks) return this.tasks
+		this.tasks = { mount: [], unmount: [], unmountStore: false }
+		queueMicrotask(this.flush.bind(this))
 		return this.tasks
 	}
 	private removeInstance(
@@ -113,15 +106,13 @@ export class ScopeStore {
 	) {
 		if (removed.has(instance)) return
 		removed.add(instance)
-		isoAssert(instance.count === 0, 'cannot remove a mounted scope instance')
-
-		for (const dependent of [...instance.dependents])
-			this.removeInstance(dependent, removed)
-		for (const subscriber of instance.subscribers)
-			isoAssert(
-				subscriber.dependents.delete(instance),
-				'scope dependency link is missing',
-			)
+		isoAssert(
+			instance.mountCount === 0,
+			'cannot remove a mounted scope instance',
+		)
+		for (const sub of [...instance.subs]) this.removeInstance(sub, removed)
+		for (const dep of instance.deps)
+			isoAssert(dep.subs.delete(instance), 'scope dependency link is missing')
 		const candidates = this.contents.get(instance.symbol)
 		isoAssert(candidates, 'scope cache entry is missing')
 		const index = candidates.indexOf(instance)
@@ -134,13 +125,12 @@ export class ScopeStore {
 		pending: Set<ScopeInstance<any>>,
 	) {
 		if (instance.scopes.size === 0) return
-		if (!pending.delete(instance) || instance.count !== 0) return
-		for (const dependent of instance.dependents)
-			this.cleanupInstance(dependent, pending)
-		if (instance.count !== 0 || !instance.active) return
-		const cleanup = instance.cleanup
-		instance.active = false
-		instance.cleanup = undefined
+		if (!pending.delete(instance) || instance.mountCount !== 0) return
+		for (const sub of instance.subs) this.cleanupInstance(sub, pending)
+		if (instance.mountCount !== 0 || !instance.mounted) return
+		const cleanup = instance.mountCleanup
+		instance.mounted = false
+		instance.mountCleanup = undefined
 		cleanup?.()
 	}
 	private flush() {
@@ -153,17 +143,20 @@ export class ScopeStore {
 			return
 		}
 		for (const instance of tasks.mount) {
-			if (instance.count === 0 || instance.active) continue
-			// Activity is separate from cleanup: onMount may return nothing.
-			instance.active = true
-			instance.cleanup = instance.symbol.onMount?.(instance.value)
+			if (instance.mountCount === 0 || instance.mounted) continue
+			// Mounted state is separate from cleanup: onMount may return nothing.
+			instance.mounted = true
+			instance.mountCleanup = instance.symbol.onMount?.(instance.value)
 		}
 		const pending = new Set(tasks.unmount)
 		for (const instance of tasks.unmount)
 			this.cleanupInstance(instance, pending)
 		const removed = new Set<ScopeInstance<any>>()
 		for (const instance of tasks.unmount)
-			if (instance.count === 0 && instance.symbol.type === 'primitiveScope')
+			if (
+				instance.mountCount === 0 &&
+				instance.symbol.type === 'primitiveScope'
+			)
 				this.removeInstance(instance, removed)
 	}
 	resolve<Value>(
@@ -180,7 +173,7 @@ export class ScopeStore {
 			}
 		}
 		const scopes = new Map<PrimitiveScopeSymbol<any>, any>()
-		const subscribers = new Set<ScopeInstance<any>>()
+		const deps = new Set<ScopeInstance<any>>()
 		let value: Value
 		if (symbol.type === 'primitiveScope') {
 			value = context.resolveScope(symbol)
@@ -189,33 +182,32 @@ export class ScopeStore {
 			value = symbol.getter((dependency) => {
 				const instance = this.resolve(context, dependency)
 				for (const [symbol, value] of instance.scopes) scopes.set(symbol, value)
-				subscribers.add(instance)
+				deps.add(instance)
 				return instance.value
 			})
 		}
 		const entry: ScopeInstance<Value> = {
 			type: 'scopeInstance',
 			value,
-			count: 0,
-			active: false,
-			cleanup: undefined,
+			mountCount: 0,
+			mounted: false,
+			mountCleanup: undefined,
 			scopes,
-			subscribers,
+			deps,
 			symbol,
-			dependents: new Set(),
+			subs: new Set(),
 		}
 		if (candidates) candidates.push(entry)
 		else this.contents.set(symbol, [entry])
-		for (const subscriber of subscribers) subscriber.dependents.add(entry)
+		for (const dep of deps) dep.subs.add(entry)
 		return entry
 	}
 	private modifyMount<T>(instance: ScopeInstance<T>, delta: -1 | 1) {
-		const mounting = instance.count === 0
-		instance.count += delta
-		for (const subscriber of instance.subscribers)
-			this.modifyMount(subscriber, delta)
+		const mounting = instance.mountCount === 0
+		instance.mountCount += delta
+		for (const dep of instance.deps) this.modifyMount(dep, delta)
 		if (mounting) this.getTasks().mount.push(instance)
-		if (instance.count === 0) this.getTasks().unmount.unshift(instance)
+		if (instance.mountCount === 0) this.getTasks().unmount.unshift(instance)
 	}
 	/** Disposes the store after its last owner releases, unless remounted in the same batch. */
 	mountStore() {
@@ -236,12 +228,12 @@ export class ScopeStore {
 		const cleanup = (instance: ScopeInstance<any>) => {
 			if (visited.has(instance)) return
 			visited.add(instance)
-			for (const dependent of instance.dependents) cleanup(dependent)
-			const effect = instance.cleanup
-			instance.active = false
-			instance.cleanup = undefined
-			instance.dependents.clear()
-			effect?.()
+			for (const sub of instance.subs) cleanup(sub)
+			const effectCleanup = instance.mountCleanup
+			instance.mounted = false
+			instance.mountCleanup = undefined
+			instance.subs.clear()
+			effectCleanup?.()
 		}
 		for (const instances of this.contents.values())
 			for (const instance of instances) cleanup(instance)
