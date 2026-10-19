@@ -66,6 +66,29 @@ export function primitiveScope<Value>(
 	return Object.assign(ScopeProvider, symbol)
 }
 
+/** Creates a scope provider that retains its initial value until it unmounts. */
+export function seedScope<Value>(
+	onMount?: OnMount<Value>,
+): FC<Props<Value>> & PrimitiveScopeSymbol<Value> {
+	const symbol = corePrimitiveScope(onMount)
+	function ScopeProvider({ value, children }: Props<Value>) {
+		const [initialValue] = useState(() => value)
+		const { store, context } = useScopeContext()
+		const scope = ScopeProvider as unknown as PrimitiveScopeSymbol<Value>
+		return (
+			<ScopingProvider
+				value={{
+					store,
+					context: context.childScope(scope, initialValue),
+				}}
+			>
+				{children}
+			</ScopingProvider>
+		)
+	}
+	return Object.assign(ScopeProvider, symbol)
+}
+
 export function useScope<Value>(scope: ScopeLike<Value>) {
 	const { store, context } = useScopeContext()
 	const instance = store.resolve(context, scope)
