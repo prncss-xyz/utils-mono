@@ -1,6 +1,4 @@
 import { isoAssert } from '../functions'
-import { sortedPush } from '../utils'
-import { findLeaf, insertLeaf, removeLeaf, type LatticeNode } from './lattice'
 
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
 
@@ -54,19 +52,14 @@ export function derivedScope<Value>(
 	}
 }
 
-type ScopeEntry = Readonly<{
-	symbol: PrimitiveScopeSymbol<any>
-	value: any
-}>
-
 type ScopeInstance<Value> = {
 	readonly type: 'scopeInstance'
 	readonly value: Value
 	count: number
 	active: boolean
-	readonly scopes: ScopeEntry[]
-	readonly subscribers: ScopeInstance<any>[]
-	readonly dependents: ScopeInstance<any>[]
+	readonly scopes: ReadonlyMap<PrimitiveScopeSymbol<any>, any>
+	readonly subscribers: Set<ScopeInstance<any>>
+	readonly dependents: Set<ScopeInstance<any>>
 	readonly symbol: ScopeLike<Value>
 	cleanup: void | (() => void)
 }
@@ -86,6 +79,11 @@ export class ScopeContext {
 		scopeValues.set(symbol, value)
 		return new ScopeContext(scopeValues)
 	}
+	matchesScope<T>(symbol: PrimitiveScopeSymbol<T>, value: T): boolean {
+		if (!this.scopeValues.has(symbol)) return false
+		const actual = this.scopeValues.get(symbol)
+		return Object.is(actual, value)
+	}
 	resolveScope<T>(symbol: PrimitiveScopeSymbol<T>): T {
 		if (this.scopeValues.has(symbol)) return this.scopeValues.get(symbol)
 		throw new Error(`You are trying to access a scope where it is not provided`)
@@ -93,10 +91,7 @@ export class ScopeContext {
 }
 
 export class ScopeStore {
-	private readonly contents = new Map<
-		ScopeLike<any>,
-		LatticeNode<ScopeInstance<any>>
-	>()
+	private readonly contents = new Map<ScopeLike<any>, ScopeInstance<any>[]>()
 	private tasks:
 		| {
 				mount: ScopeInstance<any>[]
@@ -120,12 +115,17 @@ export class ScopeStore {
 
 		for (const dependent of [...instance.dependents])
 			this.removeInstance(dependent, removed)
-		for (const subscriber of instance.subscribers) {
-			const index = subscriber.dependents.indexOf(instance)
-			isoAssert(index !== -1, 'scope dependency link is missing')
-			subscriber.dependents.splice(index, 1)
-		}
-		removeLeaf(this.contents, instance)
+		for (const subscriber of instance.subscribers)
+			isoAssert(
+				subscriber.dependents.delete(instance),
+				'scope dependency link is missing',
+			)
+		const candidates = this.contents.get(instance.symbol)
+		isoAssert(candidates, 'scope cache entry is missing')
+		const index = candidates.indexOf(instance)
+		isoAssert(index !== -1, 'scope instance is missing from cache')
+		candidates.splice(index, 1)
+		if (candidates.length === 0) this.contents.delete(instance.symbol)
 	}
 	private cleanupInstance(
 		instance: ScopeInstance<any>,
@@ -162,21 +162,25 @@ export class ScopeStore {
 		context: ScopeContext,
 		symbol: ScopeLike<Value>,
 	): ScopeInstance<Value> {
-		const cached = findLeaf(context, this.contents.get(symbol))
-		if (cached) return cached
-		const scopes: ScopeEntry[] = []
-		const subscribers: ScopeInstance<any>[] = []
+		const candidates = this.contents.get(symbol)
+		if (candidates) {
+			candidate: for (const instance of candidates) {
+				for (const [symbol, value] of instance.scopes)
+					if (!context.matchesScope(symbol, value)) continue candidate
+				return instance
+			}
+		}
+		const scopes = new Map<PrimitiveScopeSymbol<any>, any>()
+		const subscribers = new Set<ScopeInstance<any>>()
 		let value: Value
 		if (symbol.type === 'primitiveScope') {
 			value = context.resolveScope(symbol)
-			sortedPush(scopes, { symbol, value })
+			scopes.set(symbol, value)
 		} else {
 			value = symbol.getter((dependency) => {
 				const instance = this.resolve(context, dependency)
-				if (dependency.type === 'primitiveScope') {
-					sortedPush(scopes, { symbol: dependency, value: instance.value })
-				}
-				sortedPush(subscribers, instance)
+				for (const [symbol, value] of instance.scopes) scopes.set(symbol, value)
+				subscribers.add(instance)
 				return instance.value
 			})
 		}
@@ -189,12 +193,11 @@ export class ScopeStore {
 			scopes,
 			subscribers,
 			symbol,
-			dependents: [],
+			dependents: new Set(),
 		}
-		for (const subscriber of subscribers)
-			for (const scope of subscriber.scopes) sortedPush(scopes, scope)
-		insertLeaf(this.contents, entry)
-		for (const subscriber of subscribers) subscriber.dependents.push(entry)
+		if (candidates) candidates.push(entry)
+		else this.contents.set(symbol, [entry])
+		for (const subscriber of subscribers) subscriber.dependents.add(entry)
 		return entry
 	}
 	private modifyMount<T>(instance: ScopeInstance<T>, delta: -1 | 1) {
