@@ -41,9 +41,9 @@ describe('coreMachineAtom', () => {
 				return 'running'
 			},
 			{
-				effect: (next, last, sendEvent) => {
+				effect: (next, last, _get, set) => {
 					effect(next, last)
-					send = sendEvent
+					send = (event) => set(machine, event)
 				},
 			},
 		)

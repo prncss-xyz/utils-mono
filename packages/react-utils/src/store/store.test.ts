@@ -260,6 +260,56 @@ describe('Store', () => {
 		expect(store.peek(selected)).toBe(2)
 	})
 
+	it('notifies once when repeated reads are recomputed inside a subscriber', async () => {
+		const source = primitive(1)
+		const doubled = derived(
+			(read) => read(source) + read(source),
+			() => {},
+		)
+		const store = createStore()
+		const subscriber = vi.fn(() => store.peek(doubled))
+		store.subscribe(doubled, subscriber)
+		expect(store.peek(doubled)).toBe(2)
+
+		store.send(source, 2)
+		await flushMicrotask()
+		expect(subscriber).toHaveBeenCalledOnce()
+		expect(subscriber).toHaveLastReturnedWith(4)
+
+		store.send(source, 3)
+		await flushMicrotask()
+		expect(subscriber).toHaveBeenCalledTimes(2)
+		expect(subscriber).toHaveLastReturnedWith(6)
+	})
+
+	it('replaces conditional dependencies without notifying from stale sources', async () => {
+		const selectFirst = primitive(true)
+		const first = primitive(1)
+		const second = primitive(10)
+		const selected = derived(
+			(read) => (read(selectFirst) ? read(first) : read(second)),
+			() => {},
+		)
+		const store = createStore()
+		const subscriber = vi.fn(() => store.peek(selected))
+		store.subscribe(selected, subscriber)
+		expect(store.peek(selected)).toBe(1)
+
+		store.send(selectFirst, false)
+		await flushMicrotask()
+		expect(subscriber).toHaveLastReturnedWith(10)
+		subscriber.mockClear()
+
+		store.send(first, 2)
+		await flushMicrotask()
+		expect(subscriber).not.toHaveBeenCalled()
+
+		store.send(second, 11)
+		await flushMicrotask()
+		expect(subscriber).toHaveBeenCalledOnce()
+		expect(subscriber).toHaveLastReturnedWith(11)
+	})
+
 	it('defers a primitive send from a subscriber to a subsequent microtask', async () => {
 		const count = primitive(0)
 		const store = createStore()
@@ -347,12 +397,17 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			1,
+			undefined,
+			expect.any(Function),
+			expect.any(Function),
+		)
 	})
 
 	it('defers sends from an effect until a later microtask', async () => {
-		const count = primitive(0, (next, _last, send) => {
-			if (next === 0) send(1)
+		const count = primitive(0, (next, _last, _get, set) => {
+			if (next === 0) set(count, 1)
 		})
 		const store = createStore()
 
@@ -365,6 +420,57 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(1)
 	})
 
+	it('reads atoms and families in effects without tracking dependencies', async () => {
+		const source = primitive(1)
+		const values = family((key: string) => primitive(key.length))
+		const observed = derived(
+			(read) => read(source) * 2,
+			() => {},
+		)
+		const runs = vi.fn()
+		const trigger = primitive(0, (next, _last, get) => {
+			runs(next, get(source), get(observed), get(values, 'key'))
+		})
+		const store = createStore()
+
+		store.subscribe(trigger, () => {})
+		await flushMicrotask()
+		expect(runs).toHaveBeenLastCalledWith(0, 1, 2, 3)
+
+		store.send(source, 2)
+		store.send(values, 'key', 4)
+		await flushMicrotask()
+		expect(runs).toHaveBeenCalledOnce()
+
+		store.send(trigger, 1)
+		await flushMicrotask()
+		expect(runs).toHaveBeenLastCalledWith(1, 2, 4, 4)
+	})
+
+	it('writes other atoms, derived atoms, and families from effects', async () => {
+		const target = primitive(0)
+		const doubled = derived(
+			(read) => read(target) * 2,
+			(_read, write, value: number) => write(target, value / 2),
+		)
+		const values = family((_key: string) => primitive(0))
+		const trigger = primitive(0, (next, _last, _get, set) => {
+			if (next === undefined) return
+			set(target, 1)
+			set(doubled, 6)
+			set(values, 'key', (value) => value + 1)
+		})
+		const store = createStore()
+
+		store.subscribe(trigger, () => {})
+		await flushMicrotask()
+		expect(store.peek(target)).toBe(0)
+		expect(store.peek(values, 'key')).toBe(0)
+		await flushMicrotask()
+		expect(store.peek(doubled)).toBe(6)
+		expect(store.peek(values, 'key')).toBe(1)
+	})
+
 	it('coalesces mounting and dependency changes into one effect run', async () => {
 		const doer = vi.fn()
 		const count = primitive(0, doer)
@@ -375,7 +481,12 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			1,
+			undefined,
+			expect.any(Function),
+			expect.any(Function),
+		)
 	})
 
 	it('transitions effects on unmount and delays its cleanup until remount', async () => {
@@ -388,7 +499,12 @@ describe('Store', () => {
 		await flushMicrotask()
 		unsubscribe()
 
-		expect(doer).toHaveBeenLastCalledWith(undefined, 0, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			undefined,
+			0,
+			expect.any(Function),
+			expect.any(Function),
+		)
 		expect(cleanup).toHaveBeenCalledOnce()
 
 		store.send(count, 1)
@@ -401,7 +517,12 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(cleanup).toHaveBeenCalledTimes(2)
-		expect(doer).toHaveBeenLastCalledWith(1, undefined, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			1,
+			undefined,
+			expect.any(Function),
+			expect.any(Function),
+		)
 	})
 
 	it('mounts a derived atom when one of its dependencies is mounted', async () => {
@@ -419,10 +540,20 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(doer).toHaveBeenCalledOnce()
-		expect(doer).toHaveBeenLastCalledWith(2, undefined, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			2,
+			undefined,
+			expect.any(Function),
+			expect.any(Function),
+		)
 
 		unsubscribe()
-		expect(doer).toHaveBeenLastCalledWith(undefined, 2, expect.any(Function))
+		expect(doer).toHaveBeenLastCalledWith(
+			undefined,
+			2,
+			expect.any(Function),
+			expect.any(Function),
+		)
 	})
 
 	it('subscribes to an atom family member', () => {

@@ -1,5 +1,4 @@
 import { merge, type Init } from '../functions'
-import type { Sendable } from '../tags'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { AtomSymbol, Effect, Read, Write } from './store'
 
@@ -16,7 +15,7 @@ export function directMachineAtom<E, S extends object, R = S>(
 	opts?: {
 		result?: (state: S, read: Read) => R
 		factory?: (value: S) => AtomSymbol<S, any>
-		effect?: Effect<R, Sendable<E>>
+		effect?: Effect<R>
 	},
 ) {
 	return coreMachineAtom<E, S, R>(

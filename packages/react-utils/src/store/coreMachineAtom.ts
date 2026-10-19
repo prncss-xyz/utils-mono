@@ -26,7 +26,7 @@ export function coreMachineAtom<E, S, R = S>(
 	opts?: {
 		result?: (state: S, read: Read) => R
 		factory?: (value: S) => AtomSymbol<S, any>
-		effect?: Effect<R, Sendable<E>>
+		effect?: Effect<R>
 	},
 ): MachineAtom<E, R> {
 	const result = opts?.result ?? (id as (state: S, read: Read) => R)

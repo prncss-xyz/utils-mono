@@ -1,5 +1,5 @@
 import type { Init } from '../functions'
-import type { Sendable, Tags } from '../tags'
+import type { Tags } from '../tags'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { AtomSymbol, Effect, Read, Write } from './store'
 
@@ -20,7 +20,7 @@ export function modalMachineAtom<Event, State, Result = Tags<State>>(
 			[S in keyof State]: (state: State[S], read: Read) => Result
 		}
 		factory?: (value: Tags<State>) => AtomSymbol<Tags<State>, any>
-		effect?: Effect<Result, Sendable<Event>>
+		effect?: Effect<Result>
 	},
 ) {
 	const { effect, factory, result } = opts ?? {}

@@ -7,11 +7,12 @@ import {
 	isReset,
 	type SetStateWithReset,
 } from '../functions'
-import { call, isMounted, sortedPush, sortedRemove } from '../utils'
+
+function call(cb: () => void) {
+	cb()
+}
 
 export const TRANSIENT = -1
-
-let nextIndex = 0
 
 type FamilyEntry = {
 	entry: Map<unknown, Instance<any>>
@@ -27,24 +28,23 @@ type Instance<S> = {
 	value: S
 	effectValue: S | undefined
 	effectCleanup: (() => void) | undefined
-	deps: Instance<any>[]
-	subs: Instance<any>[]
+	deps: Set<Instance<any>>
+	subs: Set<Instance<any>>
 	subscriptions: Set<() => void>
 	mounted: boolean
 }
 
-type CoreSymbol<S, E> = {
-	index: number
-	effect?: Effect<S, E>
+type CoreSymbol<S> = {
+	effect?: Effect<S>
 }
 
-type PrimitiveSymbol<S, E> = CoreSymbol<S, E> & {
+type PrimitiveSymbol<S, E> = CoreSymbol<S> & {
 	type: 'primitive'
 	getter: (() => S) | S
 	readonly event?: E
 }
 
-type DerivedSymbol<S, E> = CoreSymbol<S, E> & {
+type DerivedSymbol<S, E> = CoreSymbol<S> & {
 	type: 'derived'
 	getter: Getter<S>
 	setter: Setter<E>
@@ -88,10 +88,12 @@ type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
 }
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
-export type Effect<S, E> = (
+export type Effect<S> = (
 	next: S | undefined,
 	last: S | undefined,
-	selfSend: (event: E) => void,
+	/** Read an atom without tracking it as a dependency. */
+	get: Read,
+	set: Write,
 ) => void | (() => void)
 
 export type ResolvedAtom<S, E> = {
@@ -102,27 +104,25 @@ export type ResolvedAtom<S, E> = {
 
 export function primitive<S>(
 	getter: S | (() => S),
-	effect?: Effect<NoInfer<S>, SetStateWithReset<S>>,
+	effect?: Effect<NoInfer<S>>,
 ): AtomSymbol<S, SetStateWithReset<S>> {
 	return {
 		type: 'primitive' as const,
 		getter,
 		effect,
-		index: nextIndex++,
 	}
 }
 
 export function derived<S, E>(
 	getter: Getter<S>,
 	setter: Setter<E>,
-	effect?: Effect<NoInfer<S>, E>,
+	effect?: Effect<NoInfer<S>>,
 ): AtomSymbol<S, E> {
 	return {
 		type: 'derived' as const,
 		getter,
 		setter,
 		effect,
-		index: nextIndex++,
 	}
 }
 
@@ -227,8 +227,8 @@ class Store {
 					: (undefined as any),
 			effectValue: undefined,
 			effectCleanup: undefined,
-			deps: [],
-			subs: [],
+			deps: new Set(),
+			subs: new Set(),
 			subscriptions: new Set(),
 			mounted: false,
 		}
@@ -244,11 +244,14 @@ class Store {
 	private notify<S>(instance: Instance<S>) {
 		if (instance.symbol.type === 'derived') instance.dirty = true
 		if (instance.mounted) this.enqueueEffect(instance)
-		for (const sub of instance.subs) this.notify(sub)
+		// A subscriber can recompute and re-add itself while being notified.
+		for (const sub of Array.from(instance.subs)) this.notify(sub)
 		instance.subscriptions.forEach(call)
 	}
 	private isMounted<S>(instance: Instance<S>) {
-		return instance.subscriptions.size > 0 || instance.deps.some(isMounted)
+		if (instance.subscriptions.size > 0) return true
+		for (const dep of instance.deps) if (dep.mounted) return true
+		return false
 	}
 	private updateMounted<S>(instance: Instance<S>) {
 		const mounted = this.isMounted(instance)
@@ -263,31 +266,30 @@ class Store {
 			this.enqueueEffect(instance)
 		} else {
 			const symbol = instance.symbol as AtomSymbol<S, unknown>
-			if (symbol.effect)
-				this.runEffect(symbol, instance, symbol.effect, undefined)
+			if (symbol.effect) this.runEffect(instance, symbol.effect, undefined)
 			if (instance.familyEntries.length > 0)
 				this.getTasks().unmountedFamilyEntries.add(instance)
 		}
-		for (const sub of instance.subs) this.updateMounted(sub)
+		for (const sub of Array.from(instance.subs)) this.updateMounted(sub)
 	}
-	private runEffect<S, E>(
-		symbol: AtomSymbol<S, E>,
+	private runEffect<S>(
 		instance: Instance<S>,
-		effect: Effect<S, E> | undefined,
+		effect: Effect<S> | undefined,
 		next: S | undefined,
 	) {
 		const last = instance.effectValue
 		instance.effectValue = next
 		instance.effectCleanup?.()
 		instance.effectCleanup =
-			effect?.(next, last, (event) => this.send(symbol, event)) || undefined
+			effect?.(next, last, this.peek.bind(this), this.send.bind(this)) ||
+			undefined
 	}
-	private transitionEffect<S, E>(instance: Instance<S>) {
-		const symbol: AtomSymbol<S, E> = instance.symbol
+	private transitionEffect<S>(instance: Instance<S>) {
+		const symbol = instance.symbol
 		const next = this.peekInstance(instance)
 		if (!instance.mounted) return
 		if (Object.is(next, instance.effectValue)) return
-		this.runEffect(symbol, instance, symbol.effect, next)
+		this.runEffect(instance, symbol.effect, next)
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
@@ -331,15 +333,15 @@ class Store {
 					instance.value = fromInit(symbol.getter)
 					return instance.value
 				case 'derived': {
-					for (const dep of instance.deps) sortedRemove(dep.subs, instance)
-					instance.deps = []
+					for (const dep of instance.deps) dep.subs.delete(instance)
+					instance.deps.clear()
 					const read = (<T, Key, Event>(
 						target: AtomFamily<T, Key, Event> | AtomSymbol<T, Event>,
 						key?: Key,
 					) => {
 						const dep = this.getInstance(target, key)
-						sortedPush(instance.deps, dep)
-						sortedPush(dep.subs, instance)
+						instance.deps.add(dep)
+						dep.subs.add(instance)
 						return this.peekInstance(dep)
 					}) as Read
 					instance.value = symbol.getter(read)
