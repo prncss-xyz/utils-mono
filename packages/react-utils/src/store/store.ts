@@ -31,7 +31,8 @@ type Instance<S> = {
 	deps: Set<Instance<any>>
 	subs: Set<Instance<any>>
 	subscriptions: Set<() => void>
-	mounted: boolean
+	mountCount: number
+	mountedDeps: Set<Instance<any>>
 }
 
 type CoreSymbol<S> = {
@@ -230,7 +231,8 @@ class Store {
 			deps: new Set(),
 			subs: new Set(),
 			subscriptions: new Set(),
-			mounted: false,
+			mountCount: 0,
+			mountedDeps: new Set(),
 		}
 	}
 	private enqueueEffect<S>(instance: Instance<S>) {
@@ -243,37 +245,46 @@ class Store {
 	}
 	private notify<S>(instance: Instance<S>) {
 		if (instance.symbol.type === 'derived') instance.dirty = true
-		if (instance.mounted) this.enqueueEffect(instance)
+		if (instance.mountCount > 0) this.enqueueEffect(instance)
 		// A subscriber can recompute and re-add itself while being notified.
 		for (const sub of Array.from(instance.subs)) this.notify(sub)
 		instance.subscriptions.forEach(call)
 	}
-	private isMounted<S>(instance: Instance<S>) {
-		if (instance.subscriptions.size > 0) return true
-		for (const sub of instance.subs) if (sub.mounted) return true
-		return false
-	}
-	private updateMounted<S>(instance: Instance<S>) {
-		const mounted = this.isMounted(instance)
-		if (mounted === instance.mounted) return
-		instance.mounted = mounted
-		if (mounted) {
-			this.peekInstance(instance)
-			for (const dep of instance.deps) this.updateMounted(dep)
-			for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
-				clearTimeout(timeout)
-				instance.familyEntries.push(familyEntry)
-			}
-			instance.familyRemovalTimeouts.clear()
-			this.enqueueEffect(instance)
-		} else {
-			const symbol = instance.symbol as AtomSymbol<S, unknown>
-			if (symbol.effect) this.runEffect(instance, symbol.effect, undefined)
-			if (instance.familyEntries.length > 0)
-				this.getTasks().unmountedFamilyEntries.add(instance)
+	private retain<S>(instance: Instance<S>) {
+		if (instance.mountCount++ > 0) return
+		this.peekInstance(instance)
+		this.syncMountedDeps(instance)
+		for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
+			clearTimeout(timeout)
+			instance.familyEntries.push(familyEntry)
 		}
-		// Snapshot dependencies: cleanup/effects can mutate the set during traversal.
-		for (const dep of Array.from(instance.deps)) this.updateMounted(dep)
+		instance.familyRemovalTimeouts.clear()
+		this.enqueueEffect(instance)
+	}
+	private release<S>(instance: Instance<S>) {
+		if (--instance.mountCount > 0) return
+		// Detach ownership before user callbacks can change dependencies or remount.
+		const mountedDeps = instance.mountedDeps
+		instance.mountedDeps = new Set()
+		const symbol = instance.symbol as AtomSymbol<S, unknown>
+		if (symbol.effect) this.runEffect(instance, symbol.effect, undefined)
+		if (instance.familyEntries.length > 0)
+			this.getTasks().unmountedFamilyEntries.add(instance)
+		for (const dep of mountedDeps) this.release(dep)
+	}
+	private syncMountedDeps<S>(instance: Instance<S>) {
+		for (const dep of instance.deps) {
+			if (instance.mountCount === 0) return
+			if (instance.mountedDeps.has(dep)) continue
+			instance.mountedDeps.add(dep)
+			this.retain(dep)
+		}
+		// Releasing a dependency can run user cleanup that changes this graph.
+		for (const dep of Array.from(instance.mountedDeps)) {
+			if (instance.mountCount === 0) return
+			if (instance.deps.has(dep)) continue
+			if (instance.mountedDeps.delete(dep)) this.release(dep)
+		}
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
@@ -303,7 +314,7 @@ class Store {
 		const visited = new Set<Instance<any>>()
 		const transitions: { instance: Instance<any>; next: any }[] = []
 		const collect = (instance: Instance<any>) => {
-			if (visited.has(instance) || !instance.mounted) return
+			if (visited.has(instance) || instance.mountCount === 0) return
 			visited.add(instance)
 			const next = this.peekInstance(instance)
 			for (const dep of instance.deps) collect(dep)
@@ -315,17 +326,17 @@ class Store {
 		// Release consumers before the resources provided by their dependencies.
 		for (let index = transitions.length - 1; index >= 0; index--) {
 			const { instance } = transitions[index]!
-			if (!instance.mounted) continue
+			if (instance.mountCount === 0) continue
 			const cleanup = instance.effectCleanup
 			instance.effectCleanup = undefined
 			cleanup?.()
 		}
 		// Recreate dependency resources before their consumers run.
 		for (const { instance, next } of transitions)
-			if (instance.mounted)
+			if (instance.mountCount > 0)
 				this.runEffect(instance, instance.symbol.effect, next)
 		for (const instance of unmountedFamilyEntries) {
-			if (instance.mounted) continue
+			if (instance.mountCount > 0) continue
 			for (const familyEntry of instance.familyEntries) {
 				const { entry, hashedKey, TTL } = familyEntry
 				if (TTL === Infinity) continue
@@ -335,7 +346,7 @@ class Store {
 				}
 				const timeout = setTimeout(() => {
 					instance.familyRemovalTimeouts.delete(timeout)
-					if (!instance.mounted && entry.get(hashedKey) === instance)
+					if (instance.mountCount === 0 && entry.get(hashedKey) === instance)
 						entry.delete(hashedKey)
 				}, TTL)
 				instance.familyRemovalTimeouts.set(timeout, familyEntry)
@@ -366,11 +377,7 @@ class Store {
 					instance.value = symbol.getter(read)
 					for (const dep of previousDeps)
 						if (!instance.deps.has(dep)) dep.subs.delete(instance)
-					if (instance.mounted) {
-						for (const dep of instance.deps) this.updateMounted(dep)
-						for (const dep of previousDeps)
-							if (!instance.deps.has(dep)) this.updateMounted(dep)
-					}
+					if (instance.mountCount > 0) this.syncMountedDeps(instance)
 					return instance.value
 				}
 				default:
@@ -424,11 +431,16 @@ class Store {
 		this.sendInstance(instance, event)
 	}
 	private subscribeInstance<S>(instance: Instance<S>, notify: () => void) {
-		instance.subscriptions.add(notify)
-		this.updateMounted(instance)
+		const subscribed = !instance.subscriptions.has(notify)
+		if (subscribed) {
+			instance.subscriptions.add(notify)
+			this.retain(instance)
+		}
+		let active = subscribed
 		return () => {
-			instance.subscriptions.delete(notify)
-			this.updateMounted(instance)
+			if (!active) return
+			active = false
+			if (instance.subscriptions.delete(notify)) this.release(instance)
 		}
 	}
 	resolve<S, Key, E>(

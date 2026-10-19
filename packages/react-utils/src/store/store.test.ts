@@ -639,6 +639,112 @@ describe('Store', () => {
 		expect(secondEffect).toHaveBeenCalledTimes(2)
 	})
 
+	it('does not release references twice or release a later subscription', async () => {
+		const effect = vi.fn()
+		const atom = primitive(1, effect)
+		const store = createStore()
+		const notify = vi.fn()
+		const unsubscribe = store.subscribe(atom, notify)
+		await flushMicrotask()
+		unsubscribe()
+		expect(effect).toHaveBeenCalledTimes(2)
+
+		const unsubscribeAgain = store.subscribe(atom, notify)
+		await flushMicrotask()
+		unsubscribe()
+		store.send(atom, 2)
+		await flushMicrotask()
+		expect(notify).toHaveBeenCalledOnce()
+		expect(effect).toHaveBeenCalledTimes(4)
+		unsubscribeAgain()
+		unsubscribeAgain()
+		expect(effect).toHaveBeenCalledTimes(5)
+	})
+
+	it('does not acquire extra references for repeated or retained dependency reads', async () => {
+		const sourceEffect = vi.fn()
+		const source = primitive(1, sourceEffect)
+		const trigger = primitive(0)
+		const selected = derived(
+			(read) => read(trigger) + read(source) + read(source),
+			() => {},
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(selected, () => {
+			store.peek(selected)
+		})
+		await flushMicrotask()
+		for (let value = 1; value <= 3; value++) {
+			store.send(trigger, value)
+			await flushMicrotask()
+		}
+		expect(sourceEffect).toHaveBeenCalledOnce()
+		unsubscribe()
+		expect(sourceEffect).toHaveBeenCalledTimes(2)
+	})
+
+	it('keeps dependency ownership balanced when cleanup remounts a consumer', async () => {
+		const sourceEffect = vi.fn()
+		const source = primitive(1, sourceEffect)
+		let remount = () => {}
+		const consumer = derived<number, never>(
+			(read) => read(source),
+			() => {},
+			(next) => {
+				if (next === undefined) remount()
+			},
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(consumer, () => {})
+		let unsubscribeAgain = () => {}
+		remount = () => {
+			remount = () => {}
+			unsubscribeAgain = store.subscribe(consumer, () => {})
+		}
+		await flushMicrotask()
+		unsubscribe()
+		await flushMicrotask()
+		expect(sourceEffect).toHaveBeenCalledOnce()
+		unsubscribeAgain()
+		expect(sourceEffect).toHaveBeenCalledTimes(2)
+	})
+
+	it('releases dependency references after several conditional switches', async () => {
+		const firstEffect = vi.fn()
+		const secondEffect = vi.fn()
+		const first = primitive(1, firstEffect)
+		const second = primitive(2, secondEffect)
+		const selectFirst = primitive(true)
+		const selected = derived(
+			(read) => (read(selectFirst) ? read(first) : read(second)),
+			() => {},
+		)
+		const store = createStore()
+		const unsubscribe = store.subscribe(selected, () => {
+			store.peek(selected)
+		})
+		await flushMicrotask()
+		for (const choice of [false, true, false, true]) {
+			store.send(selectFirst, choice)
+			await flushMicrotask()
+		}
+		unsubscribe()
+		expect(firstEffect.mock.calls.map(([next]) => next)).toEqual([
+			1,
+			undefined,
+			1,
+			undefined,
+			1,
+			undefined,
+		])
+		expect(secondEffect.mock.calls.map(([next]) => next)).toEqual([
+			2,
+			undefined,
+			2,
+			undefined,
+		])
+	})
+
 	it('subscribes to an atom family member', () => {
 		const names = family((key: string) => primitive(key))
 		const store = createStore()
