@@ -4,7 +4,13 @@ import { Card } from '@astryxdesign/core/Card'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
-import { derivedScope, primitiveScope, useScope } from '@prncss-xyz/react-utils'
+import type { ScopeLike } from '@prncss-xyz/react-utils'
+import {
+	derivedScope,
+	primitiveScope,
+	RootScope,
+	useScope,
+} from '@prncss-xyz/react-utils'
 
 const logLifecycle = (name: string) => (value: string) => {
 	// oxlint-disable-next-line no-console
@@ -28,7 +34,7 @@ function ScopeValue({
 	scope,
 }: {
 	label: string
-	scope: typeof PlaceScope | typeof descriptionScope
+	scope: ScopeLike<string>
 }) {
 	const value = useScope(scope)
 
@@ -41,33 +47,34 @@ function ScopeValue({
 
 export function ScopeDemo() {
 	return (
-		<PlaceScope value='outer'>
-			<ColorScope value='blue'>
-				<VStack gap={6}>
-					<Card padding={6} variant='muted'>
-						<VStack gap={3}>
-							<Heading level={2}>Outer scope</Heading>
-							<ScopeValue label='Place' scope={PlaceScope} />
-							<ScopeValue label='Color' scope={ColorScope} />
-							<ScopeValue label='Derived' scope={descriptionScope} />
-						</VStack>
-					</Card>
-
-					<PlaceScope value='inner'>
-						<Card padding={6}>
+		<RootScope>
+			<PlaceScope value='outer'>
+				<ColorScope value='blue'>
+					<VStack gap={6}>
+						<Card padding={6} variant='muted'>
 							<VStack gap={3}>
-								<Heading level={2}>Nested scope</Heading>
+								<Heading level={2}>Outer scope</Heading>
 								<ScopeValue label='Place' scope={PlaceScope} />
-								<ScopeValue
-									label='Color inherited from outer'
-									scope={ColorScope}
-								/>
+								<ScopeValue label='Color' scope={ColorScope} />
 								<ScopeValue label='Derived' scope={descriptionScope} />
 							</VStack>
 						</Card>
-					</PlaceScope>
-				</VStack>
-			</ColorScope>
-		</PlaceScope>
+						<PlaceScope value='inner'>
+							<Card padding={6}>
+								<VStack gap={3}>
+									<Heading level={2}>Nested scope</Heading>
+									<ScopeValue label='Place' scope={PlaceScope} />
+									<ScopeValue
+										label='Color inherited from outer'
+										scope={ColorScope}
+									/>
+									<ScopeValue label='Derived' scope={descriptionScope} />
+								</VStack>
+							</Card>
+						</PlaceScope>
+					</VStack>
+				</ColorScope>
+			</PlaceScope>
+		</RootScope>
 	)
 }

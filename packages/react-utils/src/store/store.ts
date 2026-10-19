@@ -3,6 +3,7 @@ import {
 	fromInit,
 	id,
 	isFunction,
+	isoAssert,
 	isReset,
 	type SetStateWithReset,
 } from '../functions'
@@ -289,7 +290,7 @@ class Store {
 		this.runEffect(symbol, instance, symbol.effect, next)
 	}
 	private flush() {
-		if (!this.tasks) throw new Error('unexpected call to flush')
+		isoAssert(this.tasks, 'unexpected call to flush')
 		const { primitives, effects, unmountedFamilyEntries } = this.tasks
 		this.tasks = undefined
 		this.flushingEffects = effects

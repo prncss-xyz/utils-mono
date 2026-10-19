@@ -1,10 +1,6 @@
 import { isoAssert } from '../functions'
 
 type Read = <Value>(symbol: ScopeLike<Value>) => Value
-
-/**
- * Needs to be a pure function
- */
 type Getter<Value> = (read: Read) => Value
 
 let nextIndex = 0
@@ -85,22 +81,28 @@ export class ScopeContext {
 		return Object.is(actual, value)
 	}
 	resolveScope<T>(symbol: PrimitiveScopeSymbol<T>): T {
-		if (this.scopeValues.has(symbol)) return this.scopeValues.get(symbol)
-		throw new Error(`You are trying to access a scope where it is not provided`)
+		isoAssert(
+			this.scopeValues.has(symbol),
+			'You are trying to access a scope where it is not provided',
+		)
+		return this.scopeValues.get(symbol)
 	}
 }
 
 export class ScopeStore {
+	private disposed = false
+	private storeMountCount = 0
 	private readonly contents = new Map<ScopeLike<any>, ScopeInstance<any>[]>()
 	private tasks:
 		| {
 				mount: ScopeInstance<any>[]
 				unmount: ScopeInstance<any>[]
+				unmountStore: boolean
 		  }
 		| undefined
 	private getTasks() {
 		if (!this.tasks) {
-			this.tasks = { mount: [], unmount: [] }
+			this.tasks = { mount: [], unmount: [], unmountStore: false }
 			queueMicrotask(this.flush.bind(this))
 		}
 		return this.tasks
@@ -131,6 +133,7 @@ export class ScopeStore {
 		instance: ScopeInstance<any>,
 		pending: Set<ScopeInstance<any>>,
 	) {
+		if (instance.scopes.size === 0) return
 		if (!pending.delete(instance) || instance.count !== 0) return
 		for (const dependent of instance.dependents)
 			this.cleanupInstance(dependent, pending)
@@ -141,9 +144,14 @@ export class ScopeStore {
 		cleanup?.()
 	}
 	private flush() {
+		if (this.disposed) return
 		isoAssert(this.tasks, 'unexpected call to flush')
 		const tasks = this.tasks
 		this.tasks = undefined
+		if (tasks.unmountStore && this.storeMountCount === 0) {
+			this.disposeStore()
+			return
+		}
 		for (const instance of tasks.mount) {
 			if (instance.count === 0 || instance.active) continue
 			// Activity is separate from cleanup: onMount may return nothing.
@@ -162,6 +170,7 @@ export class ScopeStore {
 		context: ScopeContext,
 		symbol: ScopeLike<Value>,
 	): ScopeInstance<Value> {
+		isoAssert(!this.disposed, 'cannot resolve a scope in an unmounted store')
 		const candidates = this.contents.get(symbol)
 		if (candidates) {
 			candidate: for (const instance of candidates) {
@@ -208,11 +217,42 @@ export class ScopeStore {
 		if (mounting) this.getTasks().mount.push(instance)
 		if (instance.count === 0) this.getTasks().unmount.unshift(instance)
 	}
-	mount<T>(instance: ScopeInstance<T>) {
-		this.modifyMount(instance, 1)
+	/** Disposes the store after its last owner releases, unless remounted in the same batch. */
+	mountStore() {
+		isoAssert(!this.disposed, 'cannot mount an unmounted store')
+		this.storeMountCount++
 		let released = false
 		return () => {
 			if (released) return
+			released = true
+			if (--this.storeMountCount === 0) this.getTasks().unmountStore = true
+		}
+	}
+	private disposeStore() {
+		if (this.disposed) return
+		this.disposed = true
+		this.tasks = undefined
+		const visited = new Set<ScopeInstance<any>>()
+		const cleanup = (instance: ScopeInstance<any>) => {
+			if (visited.has(instance)) return
+			visited.add(instance)
+			for (const dependent of instance.dependents) cleanup(dependent)
+			const effect = instance.cleanup
+			instance.active = false
+			instance.cleanup = undefined
+			instance.dependents.clear()
+			effect?.()
+		}
+		for (const instances of this.contents.values())
+			for (const instance of instances) cleanup(instance)
+		this.contents.clear()
+	}
+	mount<T>(instance: ScopeInstance<T>) {
+		isoAssert(!this.disposed, 'cannot mount a scope in an unmounted store')
+		this.modifyMount(instance, 1)
+		let released = false
+		return () => {
+			if (released || this.disposed) return
 			released = true
 			this.modifyMount(instance, -1)
 		}

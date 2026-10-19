@@ -1,2 +1,2 @@
 export * from './react'
-export { derivedScope } from './core'
+export { derivedScope, type ScopeLike } from './core'

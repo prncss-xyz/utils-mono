@@ -498,7 +498,7 @@ describe('batched scope lifecycle', () => {
 		await flushMicrotask()
 		const releaseLater = store.mount(instance)
 		await flushMicrotask()
-		expect(start).toHaveBeenCalledTimes(2)
+		expect(start).toHaveBeenCalledTimes(1)
 		releaseLater()
 		await flushMicrotask()
 	})
@@ -524,5 +524,113 @@ describe('batched scope lifecycle', () => {
 		await flushMicrotask()
 		expect(dependencyInstance.count).toBe(0)
 		expect(cleanup).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('store disposal', () => {
+	it('retains dependency-free derived effects until store disposal', async () => {
+		const lifecycle: string[] = []
+		const dependency = derivedScope(
+			() => 'value',
+			() => () => {
+				lifecycle.push('dependency')
+			},
+		)
+		const dependent = derivedScope(
+			(read) => read(dependency),
+			() => () => {
+				lifecycle.push('dependent')
+			},
+		)
+		const store = new ScopeStore()
+		const unmountStore = store.mountStore()
+		const context = ScopeContext.init()
+		const instance = store.resolve(context, dependent)
+		const release = store.mount(instance)
+		await flushMicrotask()
+		release()
+		await flushMicrotask()
+		expect(lifecycle).toEqual([])
+		expect(store.resolve(context, dependent)).toBe(instance)
+		unmountStore()
+		unmountStore()
+		await flushMicrotask()
+		expect(lifecycle).toEqual(['dependent', 'dependency'])
+		expect(() => store.resolve(context, dependent)).toThrow('unmounted store')
+	})
+
+	it('disposes active graphs before late consumer releases', async () => {
+		const cleanup = vi.fn()
+		const scope = primitiveScope(() => cleanup)
+		const store = new ScopeStore()
+		const unmountStore = store.mountStore()
+		const context = ScopeContext.init().childScope(scope, 'value')
+		const release = store.mount(store.resolve(context, scope))
+		await flushMicrotask()
+		unmountStore()
+		await flushMicrotask()
+		release()
+		await flushMicrotask()
+		expect(cleanup).toHaveBeenCalledTimes(1)
+	})
+
+	it('cancels pending mounts on disposal', async () => {
+		const start = vi.fn()
+		const store = new ScopeStore()
+		const unmountStore = store.mountStore()
+		store.mount(
+			store.resolve(
+				ScopeContext.init(),
+				derivedScope(() => 'value', start),
+			),
+		)
+		unmountStore()
+		await flushMicrotask()
+		expect(start).not.toHaveBeenCalled()
+	})
+})
+
+describe('store ownership', () => {
+	it('coalesces effect replay without cleaning retained scopes', async () => {
+		const cleanup = vi.fn()
+		const start = vi.fn(() => cleanup)
+		const store = new ScopeStore()
+		const context = ScopeContext.init()
+		const scope = derivedScope(() => 'value', start)
+		const instance = store.resolve(context, scope)
+		const unmountStore = store.mountStore()
+		const release = store.mount(instance)
+		await flushMicrotask()
+		release()
+		unmountStore()
+		const unmountAgain = store.mountStore()
+		const releaseAgain = store.mount(instance)
+		await flushMicrotask()
+		expect(start).toHaveBeenCalledTimes(1)
+		expect(cleanup).not.toHaveBeenCalled()
+		expect(store.resolve(context, scope)).toBe(instance)
+		releaseAgain()
+		unmountAgain()
+		await flushMicrotask()
+		expect(cleanup).toHaveBeenCalledTimes(1)
+		expect(() => store.mountStore()).toThrow('unmounted store')
+	})
+
+	it('waits for every owner and releases each owner once', async () => {
+		const store = new ScopeStore()
+		const first = store.mountStore()
+		const second = store.mountStore()
+		first()
+		first()
+		await flushMicrotask()
+		expect(() =>
+			store.resolve(
+				ScopeContext.init(),
+				derivedScope(() => 'value'),
+			),
+		).not.toThrow()
+		second()
+		await flushMicrotask()
+		expect(() => store.mountStore()).toThrow('unmounted store')
 	})
 })
