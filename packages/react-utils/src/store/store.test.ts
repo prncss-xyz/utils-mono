@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { RESET } from '../functions'
+import { RESET, type SetStateWithReset } from '../functions'
 import {
 	createStore,
 	derived,
@@ -390,7 +390,7 @@ describe('Store', () => {
 
 	it('runs an effect without requiring separate dependency subscribers', async () => {
 		const doer = vi.fn()
-		const count = primitive(1, doer)
+		const count = primitive(1, { effect: doer })
 		const store = createStore()
 
 		store.subscribe(count, () => {})
@@ -406,8 +406,10 @@ describe('Store', () => {
 	})
 
 	it('defers sends from an effect until a later microtask', async () => {
-		const count = primitive(0, (next, _last, _get, set) => {
-			if (next === 0) set(count, 1)
+		const count = primitive(0, {
+			effect: (next, _last, _get, set) => {
+				if (next === 0) set(count, 1)
+			},
 		})
 		const store = createStore()
 
@@ -428,8 +430,10 @@ describe('Store', () => {
 			() => {},
 		)
 		const runs = vi.fn()
-		const trigger = primitive(0, (next, _last, get) => {
-			runs(next, get(source), get(observed), get(values, 'key'))
+		const trigger = primitive(0, {
+			effect: (next, _last, get) => {
+				runs(next, get(source), get(observed), get(values, 'key'))
+			},
 		})
 		const store = createStore()
 
@@ -454,11 +458,13 @@ describe('Store', () => {
 			(_read, write, value: number) => write(target, value / 2),
 		)
 		const values = family((_key: string) => primitive(0))
-		const trigger = primitive(0, (next, _last, _get, set) => {
-			if (next === undefined) return
-			set(target, 1)
-			set(doubled, 6)
-			set(values, 'key', (value) => value + 1)
+		const trigger = primitive(0, {
+			effect: (next, _last, _get, set) => {
+				if (next === undefined) return
+				set(target, 1)
+				set(doubled, 6)
+				set(values, 'key', (value) => value + 1)
+			},
 		})
 		const store = createStore()
 
@@ -473,7 +479,7 @@ describe('Store', () => {
 
 	it('coalesces mounting and dependency changes into one effect run', async () => {
 		const doer = vi.fn()
-		const count = primitive(0, doer)
+		const count = primitive(0, { effect: doer })
 		const store = createStore()
 
 		store.subscribe(count, () => {})
@@ -489,10 +495,10 @@ describe('Store', () => {
 		)
 	})
 
-	it('transitions effects on unmount and delays its cleanup until remount', async () => {
+	it('cleans up on unmount without rerunning the effect', async () => {
 		const cleanup = vi.fn()
 		const doer = vi.fn(() => cleanup)
-		const count = primitive(0, doer)
+		const count = primitive(0, { effect: doer })
 		const store = createStore()
 		const unsubscribe = store.subscribe(count, () => {})
 
@@ -500,8 +506,8 @@ describe('Store', () => {
 		unsubscribe()
 
 		expect(doer).toHaveBeenLastCalledWith(
-			undefined,
 			0,
+			undefined,
 			expect.any(Function),
 			expect.any(Function),
 		)
@@ -510,13 +516,13 @@ describe('Store', () => {
 		store.send(count, 1)
 		await flushMicrotask()
 
-		expect(doer).toHaveBeenCalledTimes(2)
+		expect(doer).toHaveBeenCalledOnce()
 		expect(cleanup).toHaveBeenCalledOnce()
 
 		store.subscribe(count, () => {})
 		await flushMicrotask()
 
-		expect(cleanup).toHaveBeenCalledTimes(2)
+		expect(cleanup).toHaveBeenCalledOnce()
 		expect(doer).toHaveBeenLastCalledWith(
 			1,
 			undefined,
@@ -531,7 +537,7 @@ describe('Store', () => {
 		const double = derived(
 			(read) => read(count) * 2,
 			() => {},
-			effect,
+			{ effect },
 		)
 		const store = createStore()
 		store.peek(double)
@@ -544,27 +550,27 @@ describe('Store', () => {
 
 	it('mounts dependencies first and unmounts dependants first across a diamond', async () => {
 		const events: string[] = []
-		const effect = (name: string) => (next: number | undefined) => {
-			events.push(`${name}:${next === undefined ? 'unmount' : 'mount'}`)
+		const effect = (name: string) => () => {
+			events.push(`${name}:mount`)
 			return () => {
 				events.push(`${name}:cleanup`)
 			}
 		}
-		const source = primitive(1, effect('source'))
+		const source = primitive(1, { effect: effect('source') })
 		const left = derived<number, never>(
 			(read) => read(source),
 			() => {},
-			effect('left'),
+			{ effect: effect('left') },
 		)
 		const right = derived<number, never>(
 			(read) => read(source),
 			() => {},
-			effect('right'),
+			{ effect: effect('right') },
 		)
 		const leaf = derived<number, never>(
 			(read) => read(left) + read(right),
 			() => {},
-			effect('leaf'),
+			{ effect: effect('leaf') },
 		)
 		const store = createStore()
 		const unsubscribe = store.subscribe(leaf, () => {})
@@ -579,19 +585,16 @@ describe('Store', () => {
 		unsubscribe()
 		expect(events).toEqual([
 			'leaf:cleanup',
-			'leaf:unmount',
 			'left:cleanup',
-			'left:unmount',
 			'right:cleanup',
-			'right:unmount',
 			'source:cleanup',
-			'source:unmount',
 		])
 	})
 
 	it('keeps shared dependencies mounted until their last consumer releases them', async () => {
-		const effect = vi.fn()
-		const source = primitive(1, effect)
+		const cleanup = vi.fn()
+		const effect = vi.fn(() => cleanup)
+		const source = primitive(1, { effect })
 		const left = derived(
 			(read) => read(source),
 			() => {},
@@ -609,15 +612,17 @@ describe('Store', () => {
 		unsubscribeSource()
 		expect(effect).toHaveBeenCalledOnce()
 		unsubscribeRight()
-		expect(effect).toHaveBeenCalledTimes(2)
-		expect(effect.mock.calls[1]?.[0]).toBeUndefined()
+		expect(effect).toHaveBeenCalledOnce()
+		expect(cleanup).toHaveBeenCalledOnce()
 	})
 
 	it('mounts new conditional dependencies and releases old ones', async () => {
-		const firstEffect = vi.fn()
-		const secondEffect = vi.fn()
-		const first = primitive(1, firstEffect)
-		const second = primitive(2, secondEffect)
+		const firstCleanup = vi.fn()
+		const firstEffect = vi.fn(() => firstCleanup)
+		const secondCleanup = vi.fn()
+		const secondEffect = vi.fn(() => secondCleanup)
+		const first = primitive(1, { effect: firstEffect })
+		const second = primitive(2, { effect: secondEffect })
 		const selectFirst = primitive(true)
 		const selected = derived(
 			(read) => (read(selectFirst) ? read(first) : read(second)),
@@ -632,22 +637,25 @@ describe('Store', () => {
 		await flushMicrotask()
 		store.peek(selected)
 		await flushMicrotask()
-		expect(firstEffect).toHaveBeenCalledTimes(2)
-		expect(firstEffect.mock.calls[1]?.[0]).toBeUndefined()
+		expect(firstEffect).toHaveBeenCalledOnce()
+		expect(firstCleanup).toHaveBeenCalledOnce()
 		expect(secondEffect).toHaveBeenCalledOnce()
 		unsubscribe()
-		expect(secondEffect).toHaveBeenCalledTimes(2)
+		expect(secondEffect).toHaveBeenCalledOnce()
+		expect(secondCleanup).toHaveBeenCalledOnce()
 	})
 
 	it('does not release references twice or release a later subscription', async () => {
-		const effect = vi.fn()
-		const atom = primitive(1, effect)
+		const cleanup = vi.fn()
+		const effect = vi.fn(() => cleanup)
+		const atom = primitive(1, { effect })
 		const store = createStore()
 		const notify = vi.fn()
 		const unsubscribe = store.subscribe(atom, notify)
 		await flushMicrotask()
 		unsubscribe()
-		expect(effect).toHaveBeenCalledTimes(2)
+		expect(effect).toHaveBeenCalledOnce()
+		expect(cleanup).toHaveBeenCalledOnce()
 
 		const unsubscribeAgain = store.subscribe(atom, notify)
 		await flushMicrotask()
@@ -655,15 +663,18 @@ describe('Store', () => {
 		store.send(atom, 2)
 		await flushMicrotask()
 		expect(notify).toHaveBeenCalledOnce()
-		expect(effect).toHaveBeenCalledTimes(4)
+		expect(effect).toHaveBeenCalledTimes(3)
+		expect(cleanup).toHaveBeenCalledTimes(2)
 		unsubscribeAgain()
 		unsubscribeAgain()
-		expect(effect).toHaveBeenCalledTimes(5)
+		expect(effect).toHaveBeenCalledTimes(3)
+		expect(cleanup).toHaveBeenCalledTimes(3)
 	})
 
 	it('does not acquire extra references for repeated or retained dependency reads', async () => {
-		const sourceEffect = vi.fn()
-		const source = primitive(1, sourceEffect)
+		const cleanup = vi.fn()
+		const sourceEffect = vi.fn(() => cleanup)
+		const source = primitive(1, { effect: sourceEffect })
 		const trigger = primitive(0)
 		const selected = derived(
 			(read) => read(trigger) + read(source) + read(source),
@@ -680,18 +691,20 @@ describe('Store', () => {
 		}
 		expect(sourceEffect).toHaveBeenCalledOnce()
 		unsubscribe()
-		expect(sourceEffect).toHaveBeenCalledTimes(2)
+		expect(sourceEffect).toHaveBeenCalledOnce()
+		expect(cleanup).toHaveBeenCalledOnce()
 	})
 
 	it('keeps dependency ownership balanced when cleanup remounts a consumer', async () => {
-		const sourceEffect = vi.fn()
-		const source = primitive(1, sourceEffect)
+		const cleanup = vi.fn()
+		const sourceEffect = vi.fn(() => cleanup)
+		const source = primitive(1, { effect: sourceEffect })
 		let remount = () => {}
 		const consumer = derived<number, never>(
 			(read) => read(source),
 			() => {},
-			(next) => {
-				if (next === undefined) remount()
+			{
+				effect: () => () => remount(),
 			},
 		)
 		const store = createStore()
@@ -706,14 +719,15 @@ describe('Store', () => {
 		await flushMicrotask()
 		expect(sourceEffect).toHaveBeenCalledOnce()
 		unsubscribeAgain()
-		expect(sourceEffect).toHaveBeenCalledTimes(2)
+		expect(sourceEffect).toHaveBeenCalledOnce()
+		expect(cleanup).toHaveBeenCalledOnce()
 	})
 
 	it('releases dependency references after several conditional switches', async () => {
 		const firstEffect = vi.fn()
 		const secondEffect = vi.fn()
-		const first = primitive(1, firstEffect)
-		const second = primitive(2, secondEffect)
+		const first = primitive(1, { effect: firstEffect })
+		const second = primitive(2, { effect: secondEffect })
 		const selectFirst = primitive(true)
 		const selected = derived(
 			(read) => (read(selectFirst) ? read(first) : read(second)),
@@ -729,20 +743,8 @@ describe('Store', () => {
 			await flushMicrotask()
 		}
 		unsubscribe()
-		expect(firstEffect.mock.calls.map(([next]) => next)).toEqual([
-			1,
-			undefined,
-			1,
-			undefined,
-			1,
-			undefined,
-		])
-		expect(secondEffect.mock.calls.map(([next]) => next)).toEqual([
-			2,
-			undefined,
-			2,
-			undefined,
-		])
+		expect(firstEffect.mock.calls.map(([next]) => next)).toEqual([1, 1, 1])
+		expect(secondEffect.mock.calls.map(([next]) => next)).toEqual([2, 2])
 	})
 
 	it('subscribes to an atom family member', () => {
@@ -883,21 +885,21 @@ describe('Store', () => {
 					events.push(`cleanup:${name}:${next}`)
 				}
 			}
-		const source = primitive(0, effect('source'))
+		const source = primitive(0, { effect: effect('source') })
 		const left = derived<number, never>(
 			(read) => read(source) + 1,
 			() => {},
-			effect('left'),
+			{ effect: effect('left') },
 		)
 		const right = derived<number, never>(
 			(read) => read(source) + 2,
 			() => {},
-			effect('right'),
+			{ effect: effect('right') },
 		)
 		const leaf = derived<number, never>(
 			(read) => read(left) + read(right),
 			() => {},
-			effect('leaf'),
+			{ effect: effect('leaf') },
 		)
 		const store = createStore()
 		store.subscribe(leaf, () => {})
@@ -922,20 +924,24 @@ describe('Store', () => {
 
 	it('leaves unchanged effects and their cleanups intact during updates', async () => {
 		const events: string[] = []
-		const source = primitive(0, (next) => {
-			events.push(`run:source:${next}`)
-			return () => {
-				events.push(`cleanup:source:${next}`)
-			}
+		const source = primitive(0, {
+			effect: (next) => {
+				events.push(`run:source:${next}`)
+				return () => {
+					events.push(`cleanup:source:${next}`)
+				}
+			},
 		})
 		const parity = derived<number, never>(
 			(read) => read(source) % 2,
 			() => {},
-			(next) => {
-				events.push(`run:parity:${next}`)
-				return () => {
-					events.push(`cleanup:parity:${next}`)
-				}
+			{
+				effect: (next) => {
+					events.push(`run:parity:${next}`)
+					return () => {
+						events.push(`cleanup:parity:${next}`)
+					}
+				},
 			},
 		)
 		const store = createStore()
@@ -947,32 +953,31 @@ describe('Store', () => {
 		expect(events).toEqual(['cleanup:source:0', 'run:source:2'])
 		events.length = 0
 		unsubscribe()
-		expect(events).toEqual([
-			'cleanup:parity:0',
-			'run:parity:undefined',
-			'cleanup:source:2',
-			'run:source:undefined',
-		])
+		expect(events).toEqual(['cleanup:parity:0', 'cleanup:source:2'])
 	})
 
 	it('does not repeat cleanup or rerun effects when cleanup unsubscribes the consumer', async () => {
 		const events: string[] = []
 		let unsubscribe = () => {}
-		const source = primitive(0, (next) => {
-			events.push(`run:source:${next}`)
-			return () => {
-				events.push(`cleanup:source:${next}`)
-			}
+		const source = primitive(0, {
+			effect: (next) => {
+				events.push(`run:source:${next}`)
+				return () => {
+					events.push(`cleanup:source:${next}`)
+				}
+			},
 		})
 		const consumer = derived<number, never>(
 			(read) => read(source),
 			() => {},
-			(next) => {
-				events.push(`run:consumer:${next}`)
-				return () => {
-					events.push(`cleanup:consumer:${next}`)
-					unsubscribe()
-				}
+			{
+				effect: (next) => {
+					events.push(`run:consumer:${next}`)
+					return () => {
+						events.push(`cleanup:consumer:${next}`)
+						unsubscribe()
+					}
+				},
 			},
 		)
 		const store = createStore()
@@ -981,19 +986,16 @@ describe('Store', () => {
 		events.length = 0
 		store.send(source, 1)
 		await flushMicrotask()
-		expect(events).toEqual([
-			'cleanup:consumer:0',
-			'run:consumer:undefined',
-			'cleanup:source:0',
-			'run:source:undefined',
-		])
+		expect(events).toEqual(['cleanup:consumer:0', 'cleanup:source:0'])
 	})
 
 	it('runs the previous cleanup before rerunning an effect', async () => {
 		const events: string[] = []
-		const count = primitive(0, (next) => {
-			events.push(`run:${next}`)
-			return () => events.push(`cleanup:${next}`)
+		const count = primitive(0, {
+			effect: (next) => {
+				events.push(`run:${next}`)
+				return () => events.push(`cleanup:${next}`)
+			},
 		})
 		const store = createStore()
 
@@ -1004,4 +1006,211 @@ describe('Store', () => {
 
 		expect(events).toEqual(['run:0', 'cleanup:0', 'run:1'])
 	})
+})
+
+describe('onMount', () => {
+	it.each(['primitive', 'derived'] as const)(
+		'keeps %s resources until the last subscriber leaves',
+		async (kind) => {
+			const cleanup = vi.fn()
+			const onMount = vi.fn(() => cleanup)
+			const effect = vi.fn()
+			const source = primitive(0)
+			const atom =
+				kind === 'primitive'
+					? primitive(0, { onMount, effect })
+					: derived(
+							(read) => read(source),
+							(_read, set, value: SetStateWithReset<number>) =>
+								set(source, value),
+							{ onMount, effect },
+						)
+			const store = createStore()
+			store.peek(atom)
+			expect(onMount).not.toHaveBeenCalled()
+			const release = store.subscribe(atom, vi.fn())
+			const releaseOther = store.subscribe(atom, vi.fn())
+			await Promise.resolve()
+			expect(onMount).toHaveBeenCalledOnce()
+			store.send(atom, 1)
+			await Promise.resolve()
+			expect(onMount).toHaveBeenCalledOnce()
+			expect(cleanup).not.toHaveBeenCalled()
+			expect(effect).toHaveBeenCalledTimes(2)
+			release()
+			expect(cleanup).not.toHaveBeenCalled()
+			releaseOther()
+			expect(cleanup).toHaveBeenCalledOnce()
+			const releaseAgain = store.subscribe(atom, vi.fn())
+			await Promise.resolve()
+			expect(onMount).toHaveBeenCalledTimes(2)
+			releaseAgain()
+			expect(cleanup).toHaveBeenCalledTimes(2)
+		},
+	)
+
+	it('mounts dependencies first and cleans up consumers first', async () => {
+		const order: string[] = []
+		const source = primitive(0, {
+			onMount: () => {
+				order.push('source mount')
+				return () => {
+					order.push('source cleanup')
+				}
+			},
+		})
+		const consumer = derived(
+			(get) => get(source),
+			() => {},
+			{
+				onMount: (get, set) => {
+					order.push('consumer mount')
+					set(source, get(source) + 1)
+					return () => {
+						order.push('consumer cleanup')
+					}
+				},
+			},
+		)
+		const store = createStore()
+		const release = store.subscribe(consumer, vi.fn())
+		await Promise.resolve()
+		release()
+		expect(order).toEqual([
+			'source mount',
+			'consumer mount',
+			'consumer cleanup',
+			'source cleanup',
+		])
+	})
+})
+
+describe('mount scheduling', () => {
+	it('skips callbacks when released before the mount microtask', async () => {
+		const onMount = vi.fn()
+		const effect = vi.fn()
+		const atom = primitive(0, { onMount, effect })
+		const store = createStore()
+		const release = store.subscribe(atom, vi.fn())
+		expect(onMount).not.toHaveBeenCalled()
+		expect(effect).not.toHaveBeenCalled()
+		release()
+		await Promise.resolve()
+		expect(onMount).not.toHaveBeenCalled()
+		expect(effect).not.toHaveBeenCalled()
+	})
+
+	it('settles mount writes before dependent mounts and initial effects', async () => {
+		const order: string[] = []
+		const source = primitive(0, {
+			onMount: (_get, set) => {
+				order.push('source mount')
+				set(source, 2)
+				return () => {
+					order.push('source unmount')
+				}
+			},
+			effect: (next) => {
+				order.push(`source effect:${next}`)
+				return () => {
+					order.push('source effect cleanup')
+				}
+			},
+		})
+		const consumer = derived(
+			(get) => get(source) * 2,
+			() => {},
+			{
+				onMount: (get) => {
+					order.push(`consumer mount:${get(source)}`)
+					return () => {
+						order.push('consumer unmount')
+					}
+				},
+				effect: (next) => {
+					order.push(`consumer effect:${next}`)
+					return () => {
+						order.push('consumer effect cleanup')
+					}
+				},
+			},
+		)
+		const store = createStore()
+		const release = store.subscribe(consumer, vi.fn())
+		expect(order).toEqual([])
+		await Promise.resolve()
+		expect(order).toEqual([
+			'source mount',
+			'consumer mount:2',
+			'source effect:2',
+			'consumer effect:4',
+		])
+		order.length = 0
+		release()
+		expect(order).toEqual([
+			'consumer effect cleanup',
+			'consumer unmount',
+			'source effect cleanup',
+			'source unmount',
+		])
+	})
+})
+
+describe('effect values', () => {
+	it.each(['primitive', 'derived'] as const)(
+		'treats undefined as a real %s value and only cleans up on unmount',
+		async (kind) => {
+			const cleanup = vi.fn()
+			const effect = vi.fn(() => cleanup)
+			const source = primitive<number | undefined>(
+				undefined,
+				kind === 'primitive' ? { effect } : undefined,
+			)
+			const atom =
+				kind === 'primitive'
+					? source
+					: derived(
+							(get) => get(source),
+							(_get, set, value: SetStateWithReset<number | undefined>) =>
+								set(source, value),
+							{ effect },
+						)
+			const store = createStore()
+			const release = store.subscribe(atom, vi.fn())
+			await Promise.resolve()
+			expect(effect).toHaveBeenCalledOnce()
+			expect(effect.mock.calls[0]).toEqual([
+				undefined,
+				undefined,
+				expect.any(Function),
+				expect.any(Function),
+			])
+			store.send(atom, 1)
+			await Promise.resolve()
+			store.send(atom, undefined)
+			await Promise.resolve()
+			expect(effect).toHaveBeenCalledTimes(3)
+			expect(effect.mock.calls[2]).toEqual([
+				undefined,
+				1,
+				expect.any(Function),
+				expect.any(Function),
+			])
+			release()
+			release()
+			expect(effect).toHaveBeenCalledTimes(3)
+			expect(cleanup).toHaveBeenCalledTimes(3)
+			const releaseAgain = store.subscribe(atom, vi.fn())
+			await Promise.resolve()
+			expect(effect).toHaveBeenCalledTimes(4)
+			expect(effect.mock.calls[3]).toEqual([
+				undefined,
+				undefined,
+				expect.any(Function),
+				expect.any(Function),
+			])
+			releaseAgain()
+			expect(cleanup).toHaveBeenCalledTimes(4)
+		},
+	)
 })

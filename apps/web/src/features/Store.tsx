@@ -12,7 +12,7 @@ import {
 const simple = primitive(
 	0,
 	// oxlint-disable-next-line no-console
-	(next, last) => console.log(next, last),
+	{ effect: (next, last) => console.log(next, last) },
 )
 
 const group = family((k: number) => primitive(k), { TTL: Infinity })

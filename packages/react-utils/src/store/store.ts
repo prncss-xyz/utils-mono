@@ -27,7 +27,9 @@ type Instance<S> = {
 	dirty: boolean
 	value: S
 	effectValue: S | undefined
+	effectActive: boolean
 	effectCleanup: (() => void) | undefined
+	mountLifecycle: { cleanup?: () => void } | undefined
 	deps: Set<Instance<any>>
 	subs: Set<Instance<any>>
 	subscriptions: Set<() => void>
@@ -35,17 +37,18 @@ type Instance<S> = {
 	mountedDeps: Set<Instance<any>>
 }
 
-type CoreSymbol<S> = {
+export type AtomOptions<S> = {
 	effect?: Effect<S>
+	onMount?: OnMount
 }
 
-type PrimitiveSymbol<S, E> = CoreSymbol<S> & {
+type PrimitiveSymbol<S, E> = AtomOptions<S> & {
 	type: 'primitive'
 	getter: (() => S) | S
 	readonly event?: E
 }
 
-type DerivedSymbol<S, E> = CoreSymbol<S> & {
+type DerivedSymbol<S, E> = AtomOptions<S> & {
 	type: 'derived'
 	getter: Getter<S>
 	setter: Setter<E>
@@ -90,12 +93,15 @@ type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
 type Getter<S> = (read: Read) => S
 type Setter<E> = (read: Read, write: Write, e: E) => void
 export type Effect<S> = (
-	next: S | undefined,
+	next: S,
 	last: S | undefined,
 	/** Read an atom without tracking it as a dependency. */
 	get: Read,
 	set: Write,
 ) => void | (() => void)
+
+/** Runs in the effect microtask after the first subscription; cleans up on last release. */
+export type OnMount = (get: Read, set: Write) => void | (() => void)
 
 export type ResolvedAtom<S, E> = {
 	peek: () => S
@@ -105,25 +111,25 @@ export type ResolvedAtom<S, E> = {
 
 export function primitive<S>(
 	getter: S | (() => S),
-	effect?: Effect<NoInfer<S>>,
+	opts?: AtomOptions<NoInfer<S>>,
 ): AtomSymbol<S, SetStateWithReset<S>> {
 	return {
 		type: 'primitive' as const,
 		getter,
-		effect,
+		...opts,
 	}
 }
 
 export function derived<S, E>(
 	getter: Getter<S>,
 	setter: Setter<E>,
-	effect?: Effect<NoInfer<S>>,
+	opts?: AtomOptions<NoInfer<S>>,
 ): AtomSymbol<S, E> {
 	return {
 		type: 'derived' as const,
 		getter,
 		setter,
-		effect,
+		...opts,
 	}
 }
 
@@ -159,6 +165,7 @@ export function hydrate(
 }
 
 type Tasks = {
+	mounts: Set<Instance<any>>
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
 	unmountedFamilyEntries: Set<Instance<any>>
@@ -167,6 +174,8 @@ type Tasks = {
 class Store {
 	private contents = new WeakMap<any, any>()
 	private tasks: Tasks | undefined = undefined
+	private mountWrites: Map<Instance<any>, any> | undefined
+	private flushingMounts: Set<Instance<any>> | undefined
 	private flushingEffects: Set<Instance<any>> | undefined
 	private hydrating = true
 	constructor(hydrate: Hydrate = []) {
@@ -181,6 +190,7 @@ class Store {
 	private getTasks(): Tasks {
 		if (this.tasks) return this.tasks
 		this.tasks = {
+			mounts: new Set(),
 			primitives: new Map(),
 			effects: new Set(),
 			unmountedFamilyEntries: new Set(),
@@ -227,7 +237,9 @@ class Store {
 					? fromInit(symbol.getter)
 					: (undefined as any),
 			effectValue: undefined,
+			effectActive: false,
 			effectCleanup: undefined,
+			mountLifecycle: undefined,
 			deps: new Set(),
 			subs: new Set(),
 			subscriptions: new Set(),
@@ -259,15 +271,36 @@ class Store {
 			instance.familyEntries.push(familyEntry)
 		}
 		instance.familyRemovalTimeouts.clear()
+		if (instance.mountCount === 0) return
+		;(this.flushingMounts ?? this.getTasks().mounts).add(instance)
 		this.enqueueEffect(instance)
+	}
+	private mount<S>(instance: Instance<S>) {
+		if (instance.mountCount === 0 || instance.mountLifecycle) return
+		const lifecycle: { cleanup?: () => void } = {}
+		instance.mountLifecycle = lifecycle
+		const cleanup = instance.symbol.onMount?.(
+			this.peek.bind(this),
+			this.send.bind(this),
+		)
+		if (cleanup) {
+			if (instance.mountLifecycle === lifecycle) lifecycle.cleanup = cleanup
+			else cleanup()
+		}
 	}
 	private release<S>(instance: Instance<S>) {
 		if (--instance.mountCount > 0) return
 		// Detach ownership before user callbacks can change dependencies or remount.
 		const mountedDeps = instance.mountedDeps
 		instance.mountedDeps = new Set()
-		const symbol = instance.symbol as AtomSymbol<S, unknown>
-		if (symbol.effect) this.runEffect(instance, symbol.effect, undefined)
+		const lifecycle = instance.mountLifecycle
+		instance.mountLifecycle = undefined
+		const cleanup = instance.effectCleanup
+		instance.effectCleanup = undefined
+		instance.effectValue = undefined
+		instance.effectActive = false
+		cleanup?.()
+		lifecycle?.cleanup?.()
 		if (instance.familyEntries.length > 0)
 			this.getTasks().unmountedFamilyEntries.add(instance)
 		for (const dep of mountedDeps) this.release(dep)
@@ -289,10 +322,11 @@ class Store {
 	private runEffect<S>(
 		instance: Instance<S>,
 		effect: Effect<S> | undefined,
-		next: S | undefined,
+		next: S,
 	) {
 		const last = instance.effectValue
 		instance.effectValue = next
+		instance.effectActive = true
 		const cleanup = instance.effectCleanup
 		instance.effectCleanup = undefined
 		cleanup?.()
@@ -302,15 +336,47 @@ class Store {
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
-		const { primitives, effects, unmountedFamilyEntries } = this.tasks
+		const { mounts, primitives, effects, unmountedFamilyEntries } = this.tasks
+		const mountWrites = new Map<Instance<any>, any>()
 		this.tasks = undefined
+		this.flushingMounts = mounts
 		this.flushingEffects = effects
-		// oxlint-disable-next-line prefer-const
-		for (let [instance, next] of primitives)
-			if (!Object.is(next, instance.value)) {
-				instance.value = next
-				this.notify(instance)
+		const applyUpdates = (pending: Map<Instance<any>, any>) => {
+			while (pending.size > 0) {
+				const updates = [...pending]
+				pending.clear()
+				for (const [instance, next] of updates)
+					if (!Object.is(next, instance.value)) {
+						instance.value = next
+						this.notify(instance)
+					}
 			}
+		}
+		const mount = (instance: Instance<any>) => {
+			if (instance.mountCount === 0 || instance.mountLifecycle) {
+				mounts.delete(instance)
+				return
+			}
+			this.peekInstance(instance)
+			for (const dep of instance.deps) mount(dep)
+			mounts.delete(instance)
+			this.mountWrites = mountWrites
+			try {
+				this.mount(instance)
+			} finally {
+				this.mountWrites = undefined
+			}
+			// Mount writes must settle before consumers mount or effects run.
+			applyUpdates(mountWrites)
+		}
+		applyUpdates(primitives)
+		do {
+			applyUpdates(mountWrites)
+			for (const instance of effects)
+				if (instance.mountCount > 0) this.peekInstance(instance)
+			for (const instance of mounts) mount(instance)
+		} while (mountWrites.size > 0 || mounts.size > 0)
+		this.flushingMounts = undefined
 		const visited = new Set<Instance<any>>()
 		const transitions: { instance: Instance<any>; next: any }[] = []
 		const collect = (instance: Instance<any>) => {
@@ -318,7 +384,10 @@ class Store {
 			visited.add(instance)
 			const next = this.peekInstance(instance)
 			for (const dep of instance.deps) collect(dep)
-			if (effects.has(instance) && !Object.is(next, instance.effectValue))
+			if (
+				effects.has(instance) &&
+				(!instance.effectActive || !Object.is(next, instance.effectValue))
+			)
 				transitions.push({ instance, next })
 		}
 		for (const instance of effects) collect(instance)
@@ -396,7 +465,7 @@ class Store {
 		const { symbol } = instance
 		switch (symbol.type) {
 			case 'primitive': {
-				const { primitives } = this.getTasks()
+				const primitives = this.mountWrites ?? this.getTasks().primitives
 				let res: any
 				if (isFunction(event)) {
 					const last = primitives.has(instance)

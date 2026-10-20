@@ -59,7 +59,8 @@ describe('coreMachineAtom', () => {
 		expect(store.peek(sideEffect)).toBe('transition')
 
 		unsubscribe()
-		expect(effect).toHaveBeenLastCalledWith(undefined, 'running')
+		expect(effect).toHaveBeenCalledTimes(2)
+		expect(effect).toHaveBeenLastCalledWith('running', 'idle')
 	})
 
 	it('predicts results without applying transition writes', async () => {

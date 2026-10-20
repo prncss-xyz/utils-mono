@@ -40,7 +40,7 @@ export function coreMachineAtom<E, S, R = S>(
 			const next = transition(fromSendable(event), last, read, write)
 			write(state, next)
 		},
-		opts?.effect,
+		{ effect: opts?.effect },
 	) as MachineAtom<E, R>
 
 	machine.can = family<boolean, Sendable<E>, never>(
