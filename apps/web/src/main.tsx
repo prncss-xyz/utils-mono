@@ -12,6 +12,7 @@ import HomePage from './pages/index'
 import MultistepsPage from './pages/multisteps'
 import ScopePage from './pages/scope'
 import StorePage from './pages/store'
+import TimerPage from './pages/timer'
 
 import './styles.css'
 
@@ -41,6 +42,11 @@ const routeTree = rootRoute.addChildren([
 		getParentRoute: () => rootRoute,
 		path: '/store',
 		component: StorePage,
+	}),
+	createRoute({
+		getParentRoute: () => rootRoute,
+		path: '/timer',
+		component: TimerPage,
 	}),
 ])
 

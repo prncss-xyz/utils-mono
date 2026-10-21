@@ -29,6 +29,9 @@ export default function Page() {
 						<Link as={RouterLink} href='/scope' isStandalone>
 							Scope
 						</Link>
+						<Link as={RouterLink} href='/timer' isStandalone>
+							Timer
+						</Link>
 					</VStack>
 				</Section>
 			</VStack>
