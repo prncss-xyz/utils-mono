@@ -3,15 +3,15 @@ import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import type { Tags } from '@prncss-xyz/react-utils'
 import {
-	derived,
-	primitive,
+	derivedAtom,
+	primitiveAtom,
 	tag,
 	modalMachineAtom,
 	useAtomValue,
 	useSetAtom,
 } from '@prncss-xyz/react-utils'
 
-const timeAtom = primitive(Date.now, {
+const timeAtom = primitiveAtom(Date.now, {
 	onMount: (_get, set) => {
 		set(timeAtom, Date.now())
 		const interval = setInterval(() => set(timeAtom, Date.now()), 200)
@@ -55,18 +55,20 @@ const timerAtom = modalMachineAtom<
 	},
 )
 
-const toggleAtom = derived(
-	() => undefined,
-	(read, write, _event: void) => {
-		const timer = read(timerAtom)
-		write(timerAtom, tag(timer.type === 'running' ? 'stop' : 'start'))
-	},
-)
+const resetAtom = derivedAtom(null, (_read, write) => {
+	write(timerAtom, tag('reset'))
+})
 
-const resetAtom = derived(
-	() => undefined,
-	(_read, write, _event: void) => {
-		write(timerAtom, tag('reset'))
+const toggle = (running: boolean) => !running
+
+const runningAtom = derivedAtom(
+	(read) => read(timerAtom).type === 'running',
+	(read, write, next: boolean | ((running: boolean) => boolean)) => {
+		const running = read(timerAtom).type === 'running'
+		const desired = typeof next === 'function' ? next(running) : next
+		if (desired !== running) {
+			write(timerAtom, tag(desired ? 'start' : 'stop'))
+		}
 	},
 )
 
@@ -81,14 +83,17 @@ function formatTime(time: number) {
 export function Timer() {
 	useAtomValue(timeAtom)
 	const timer = useAtomValue(timerAtom)
-	const toggle = useSetAtom(toggleAtom)
+	const setRunning = useSetAtom(runningAtom)
 	const reset = useSetAtom(resetAtom)
-	const isRunning = timer.type === 'running'
+	const isRunning = useAtomValue(runningAtom)
 
 	return (
 		<VStack gap={4} align='start'>
 			<Text>{formatTime(timer.payload)}</Text>
-			<Button label={isRunning ? 'Stop' : 'Start'} onClick={() => toggle()} />
+			<Button
+				label={isRunning ? 'Stop' : 'Start'}
+				onClick={() => setRunning(toggle)}
+			/>
 			<Button label='Reset' onClick={() => reset()} />
 		</VStack>
 	)

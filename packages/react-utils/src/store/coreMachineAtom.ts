@@ -1,9 +1,9 @@
 import { fromInit, id, noop, type Init } from '../functions'
 import { fromSendable, type Sendable, type Tags } from '../tags'
 import {
-	derived,
-	family,
-	primitive,
+	derivedAtom,
+	atomFamily,
+	primitiveAtom,
 	TRANSIENT,
 	type AtomFamily,
 	type AtomSymbol,
@@ -30,10 +30,11 @@ export function coreMachineAtom<E, S, R = S>(
 	},
 ): MachineAtom<E, R> {
 	const result = opts?.result ?? (id as (state: S, read: Read) => R)
-	const factory: (value: S) => AtomSymbol<S, any> = opts?.factory ?? primitive
+	const factory: (value: S) => AtomSymbol<S, any> =
+		opts?.factory ?? primitiveAtom
 	const state = factory(fromInit(init))
 	const ignoreWrite: Write = () => {}
-	const machine = derived<R, Sendable<E>>(
+	const machine = derivedAtom<R, Sendable<E>>(
 		(read) => result(read(state), read),
 		(read, write, event: Sendable<E>) => {
 			const last = read(state)
@@ -43,9 +44,9 @@ export function coreMachineAtom<E, S, R = S>(
 		{ effect: opts?.effect },
 	) as MachineAtom<E, R>
 
-	machine.can = family<boolean, Sendable<E>, never>(
+	machine.can = atomFamily<boolean, Sendable<E>, never>(
 		(event) =>
-			derived<boolean, never>((read) => {
+			derivedAtom<boolean, never>((read) => {
 				let dirty = false
 				const last = read(state)
 				const markDirty: Write = () => {
@@ -56,9 +57,9 @@ export function coreMachineAtom<E, S, R = S>(
 			}, noop),
 		{ TTL: TRANSIENT },
 	)
-	machine.next = family<R, Sendable<E>, never>(
+	machine.next = atomFamily<R, Sendable<E>, never>(
 		(event) =>
-			derived<R, never>(
+			derivedAtom<R, never>(
 				(read) =>
 					result(
 						transition(fromSendable(event), read(state), read, ignoreWrite),

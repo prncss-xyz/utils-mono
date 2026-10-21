@@ -1,4 +1,4 @@
-import { derived, primitive, type AtomSymbol } from './store'
+import { derivedAtom, primitiveAtom, type AtomSymbol } from './store'
 
 type Update<T> = T | ((prev: T) => T)
 
@@ -25,7 +25,7 @@ export function localStorageAtom<T>(
 			return null
 		}
 	}
-	const raw = primitive<string | null>(getSnapshot, {
+	const raw = primitiveAtom<string | null>(getSnapshot, {
 		onMount: (_get, set) => {
 			if (typeof window === 'undefined') return
 			const sync = () => set(raw, getSnapshot())
@@ -39,7 +39,7 @@ export function localStorageAtom<T>(
 		},
 	})
 
-	return derived(
+	return derivedAtom(
 		(read) => parse(read(raw)),
 		(_read, write, update: Update<T>) => {
 			const next =

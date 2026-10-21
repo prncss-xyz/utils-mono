@@ -109,7 +109,7 @@ export type ResolvedAtom<S, E> = {
 	subscribe: (notify: () => void) => () => void
 }
 
-export function primitive<S>(
+export function primitiveAtom<S>(
 	getter: S | (() => S),
 	opts?: AtomOptions<NoInfer<S>>,
 ): AtomSymbol<S, SetStateWithReset<S>> {
@@ -120,20 +120,28 @@ export function primitive<S>(
 	}
 }
 
-export function derived<S, E>(
-	getter: Getter<S>,
-	setter: Setter<E>,
+function noread(): never {
+	throw new Error('you cannot read this atom')
+}
+
+function nowrite(): never {
+	throw new Error('you cannot write this atom')
+}
+
+export function derivedAtom<S = never, E = void>(
+	getter: Getter<S> | null | undefined,
+	setter?: Setter<E> | null | undefined,
 	opts?: AtomOptions<NoInfer<S>>,
 ): AtomSymbol<S, E> {
 	return {
 		type: 'derived' as const,
-		getter,
-		setter,
+		getter: getter ?? noread,
+		setter: setter ?? nowrite,
 		...opts,
 	}
 }
 
-export function family<S, K, E>(
+export function atomFamily<S, K, E>(
 	create: (key: K) => AtomSymbol<S, E>,
 	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
 ): AtomFamily<S, K, E> {

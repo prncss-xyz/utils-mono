@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { RESET, type SetStateWithReset } from '../functions'
 import {
 	createStore,
-	derived,
-	family,
+	derivedAtom,
+	atomFamily,
 	hydrate,
-	primitive,
+	primitiveAtom,
 	TRANSIENT,
 } from './store'
 
@@ -14,9 +14,9 @@ const flushMicrotask = () => Promise.resolve()
 
 describe('Store', () => {
 	it('hydrates atoms before the store is returned', () => {
-		const count = primitive(0)
-		const str = primitive('')
-		const doubled = derived(
+		const count = primitiveAtom(0)
+		const str = primitiveAtom('')
+		const doubled = derivedAtom(
 			(read) => read(count) * 2,
 			(_read, write, value: number) => write(count, value / 2),
 		)
@@ -32,7 +32,7 @@ describe('Store', () => {
 	})
 
 	it('hydrates atom family members before the store is returned', () => {
-		const members = family((key: string) => primitive(key.length))
+		const members = atomFamily((key: string) => primitiveAtom(key.length))
 		const store = createStore([[members, 'first', 10]])
 
 		expect(store.peek(members, 'first')).toBe(10)
@@ -40,8 +40,8 @@ describe('Store', () => {
 	})
 
 	it('creates reusable, typed hydration entries', () => {
-		const count = primitive(0)
-		const members = family((key: string) => primitive(key.length))
+		const count = primitiveAtom(0)
+		const members = atomFamily((key: string) => primitiveAtom(key.length))
 		const hydration = [hydrate(count, 4), hydrate(members, 'first', 10)]
 		const store = createStore(hydration)
 
@@ -50,8 +50,8 @@ describe('Store', () => {
 	})
 
 	it('type-checks hydration against atom events and family keys', () => {
-		const count = primitive(0)
-		const members = family((key: string) => primitive(key.length))
+		const count = primitiveAtom(0)
+		const members = atomFamily((key: string) => primitiveAtom(key.length))
 
 		const checkTypes = () => {
 			// @ts-expect-error count events must correspond to its number state
@@ -72,7 +72,7 @@ describe('Store', () => {
 	})
 
 	it('defers primitive values, updates, and resets to the next microtask', async () => {
-		const count = primitive(0)
+		const count = primitiveAtom(0)
 		const store = createStore()
 
 		expect(store.peek(count)).toBe(0)
@@ -94,7 +94,7 @@ describe('Store', () => {
 	})
 
 	it('applies queued sends after flushing', async () => {
-		const count = primitive(1)
+		const count = primitiveAtom(1)
 		const store = createStore()
 
 		store.send(count, (value) => value + 2)
@@ -108,8 +108,8 @@ describe('Store', () => {
 	})
 
 	it('coalesces notifications per affected primitive instance', async () => {
-		const count = primitive(0)
-		const label = primitive('before')
+		const count = primitiveAtom(0)
+		const label = primitiveAtom('before')
 		const store = createStore()
 		const countValues: number[] = []
 		const countSubscriber = vi.fn(() => countValues.push(store.peek(count)))
@@ -133,7 +133,7 @@ describe('Store', () => {
 	})
 
 	it('commits RESET and notifies after flushing', async () => {
-		const count = primitive(() => 1)
+		const count = primitiveAtom(() => 1)
 		const store = createStore()
 		const subscriber = vi.fn()
 
@@ -154,7 +154,7 @@ describe('Store', () => {
 	})
 
 	it('preserves RESET semantics when composed with updater callbacks', async () => {
-		const count = primitive(1)
+		const count = primitiveAtom(1)
 		const store = createStore()
 
 		store.send(count, 5)
@@ -168,12 +168,12 @@ describe('Store', () => {
 	})
 
 	it('runs a writable derived setter synchronously and queues its primitive write', async () => {
-		const count = primitive(0)
+		const count = primitiveAtom(0)
 		const setter = vi.fn(
 			(read: (symbol: typeof count) => number, write: any, amount: number) =>
 				write(count, read(count) + amount),
 		)
-		const plus = derived((read) => read(count), setter)
+		const plus = derivedAtom((read) => read(count), setter)
 		const store = createStore()
 
 		store.send(plus, 3)
@@ -187,13 +187,13 @@ describe('Store', () => {
 	})
 
 	it('reads a one-argument atom family from a derived getter', () => {
-		const members = new Map<string, ReturnType<typeof primitive<string>>>()
-		const names = family((key: string) => {
-			const member = members.get(key) ?? primitive(key.toUpperCase())
+		const members = new Map<string, ReturnType<typeof primitiveAtom<string>>>()
+		const names = atomFamily((key: string) => {
+			const member = members.get(key) ?? primitiveAtom(key.toUpperCase())
 			members.set(key, member)
 			return member
 		})
-		const selected = derived(
+		const selected = derivedAtom(
 			(read) => read(names, 'first'),
 			(_read, _write, _event: never) => {},
 		)
@@ -203,11 +203,11 @@ describe('Store', () => {
 	})
 
 	it('reads and writes atom families from a derived setter', async () => {
-		const source = primitive(3)
-		const target = primitive(0)
-		const sourceFamily = family((_key: string) => source)
-		const targetFamily = family((_key: string) => target)
-		const selected = derived(
+		const source = primitiveAtom(3)
+		const target = primitiveAtom(0)
+		const sourceFamily = atomFamily((_key: string) => source)
+		const targetFamily = atomFamily((_key: string) => target)
+		const selected = derivedAtom(
 			(read) => read(target),
 			(read, write, multiplier: number) =>
 				write(
@@ -225,8 +225,8 @@ describe('Store', () => {
 	})
 
 	it('keeps zero-argument derived reads unchanged', () => {
-		const count = primitive(2)
-		const double = derived(
+		const count = primitiveAtom(2)
+		const double = derivedAtom(
 			(read) => read(count) * 2,
 			(_read, _write, _event: never) => {},
 		)
@@ -236,10 +236,12 @@ describe('Store', () => {
 	})
 
 	it('tracks dependencies on the resolved family member', async () => {
-		const first = primitive(1)
-		const second = primitive(10)
-		const numbers = family((key: string) => (key === 'first' ? first : second))
-		const selected = derived(
+		const first = primitiveAtom(1)
+		const second = primitiveAtom(10)
+		const numbers = atomFamily((key: string) =>
+			key === 'first' ? first : second,
+		)
+		const selected = derivedAtom(
 			(read) => read(numbers, 'first'),
 			(_read, _write, _event: never) => {},
 		)
@@ -261,8 +263,8 @@ describe('Store', () => {
 	})
 
 	it('notifies once when repeated reads are recomputed inside a subscriber', async () => {
-		const source = primitive(1)
-		const doubled = derived(
+		const source = primitiveAtom(1)
+		const doubled = derivedAtom(
 			(read) => read(source) + read(source),
 			() => {},
 		)
@@ -283,10 +285,10 @@ describe('Store', () => {
 	})
 
 	it('replaces conditional dependencies without notifying from stale sources', async () => {
-		const selectFirst = primitive(true)
-		const first = primitive(1)
-		const second = primitive(10)
-		const selected = derived(
+		const selectFirst = primitiveAtom(true)
+		const first = primitiveAtom(1)
+		const second = primitiveAtom(10)
+		const selected = derivedAtom(
 			(read) => (read(selectFirst) ? read(first) : read(second)),
 			() => {},
 		)
@@ -311,7 +313,7 @@ describe('Store', () => {
 	})
 
 	it('defers a primitive send from a subscriber to a subsequent microtask', async () => {
-		const count = primitive(0)
+		const count = primitiveAtom(0)
 		const store = createStore()
 		const subscriber = vi.fn(() => {
 			if (store.peek(count) === 1) store.send(count, 2)
@@ -332,8 +334,8 @@ describe('Store', () => {
 	})
 
 	it('invalidates a derived subscriber once after a primitive batch', async () => {
-		const count = primitive(0)
-		const double = derived(
+		const count = primitiveAtom(0)
+		const double = derivedAtom(
 			(read) => read(count) * 2,
 			(read, write, amount: number) => write(count, read(count) + amount),
 		)
@@ -372,7 +374,7 @@ describe('Store', () => {
 	})
 
 	it('skips notifying subscribers when a batch produces no committed change', async () => {
-		const count = primitive(0)
+		const count = primitiveAtom(0)
 		const store = createStore()
 		const subscriber = vi.fn()
 
@@ -390,7 +392,7 @@ describe('Store', () => {
 
 	it('runs an effect without requiring separate dependency subscribers', async () => {
 		const doer = vi.fn()
-		const count = primitive(1, { effect: doer })
+		const count = primitiveAtom(1, { effect: doer })
 		const store = createStore()
 
 		store.subscribe(count, () => {})
@@ -406,7 +408,7 @@ describe('Store', () => {
 	})
 
 	it('defers sends from an effect until a later microtask', async () => {
-		const count = primitive(0, {
+		const count = primitiveAtom(0, {
 			effect: (next, _last, _get, set) => {
 				if (next === 0) set(count, 1)
 			},
@@ -423,14 +425,14 @@ describe('Store', () => {
 	})
 
 	it('reads atoms and families in effects without tracking dependencies', async () => {
-		const source = primitive(1)
-		const values = family((key: string) => primitive(key.length))
-		const observed = derived(
+		const source = primitiveAtom(1)
+		const values = atomFamily((key: string) => primitiveAtom(key.length))
+		const observed = derivedAtom(
 			(read) => read(source) * 2,
 			() => {},
 		)
 		const runs = vi.fn()
-		const trigger = primitive(0, {
+		const trigger = primitiveAtom(0, {
 			effect: (next, _last, get) => {
 				runs(next, get(source), get(observed), get(values, 'key'))
 			},
@@ -452,13 +454,13 @@ describe('Store', () => {
 	})
 
 	it('writes other atoms, derived atoms, and families from effects', async () => {
-		const target = primitive(0)
-		const doubled = derived(
+		const target = primitiveAtom(0)
+		const doubled = derivedAtom(
 			(read) => read(target) * 2,
 			(_read, write, value: number) => write(target, value / 2),
 		)
-		const values = family((_key: string) => primitive(0))
-		const trigger = primitive(0, {
+		const values = atomFamily((_key: string) => primitiveAtom(0))
+		const trigger = primitiveAtom(0, {
 			effect: (next, _last, _get, set) => {
 				if (next === undefined) return
 				set(target, 1)
@@ -479,7 +481,7 @@ describe('Store', () => {
 
 	it('coalesces mounting and dependency changes into one effect run', async () => {
 		const doer = vi.fn()
-		const count = primitive(0, { effect: doer })
+		const count = primitiveAtom(0, { effect: doer })
 		const store = createStore()
 
 		store.subscribe(count, () => {})
@@ -498,7 +500,7 @@ describe('Store', () => {
 	it('cleans up on unmount without rerunning the effect', async () => {
 		const cleanup = vi.fn()
 		const doer = vi.fn(() => cleanup)
-		const count = primitive(0, { effect: doer })
+		const count = primitiveAtom(0, { effect: doer })
 		const store = createStore()
 		const unsubscribe = store.subscribe(count, () => {})
 
@@ -532,9 +534,9 @@ describe('Store', () => {
 	})
 
 	it('does not mount dependants just because their dependency is subscribed', async () => {
-		const count = primitive(1)
+		const count = primitiveAtom(1)
 		const effect = vi.fn()
-		const double = derived(
+		const double = derivedAtom(
 			(read) => read(count) * 2,
 			() => {},
 			{ effect },
@@ -556,18 +558,18 @@ describe('Store', () => {
 				events.push(`${name}:cleanup`)
 			}
 		}
-		const source = primitive(1, { effect: effect('source') })
-		const left = derived<number, never>(
+		const source = primitiveAtom(1, { effect: effect('source') })
+		const left = derivedAtom<number, never>(
 			(read) => read(source),
 			() => {},
 			{ effect: effect('left') },
 		)
-		const right = derived<number, never>(
+		const right = derivedAtom<number, never>(
 			(read) => read(source),
 			() => {},
 			{ effect: effect('right') },
 		)
-		const leaf = derived<number, never>(
+		const leaf = derivedAtom<number, never>(
 			(read) => read(left) + read(right),
 			() => {},
 			{ effect: effect('leaf') },
@@ -594,12 +596,12 @@ describe('Store', () => {
 	it('keeps shared dependencies mounted until their last consumer releases them', async () => {
 		const cleanup = vi.fn()
 		const effect = vi.fn(() => cleanup)
-		const source = primitive(1, { effect })
-		const left = derived(
+		const source = primitiveAtom(1, { effect })
+		const left = derivedAtom(
 			(read) => read(source),
 			() => {},
 		)
-		const right = derived(
+		const right = derivedAtom(
 			(read) => read(source),
 			() => {},
 		)
@@ -621,10 +623,10 @@ describe('Store', () => {
 		const firstEffect = vi.fn(() => firstCleanup)
 		const secondCleanup = vi.fn()
 		const secondEffect = vi.fn(() => secondCleanup)
-		const first = primitive(1, { effect: firstEffect })
-		const second = primitive(2, { effect: secondEffect })
-		const selectFirst = primitive(true)
-		const selected = derived(
+		const first = primitiveAtom(1, { effect: firstEffect })
+		const second = primitiveAtom(2, { effect: secondEffect })
+		const selectFirst = primitiveAtom(true)
+		const selected = derivedAtom(
 			(read) => (read(selectFirst) ? read(first) : read(second)),
 			() => {},
 		)
@@ -648,7 +650,7 @@ describe('Store', () => {
 	it('does not release references twice or release a later subscription', async () => {
 		const cleanup = vi.fn()
 		const effect = vi.fn(() => cleanup)
-		const atom = primitive(1, { effect })
+		const atom = primitiveAtom(1, { effect })
 		const store = createStore()
 		const notify = vi.fn()
 		const unsubscribe = store.subscribe(atom, notify)
@@ -674,9 +676,9 @@ describe('Store', () => {
 	it('does not acquire extra references for repeated or retained dependency reads', async () => {
 		const cleanup = vi.fn()
 		const sourceEffect = vi.fn(() => cleanup)
-		const source = primitive(1, { effect: sourceEffect })
-		const trigger = primitive(0)
-		const selected = derived(
+		const source = primitiveAtom(1, { effect: sourceEffect })
+		const trigger = primitiveAtom(0)
+		const selected = derivedAtom(
 			(read) => read(trigger) + read(source) + read(source),
 			() => {},
 		)
@@ -698,9 +700,9 @@ describe('Store', () => {
 	it('keeps dependency ownership balanced when cleanup remounts a consumer', async () => {
 		const cleanup = vi.fn()
 		const sourceEffect = vi.fn(() => cleanup)
-		const source = primitive(1, { effect: sourceEffect })
+		const source = primitiveAtom(1, { effect: sourceEffect })
 		let remount = () => {}
-		const consumer = derived<number, never>(
+		const consumer = derivedAtom<number, never>(
 			(read) => read(source),
 			() => {},
 			{
@@ -726,10 +728,10 @@ describe('Store', () => {
 	it('releases dependency references after several conditional switches', async () => {
 		const firstEffect = vi.fn()
 		const secondEffect = vi.fn()
-		const first = primitive(1, { effect: firstEffect })
-		const second = primitive(2, { effect: secondEffect })
-		const selectFirst = primitive(true)
-		const selected = derived(
+		const first = primitiveAtom(1, { effect: firstEffect })
+		const second = primitiveAtom(2, { effect: secondEffect })
+		const selectFirst = primitiveAtom(true)
+		const selected = derivedAtom(
 			(read) => (read(selectFirst) ? read(first) : read(second)),
 			() => {},
 		)
@@ -748,7 +750,7 @@ describe('Store', () => {
 	})
 
 	it('subscribes to an atom family member', () => {
-		const names = family((key: string) => primitive(key))
+		const names = atomFamily((key: string) => primitiveAtom(key))
 		const store = createStore()
 
 		const unsubscribe = store.subscribe(names, 'first', () => {})
@@ -758,8 +760,8 @@ describe('Store', () => {
 	})
 
 	it('uses the family hash to identify members', () => {
-		const create = vi.fn((key: { id: string }) => primitive(key.id))
-		const names = family(create, { hash: (key) => key.id })
+		const create = vi.fn((key: { id: string }) => primitiveAtom(key.id))
+		const names = atomFamily(create, { hash: (key) => key.id })
 		const store = createStore()
 
 		expect(store.peek(names, { id: 'first' })).toBe('first')
@@ -768,8 +770,8 @@ describe('Store', () => {
 	})
 
 	it('does not cache atom family members when TTL is negative', () => {
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { TTL: TRANSIENT })
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create, { TTL: TRANSIENT })
 		const store = createStore()
 
 		expect(store.peek(names, 'first')).toBe('first')
@@ -778,8 +780,8 @@ describe('Store', () => {
 	})
 
 	it('reuses one resolved transient family member for all operations', async () => {
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { TTL: TRANSIENT })
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create, { TTL: TRANSIENT })
 		const store = createStore()
 		const member = store.resolve(names, 'first')
 		const subscriber = vi.fn()
@@ -795,8 +797,8 @@ describe('Store', () => {
 	})
 
 	it('removes an unmounted atom family member in the next microtask', async () => {
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create)
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create)
 		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -810,8 +812,8 @@ describe('Store', () => {
 	})
 
 	it('keeps an atom family member that remounts before the next microtask', async () => {
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create)
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create)
 		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -825,8 +827,8 @@ describe('Store', () => {
 	})
 
 	it('keeps an unmounted atom family member when TTL is Infinity', async () => {
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { TTL: Infinity })
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create, { TTL: Infinity })
 		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -839,8 +841,8 @@ describe('Store', () => {
 
 	it('removes an unmounted atom family member after its positive TTL', async () => {
 		vi.useFakeTimers()
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { TTL: 100 })
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create, { TTL: 100 })
 		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -858,8 +860,8 @@ describe('Store', () => {
 
 	it('cancels positive TTL removal when the member remounts', async () => {
 		vi.useFakeTimers()
-		const create = vi.fn((key: string) => primitive(key))
-		const names = family(create, { TTL: 100 })
+		const create = vi.fn((key: string) => primitiveAtom(key))
+		const names = atomFamily(create, { TTL: 100 })
 		const store = createStore()
 		const unsubscribe = store.subscribe(names, 'first', () => {})
 
@@ -885,18 +887,18 @@ describe('Store', () => {
 					events.push(`cleanup:${name}:${next}`)
 				}
 			}
-		const source = primitive(0, { effect: effect('source') })
-		const left = derived<number, never>(
+		const source = primitiveAtom(0, { effect: effect('source') })
+		const left = derivedAtom<number, never>(
 			(read) => read(source) + 1,
 			() => {},
 			{ effect: effect('left') },
 		)
-		const right = derived<number, never>(
+		const right = derivedAtom<number, never>(
 			(read) => read(source) + 2,
 			() => {},
 			{ effect: effect('right') },
 		)
-		const leaf = derived<number, never>(
+		const leaf = derivedAtom<number, never>(
 			(read) => read(left) + read(right),
 			() => {},
 			{ effect: effect('leaf') },
@@ -924,7 +926,7 @@ describe('Store', () => {
 
 	it('leaves unchanged effects and their cleanups intact during updates', async () => {
 		const events: string[] = []
-		const source = primitive(0, {
+		const source = primitiveAtom(0, {
 			effect: (next) => {
 				events.push(`run:source:${next}`)
 				return () => {
@@ -932,7 +934,7 @@ describe('Store', () => {
 				}
 			},
 		})
-		const parity = derived<number, never>(
+		const parity = derivedAtom<number, never>(
 			(read) => read(source) % 2,
 			() => {},
 			{
@@ -959,7 +961,7 @@ describe('Store', () => {
 	it('does not repeat cleanup or rerun effects when cleanup unsubscribes the consumer', async () => {
 		const events: string[] = []
 		let unsubscribe = () => {}
-		const source = primitive(0, {
+		const source = primitiveAtom(0, {
 			effect: (next) => {
 				events.push(`run:source:${next}`)
 				return () => {
@@ -967,7 +969,7 @@ describe('Store', () => {
 				}
 			},
 		})
-		const consumer = derived<number, never>(
+		const consumer = derivedAtom<number, never>(
 			(read) => read(source),
 			() => {},
 			{
@@ -991,7 +993,7 @@ describe('Store', () => {
 
 	it('runs the previous cleanup before rerunning an effect', async () => {
 		const events: string[] = []
-		const count = primitive(0, {
+		const count = primitiveAtom(0, {
 			effect: (next) => {
 				events.push(`run:${next}`)
 				return () => events.push(`cleanup:${next}`)
@@ -1015,11 +1017,11 @@ describe('onMount', () => {
 			const cleanup = vi.fn()
 			const onMount = vi.fn(() => cleanup)
 			const effect = vi.fn()
-			const source = primitive(0)
+			const source = primitiveAtom(0)
 			const atom =
 				kind === 'primitive'
-					? primitive(0, { onMount, effect })
-					: derived(
+					? primitiveAtom(0, { onMount, effect })
+					: derivedAtom(
 							(read) => read(source),
 							(_read, set, value: SetStateWithReset<number>) =>
 								set(source, value),
@@ -1051,7 +1053,7 @@ describe('onMount', () => {
 
 	it('mounts dependencies first and cleans up consumers first', async () => {
 		const order: string[] = []
-		const source = primitive(0, {
+		const source = primitiveAtom(0, {
 			onMount: () => {
 				order.push('source mount')
 				return () => {
@@ -1059,7 +1061,7 @@ describe('onMount', () => {
 				}
 			},
 		})
-		const consumer = derived(
+		const consumer = derivedAtom(
 			(get) => get(source),
 			() => {},
 			{
@@ -1089,7 +1091,7 @@ describe('mount scheduling', () => {
 	it('skips callbacks when released before the mount microtask', async () => {
 		const onMount = vi.fn()
 		const effect = vi.fn()
-		const atom = primitive(0, { onMount, effect })
+		const atom = primitiveAtom(0, { onMount, effect })
 		const store = createStore()
 		const release = store.subscribe(atom, vi.fn())
 		expect(onMount).not.toHaveBeenCalled()
@@ -1102,7 +1104,7 @@ describe('mount scheduling', () => {
 
 	it('settles mount writes before dependent mounts and initial effects', async () => {
 		const order: string[] = []
-		const source = primitive(0, {
+		const source = primitiveAtom(0, {
 			onMount: (_get, set) => {
 				order.push('source mount')
 				set(source, 2)
@@ -1117,7 +1119,7 @@ describe('mount scheduling', () => {
 				}
 			},
 		})
-		const consumer = derived(
+		const consumer = derivedAtom(
 			(get) => get(source) * 2,
 			() => {},
 			{
@@ -1162,14 +1164,14 @@ describe('effect values', () => {
 		async (kind) => {
 			const cleanup = vi.fn()
 			const effect = vi.fn(() => cleanup)
-			const source = primitive<number | undefined>(
+			const source = primitiveAtom<number | undefined>(
 				undefined,
 				kind === 'primitive' ? { effect } : undefined,
 			)
 			const atom =
 				kind === 'primitive'
 					? source
-					: derived(
+					: derivedAtom(
 							(get) => get(source),
 							(_get, set, value: SetStateWithReset<number | undefined>) =>
 								set(source, value),

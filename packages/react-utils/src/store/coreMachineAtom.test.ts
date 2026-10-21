@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { tag, type Sendable } from '../tags'
 import { coreMachineAtom } from './coreMachineAtom'
-import { createStore, primitive } from './store'
+import { createStore, primitiveAtom } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -30,7 +30,7 @@ describe('coreMachineAtom', () => {
 
 	it('supports transition writes and effects', async () => {
 		type Events = { START: void }
-		const sideEffect = primitive('initial')
+		const sideEffect = primitiveAtom('initial')
 		const effect = vi.fn()
 		let send: (event: Sendable<Events>) => void = () => {}
 		const machine = coreMachineAtom<Events, 'idle' | 'running'>(
@@ -65,7 +65,7 @@ describe('coreMachineAtom', () => {
 
 	it('predicts results without applying transition writes', async () => {
 		type Events = { SET: number; SIDE_EFFECT: void }
-		const sideEffect = primitive(false)
+		const sideEffect = primitiveAtom(false)
 		const machine = coreMachineAtom<Events, number, string>(
 			0,
 			(event, state, _read, write) => {
@@ -87,7 +87,7 @@ describe('coreMachineAtom', () => {
 
 	it('supports a custom state-symbol factory', async () => {
 		type Events = { START: void }
-		const factory = vi.fn((value: string) => primitive(value))
+		const factory = vi.fn((value: string) => primitiveAtom(value))
 		const machine = coreMachineAtom<Events, string>(
 			() => 'idle',
 			() => 'running',

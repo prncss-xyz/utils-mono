@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { directMachineAtom } from './directMachineAtom'
-import { createStore, primitive } from './store'
+import { createStore, primitiveAtom } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -24,7 +24,7 @@ describe('directMachineAtom', () => {
 	})
 
 	it('supports custom result and factory options', async () => {
-		const factory = <T>(value: T) => primitive(value)
+		const factory = <T>(value: T) => primitiveAtom(value)
 		const machine = directMachineAtom(
 			{ count: 0 },
 			{

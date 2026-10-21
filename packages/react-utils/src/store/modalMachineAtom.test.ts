@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { tag } from '../tags'
 import { modalMachineAtom } from './modalMachineAtom'
-import { createStore, primitive } from './store'
+import { createStore, primitiveAtom } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -28,7 +28,7 @@ describe('modalMachineAtom', () => {
 	})
 
 	it('supports custom result and factory options', async () => {
-		const factory = <T>(value: T) => primitive(value)
+		const factory = <T>(value: T) => primitiveAtom(value)
 		const machine = modalMachineAtom<
 			{ start: number; stop: number },
 			{ running: number; stopped: number },
