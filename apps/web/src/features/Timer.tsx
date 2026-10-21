@@ -4,6 +4,7 @@ import { VStack } from '@astryxdesign/core/VStack'
 import type { Tags } from '@prncss-xyz/react-utils'
 import {
 	derivedAtom,
+	focusAtom,
 	primitiveAtom,
 	tag,
 	modalMachineAtom,
@@ -55,46 +56,46 @@ const timerAtom = modalMachineAtom<
 	},
 )
 
-const resetAtom = derivedAtom(null, (_read, write) => {
-	write(timerAtom, tag('reset'))
+const toggle = (prop: boolean) => !prop
+
+const runningAtom = focusAtom(timerAtom, {
+	getter: (timer) => timer.type === 'running',
+	setter: (running) => tag(running ? 'start' : 'stop'),
 })
 
-const toggle = (running: boolean) => !running
+const durationAtom = primitiveAtom(10 * 1000)
 
-const runningAtom = derivedAtom(
-	(read) => read(timerAtom).type === 'running',
-	(read, write, next: boolean | ((running: boolean) => boolean)) => {
-		const running = read(timerAtom).type === 'running'
-		const desired = typeof next === 'function' ? next(running) : next
-		if (desired !== running) {
-			write(timerAtom, tag(desired ? 'start' : 'stop'))
-		}
-	},
+const countDownAtom = derivedAtom((read) =>
+	Math.max(0, read(durationAtom) - read(timerAtom).payload),
 )
 
 function formatTime(time: number) {
-	if (time < 0) return ''
-	const seconds = Math.floor(time / 1000) % 60
-	const minutes = Math.floor(time / (1000 * 60)) % 60
-	const hours = Math.floor(time / (1000 * 60 * 60))
+	const totalSeconds = Math.ceil(time / 1000)
+	const seconds = totalSeconds % 60
+	const minutes = Math.floor(totalSeconds / 60) % 60
+	const hours = Math.floor(totalSeconds / (60 * 60))
 	return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
 }
 
+const timerDisplayAtom = focusAtom(countDownAtom, {
+	getter: formatTime,
+})
+
 export function Timer() {
 	useAtomValue(timeAtom)
-	const timer = useAtomValue(timerAtom)
+	const timerDisplay = useAtomValue(timerDisplayAtom)
+	const setTimer = useSetAtom(timerAtom)
 	const setRunning = useSetAtom(runningAtom)
-	const reset = useSetAtom(resetAtom)
-	const isRunning = useAtomValue(runningAtom)
+	const running = useAtomValue(runningAtom)
 
 	return (
 		<VStack gap={4} align='start'>
-			<Text>{formatTime(timer.payload)}</Text>
+			<Text>{timerDisplay}</Text>
 			<Button
-				label={isRunning ? 'Stop' : 'Start'}
+				label={running ? 'Stop' : 'Start'}
 				onClick={() => setRunning(toggle)}
 			/>
-			<Button label='Reset' onClick={() => reset()} />
+			<Button label='Reset' onClick={() => setTimer('reset')} />
 		</VStack>
 	)
 }
