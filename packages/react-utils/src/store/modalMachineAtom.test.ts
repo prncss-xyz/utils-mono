@@ -7,6 +7,36 @@ import { createStore, primitiveAtom } from './store'
 const flushMicrotask = () => Promise.resolve()
 
 describe('modalMachineAtom', () => {
+	it('shallow merges payloads within a mode and preserves unchanged state', async () => {
+		const machine = modalMachineAtom<
+			{ reset: void; set: number; start: void },
+			{ idle: { elapsed: number }; running: { since: number } }
+		>(tag('idle', { elapsed: 0 }), {
+			idle: {
+				reset: () => tag('idle', { elapsed: 0 }),
+				set: (elapsed) => tag('idle', { elapsed }),
+				start: () => tag('running', { since: 0 }),
+			},
+			running: {},
+		})
+		const store = createStore()
+		const initial = store.peek(machine)
+
+		expect(store.peek(machine.can, 'reset')).toBe(false)
+		store.send(machine, 'reset')
+		await flushMicrotask()
+		expect(store.peek(machine)).toBe(initial)
+
+		store.send(machine, tag('set', 5))
+		await flushMicrotask()
+		expect(store.peek(machine)).toEqual(tag('idle', { elapsed: 5 }))
+		expect(store.peek(machine.can, 'reset')).toBe(true)
+
+		store.send(machine, 'start')
+		await flushMicrotask()
+		expect(store.peek(machine)).toEqual(tag('running', { since: 0 }))
+	})
+
 	it('transitions between modal states', async () => {
 		const machine = modalMachineAtom<
 			{ start: number; stop: number },

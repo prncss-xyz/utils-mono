@@ -7,6 +7,31 @@ import { createStore, primitiveAtom } from './store'
 const flushMicrotask = () => Promise.resolve()
 
 describe('coreMachineAtom', () => {
+	it.each(['can', 'next'] as const)(
+		'forwards void events from %s to the machine',
+		async (family) => {
+			const sideEffect = primitiveAtom(0)
+			const machine = coreMachineAtom<{ SET: number }, number>(
+				0,
+				(event, _state, _read, write) => {
+					write(sideEffect, event.payload)
+					return event.payload
+				},
+			)
+			const store = createStore()
+
+			if (family === 'can') {
+				store.send(machine.can, tag('SET', 2), undefined)
+			} else {
+				store.send(machine.next, tag('SET', 2), undefined)
+			}
+			await flushMicrotask()
+
+			expect(store.peek(machine)).toBe(2)
+			expect(store.peek(sideEffect)).toBe(2)
+		},
+	)
+
 	it('transitions between states', async () => {
 		type Events = { START: void; STOP: void }
 		const machine = coreMachineAtom<Events, 'idle' | 'running'>(

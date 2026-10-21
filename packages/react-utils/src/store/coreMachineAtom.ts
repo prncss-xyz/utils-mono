@@ -1,4 +1,4 @@
-import { fromInit, id, noop, type Init } from '../functions'
+import { fromInit, id, type Init } from '../functions'
 import { fromSendable, type Sendable, type Tags } from '../tags'
 import {
 	derivedAtom,
@@ -13,8 +13,8 @@ import {
 } from './store'
 
 export type MachineAtom<E, R> = AtomSymbol<R, Sendable<E>> & {
-	can: AtomFamily<boolean, Sendable<E>, never>
-	next: AtomFamily<R, Sendable<E>, never>
+	can: AtomFamily<boolean, Sendable<E>, void>
+	next: AtomFamily<R, Sendable<E>, void>
 }
 
 /**
@@ -44,28 +44,31 @@ export function coreMachineAtom<E, S, R = S>(
 		{ effect: opts?.effect },
 	) as MachineAtom<E, R>
 
-	machine.can = atomFamily<boolean, Sendable<E>, never>(
+	machine.can = atomFamily<boolean, Sendable<E>, void>(
 		(event) =>
-			derivedAtom<boolean, never>((read) => {
-				let dirty = false
-				const last = read(state)
-				const markDirty: Write = () => {
-					dirty = true
-				}
-				const next = transition(fromSendable(event), last, read, markDirty)
-				return dirty || !Object.is(next, last)
-			}, noop),
+			derivedAtom<boolean, void>(
+				(read) => {
+					let dirty = false
+					const last = read(state)
+					const markDirty: Write = () => {
+						dirty = true
+					}
+					const next = transition(fromSendable(event), last, read, markDirty)
+					return dirty || !Object.is(next, last)
+				},
+				(_read, write) => write(machine, event),
+			),
 		{ TTL: TRANSIENT },
 	)
-	machine.next = atomFamily<R, Sendable<E>, never>(
+	machine.next = atomFamily<R, Sendable<E>, void>(
 		(event) =>
-			derivedAtom<R, never>(
+			derivedAtom<R, void>(
 				(read) =>
 					result(
 						transition(fromSendable(event), read(state), read, ignoreWrite),
 						read,
 					),
-				noop,
+				(_read, write) => write(machine, event),
 			),
 		{ TTL: TRANSIENT },
 	)

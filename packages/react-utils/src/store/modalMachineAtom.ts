@@ -1,4 +1,4 @@
-import type { Init } from '../functions'
+import { merge, type Init } from '../functions'
 import type { Tags } from '../tags'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { AtomSymbol, Effect, Read, Write } from './store'
@@ -30,7 +30,17 @@ export function modalMachineAtom<Event, State, Result = Tags<State>>(
 			const handlers = (states as any)[state.type]
 			const handler = handlers[event.type]
 			if (!handler) return state
-			return handler(event.payload, state.payload, read, write) ?? state
+			const next = handler(event.payload, state.payload, read, write)
+			if (next == null) return state
+			if (next.type !== state.type) return next
+			const payload =
+				state.payload !== null &&
+				next.payload !== null &&
+				typeof state.payload === 'object' &&
+				typeof next.payload === 'object'
+					? merge(state.payload, next.payload)
+					: next.payload
+			return merge(state, { ...next, payload })
 		},
 		{
 			effect,

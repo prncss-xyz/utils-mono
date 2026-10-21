@@ -3,13 +3,13 @@ import { Text } from '@astryxdesign/core/Text'
 import { VStack } from '@astryxdesign/core/VStack'
 import type { Tags } from '@prncss-xyz/react-utils'
 import {
+	useAtom,
 	derivedAtom,
 	focusAtom,
 	primitiveAtom,
 	tag,
 	modalMachineAtom,
 	useAtomValue,
-	useSetAtom,
 } from '@prncss-xyz/react-utils'
 
 const timeAtom = primitiveAtom(Date.now, {
@@ -82,12 +82,9 @@ const timerDisplayAtom = focusAtom(countDownAtom, {
 })
 
 export function Timer() {
-	useAtomValue(timeAtom)
 	const timerDisplay = useAtomValue(timerDisplayAtom)
-	const setTimer = useSetAtom(timerAtom)
-	const setRunning = useSetAtom(runningAtom)
-	const running = useAtomValue(runningAtom)
-
+	const [reset, setReset] = useAtom(timerAtom.can, 'reset')
+	const [running, setRunning] = useAtom(runningAtom)
 	return (
 		<VStack gap={4} align='start'>
 			<Text>{timerDisplay}</Text>
@@ -95,7 +92,11 @@ export function Timer() {
 				label={running ? 'Stop' : 'Start'}
 				onClick={() => setRunning(toggle)}
 			/>
-			<Button label='Reset' onClick={() => setTimer('reset')} />
+			<Button
+				isDisabled={!running && !reset}
+				label='Reset'
+				onClick={() => setReset()}
+			/>
 		</VStack>
 	)
 }
