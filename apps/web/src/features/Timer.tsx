@@ -21,34 +21,36 @@ const timeAtom = primitive(Date.now, {
 
 const timerAtom = modalMachineAtom<
 	{
-		start: number
-		stop: number
-		reset: number
+		start: undefined
+		stop: undefined
+		reset: undefined
 	},
 	{
-		idle: number
-		running: number
+		idle: { elapsed: number }
+		running: { since: number }
 	},
 	Tags<{
 		idle: number
 		running: number
 	}>
 >(
-	tag('idle', 0),
+	tag('idle', { elapsed: 0 }),
 	{
 		idle: {
-			start: (now, elapsed) => tag('running', now - elapsed),
-			reset: () => tag('idle', 0),
+			start: (_, { elapsed }, read) =>
+				tag('running', { since: read(timeAtom) - elapsed }),
+			reset: () => tag('idle', { elapsed: 0 }),
 		},
 		running: {
-			stop: (now, since) => tag('idle', now - since),
-			reset: (now) => tag('running', now),
+			stop: (_, { since }, read) =>
+				tag('idle', { elapsed: read(timeAtom) - since }),
+			reset: (_, _state, read) => tag('running', { since: read(timeAtom) }),
 		},
 	},
 	{
 		result: {
-			idle: (elapsed) => tag('idle', elapsed),
-			running: (since, read) => tag('running', read(timeAtom) - since),
+			idle: ({ elapsed }) => tag('idle', elapsed),
+			running: ({ since }, read) => tag('running', read(timeAtom) - since),
 		},
 	},
 )
@@ -57,17 +59,14 @@ const toggleAtom = derived(
 	() => undefined,
 	(read, write, _event: void) => {
 		const timer = read(timerAtom)
-		write(
-			timerAtom,
-			tag(timer.type === 'running' ? 'stop' : 'start', read(timeAtom)),
-		)
+		write(timerAtom, tag(timer.type === 'running' ? 'stop' : 'start'))
 	},
 )
 
 const resetAtom = derived(
 	() => undefined,
-	(read, write, _event: void) => {
-		write(timerAtom, tag('reset', read(timeAtom)))
+	(_read, write, _event: void) => {
+		write(timerAtom, tag('reset'))
 	},
 )
 
