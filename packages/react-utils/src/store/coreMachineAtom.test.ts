@@ -8,6 +8,39 @@ import { createStore, primitiveAtom } from './store'
 const flushMicrotask = () => Promise.resolve()
 
 describe('coreMachineAtom', () => {
+	it('transitions from nullish states and projects them through result', async () => {
+		const machine = coreMachineAtom<
+			{ set: number },
+			number | null | undefined,
+			string
+		>(undefined, (event) => (isReset(event) ? null : event.payload), {
+			result: (state) => (state == null ? 'empty' : String(state)),
+		})
+		const store = createStore()
+		expect(store.peek(machine)).toBe('empty')
+		expect(store.peek(machine.can, tag('set', 2))).toBe(true)
+		expect(store.peek(machine.next, tag('set', 2))).toBe('2')
+		store.send(machine, tag('set', 2))
+		await flushMicrotask()
+		expect(store.peek(machine)).toBe('2')
+		expect(store.peek(machine.next, RESET)).toBe('empty')
+		store.send(machine, RESET)
+		await flushMicrotask()
+		expect(store.peek(machine)).toBe('empty')
+	})
+
+	it('checks state changes even when the projected result stays equal', () => {
+		const machine = coreMachineAtom<{ set: number }, number, boolean>(
+			1,
+			(event, state) => (isReset(event) ? state : event.payload),
+			{ result: (state) => state > 0 },
+		)
+		const store = createStore()
+		expect(store.peek(machine.can, tag('set', 2))).toBe(true)
+		expect(store.peek(machine.next, tag('set', 2))).toBe(true)
+		expect(store.peek(machine.can, tag('set', 1))).toBe(false)
+	})
+
 	it('passes RESET through previews and sends', async () => {
 		const machine = coreMachineAtom<{ set: number }, number>(0, (event) =>
 			isReset(event) ? 0 : event.payload,
