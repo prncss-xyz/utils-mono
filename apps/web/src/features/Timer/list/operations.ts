@@ -6,10 +6,10 @@ export type ListState = {
 	active: string
 }
 
-export const remove = (
+export function remove(
 	{ target }: { target: string },
 	{ items, active }: Pick<ListState, 'items' | 'active'>,
-) => {
+) {
 	const index = items.findIndex(({ id }) => id === target)
 	isoAssert(index !== -1, 'The item to remove must exist')
 	if (items.length === 1) return RESET
@@ -23,10 +23,10 @@ export const remove = (
 	}
 }
 
-export const create = (
+export function create(
 	{ source }: { source: string },
 	{ nextId, items }: Pick<ListState, 'nextId' | 'items'>,
-) => {
+) {
 	const index = items.findIndex(({ id }) => id === source)
 	isoAssert(index !== -1, 'The source item must exist')
 	const item = items[index]!

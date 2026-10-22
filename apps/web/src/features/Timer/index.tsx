@@ -5,20 +5,13 @@ import {
 	useAtom,
 	derivedAtom,
 	focusAtom,
-	tag,
 	useAtomValue,
+	toggle,
 } from '@prncss-xyz/react-utils'
 
 import { formatTime } from './formatTime'
 import { activeAtom } from './list'
-import { timerAtom } from './timer'
-
-const toggle = (prop: boolean) => !prop
-
-const runningAtom = focusAtom(timerAtom, {
-	getter: (timer) => timer.type === 'running',
-	setter: (running) => tag(running ? 'start' : 'stop'),
-})
+import { runningAtom, timerAtom } from './timer'
 
 const countDownAtom = derivedAtom((read) =>
 	Math.max(0, read(activeAtom).duration - read(timerAtom).payload),
@@ -26,22 +19,39 @@ const countDownAtom = derivedAtom((read) =>
 
 const timerDisplayAtom = focusAtom(countDownAtom, { getter: formatTime })
 
-export function Timer() {
+function TimerDisplay() {
 	const timerDisplay = useAtomValue(timerDisplayAtom)
-	const [reset, setReset] = useAtom(timerAtom.can, 'reset')
+	return <Text>{timerDisplay}</Text>
+}
+
+function StartStopButton() {
 	const [running, setRunning] = useAtom(runningAtom)
 	return (
+		<Button
+			label={running ? 'Stop' : 'Start'}
+			onClick={() => setRunning(toggle)}
+		/>
+	)
+}
+
+function ResetButton() {
+	const [reset, setReset] = useAtom(timerAtom.can, 'reset')
+	const running = useAtomValue(runningAtom)
+	return (
+		<Button
+			isDisabled={!running && !reset}
+			label='Reset'
+			onClick={() => setReset()}
+		/>
+	)
+}
+
+export function Timer() {
+	return (
 		<VStack gap={4} align='start'>
-			<Text>{timerDisplay}</Text>
-			<Button
-				label={running ? 'Stop' : 'Start'}
-				onClick={() => setRunning(toggle)}
-			/>
-			<Button
-				isDisabled={!running && !reset}
-				label='Reset'
-				onClick={() => setReset()}
-			/>
+			<TimerDisplay />
+			<StartStopButton />
+			<ResetButton />
 		</VStack>
 	)
 }
