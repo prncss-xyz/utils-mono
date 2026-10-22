@@ -1,4 +1,4 @@
-import { fromInit, id, type Init } from '../functions'
+import { fromInit, id, isReset, type Init, type Reset } from '../functions'
 import { fromSendable, type Sendable, type Tags } from '../tags'
 import {
 	derivedAtom,
@@ -12,9 +12,9 @@ import {
 	type Write,
 } from './store'
 
-export type MachineAtom<E, R> = AtomSymbol<R, Sendable<E>> & {
-	can: AtomFamily<boolean, Sendable<E>, void>
-	next: AtomFamily<R, Sendable<E>, void>
+export type MachineAtom<E, R> = AtomSymbol<R, Sendable<E> | Reset> & {
+	can: AtomFamily<boolean, Sendable<E> | Reset, void>
+	next: AtomFamily<R, Sendable<E> | Reset, void>
 }
 
 /**
@@ -22,7 +22,12 @@ export type MachineAtom<E, R> = AtomSymbol<R, Sendable<E>> & {
  */
 export function coreMachineAtom<E, S, R = S>(
 	init: Init<S>,
-	transition: (event: Tags<E>, state: S, read: Read, write: Write) => S,
+	transition: (
+		event: Tags<E> | Reset,
+		state: S,
+		read: Read,
+		write: Write,
+	) => S | Reset,
 	opts?: {
 		result?: (state: S, read: Read) => R
 		factory?: (value: S) => AtomSymbol<S, any>
@@ -34,17 +39,24 @@ export function coreMachineAtom<E, S, R = S>(
 		opts?.factory ?? primitiveAtom
 	const state = factory(fromInit(init))
 	const ignoreWrite: Write = () => {}
-	const machine = derivedAtom<R, Sendable<E>>(
+	const resolve = (value: S | Reset): S =>
+		isReset(value) ? fromInit(init) : value
+	const machine = derivedAtom<R, Sendable<E> | Reset>(
 		(read) => result(read(state), read),
-		(read, write, event: Sendable<E>) => {
+		(read, write, event: Sendable<E> | Reset) => {
 			const last = read(state)
-			const next = transition(fromSendable(event), last, read, write)
-			write(state, next)
+			const next = transition(
+				isReset(event) ? event : fromSendable(event),
+				last,
+				read,
+				write,
+			)
+			write(state, resolve(next))
 		},
 		{ effect: opts?.effect },
 	) as MachineAtom<E, R>
 
-	machine.can = atomFamily<boolean, Sendable<E>, void>(
+	machine.can = atomFamily<boolean, Sendable<E> | Reset, void>(
 		(event) =>
 			derivedAtom<boolean, void>(
 				(read) => {
@@ -53,19 +65,31 @@ export function coreMachineAtom<E, S, R = S>(
 					const markDirty: Write = () => {
 						dirty = true
 					}
-					const next = transition(fromSendable(event), last, read, markDirty)
-					return dirty || !Object.is(next, last)
+					const next = transition(
+						isReset(event) ? event : fromSendable(event),
+						last,
+						read,
+						markDirty,
+					)
+					return dirty || !Object.is(resolve(next), last)
 				},
 				(_read, write) => write(machine, event),
 			),
 		{ TTL: TRANSIENT },
 	)
-	machine.next = atomFamily<R, Sendable<E>, void>(
+	machine.next = atomFamily<R, Sendable<E> | Reset, void>(
 		(event) =>
 			derivedAtom<R, void>(
 				(read) =>
 					result(
-						transition(fromSendable(event), read(state), read, ignoreWrite),
+						resolve(
+							transition(
+								isReset(event) ? event : fromSendable(event),
+								read(state),
+								read,
+								ignoreWrite,
+							),
+						),
 						read,
 					),
 				(_read, write) => write(machine, event),

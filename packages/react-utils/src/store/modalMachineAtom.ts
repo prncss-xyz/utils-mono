@@ -1,4 +1,4 @@
-import { merge, type Init } from '../functions'
+import { fromInit, isReset, merge, type Init, type Reset } from '../functions'
 import type { Tags } from '../tags'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { AtomSymbol, Effect, Read, Write } from './store'
@@ -12,7 +12,7 @@ export function modalMachineAtom<Event, State, Result = Tags<State>>(
 				state: State[S],
 				read: Read,
 				write: Write,
-			) => Tags<State> | null | undefined | void
+			) => Tags<State> | null | undefined | void | Reset
 		}>
 	},
 	opts?: {
@@ -27,10 +27,12 @@ export function modalMachineAtom<Event, State, Result = Tags<State>>(
 	return coreMachineAtom<Event, Tags<State>, Result>(
 		init,
 		(event, state, read, write) => {
+			if (isReset(event)) return fromInit(init)
 			const handlers = (states as any)[state.type]
 			const handler = handlers[event.type]
 			if (!handler) return state
 			const next = handler(event.payload, state.payload, read, write)
+			if (isReset(next)) return next
 			if (next == null) return state
 			if (next.type !== state.type) return next
 			const payload =

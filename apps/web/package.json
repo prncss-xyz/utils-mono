@@ -24,11 +24,13 @@
 		"react-dom": "catalog:"
 	},
 	"devDependencies": {
+		"@fast-check/vitest": "catalog:",
 		"@types/node": "catalog:",
 		"@types/react": "catalog:",
 		"@types/react-dom": "catalog:",
 		"@vitejs/plugin-react": "catalog:",
 		"@vitest/browser-playwright": "catalog:",
+		"fast-check": "catalog:",
 		"oxc-transform-react": "catalog:",
 		"typescript": "catalog:",
 		"vite": "catalog:",

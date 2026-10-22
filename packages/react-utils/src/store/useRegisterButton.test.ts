@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { isReset } from '../functions'
 import { coreMachineAtom } from './coreMachineAtom'
 import * as storeReact from './react'
 import { useRegisterButton } from './useRegisterButton'
@@ -15,6 +16,7 @@ describe('useRegisterButton', () => {
 		const machine = coreMachineAtom<Events, 'idle' | 'running'>(
 			'idle',
 			(event, state) => {
+				if (isReset(event)) return state
 				if (event.type === 'START' && state === 'idle') return 'running'
 				return state
 			},

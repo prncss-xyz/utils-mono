@@ -1,4 +1,4 @@
-import { merge, type Init } from '../functions'
+import { fromInit, isReset, merge, type Init, type Reset } from '../functions'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { AtomSymbol, Effect, Read, Write } from './store'
 
@@ -10,7 +10,7 @@ export function directMachineAtom<E, S extends object, R = S>(
 			state: S,
 			read: Read,
 			write: Write,
-		) => Partial<S> | null | undefined | void
+		) => Partial<S> | null | undefined | void | Reset
 	},
 	opts?: {
 		result?: (state: S, read: Read) => R
@@ -21,13 +21,14 @@ export function directMachineAtom<E, S extends object, R = S>(
 	return coreMachineAtom<E, S, R>(
 		init,
 		(event, state, read, write) => {
+			if (isReset(event)) return fromInit(init)
 			const next = (events as any)[event.type](
 				event.payload,
 				state,
 				read,
 				write,
 			)
-			return next == null ? state : merge(state, next)
+			return isReset(next) ? next : next == null ? state : merge(state, next)
 		},
 		opts,
 	)

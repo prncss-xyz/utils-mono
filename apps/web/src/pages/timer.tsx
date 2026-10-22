@@ -3,7 +3,7 @@ import { Heading } from '@astryxdesign/core/Heading'
 import { Section } from '@astryxdesign/core/Section'
 import { VStack } from '@astryxdesign/core/VStack'
 
-import { Timer } from '@/features/Timer'
+import { Timer } from '@/features/Timer/index'
 
 export default function Page() {
 	return (

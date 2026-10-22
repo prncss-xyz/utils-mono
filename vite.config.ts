@@ -44,23 +44,32 @@ export default defineConfig({
 		},
 	},
 	test: {
-		projects: canRunBrowserTests
-			? [
-					{
-						extends: './packages/react-utils/vite.config.ts',
-						...storybookTestProject,
-					},
-				]
-			: [
-					{
-						test: {
-							environment: 'node',
-							globals: true,
-							include: ['packages/react-utils/**/*.test.ts'],
-							name: 'unit',
+		projects: [
+			{
+				test: {
+					name: 'web-unit',
+					environment: 'node',
+					include: ['apps/web/**/*.test.ts'],
+				},
+			},
+			...(canRunBrowserTests
+				? [
+						{
+							extends: './packages/react-utils/vite.config.ts',
+							...storybookTestProject,
 						},
-					},
-				],
+					]
+				: [
+						{
+							test: {
+								environment: 'node',
+								globals: true,
+								include: ['packages/react-utils/**/*.test.ts'],
+								name: 'unit',
+							},
+						},
+					]),
+		],
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'json'],

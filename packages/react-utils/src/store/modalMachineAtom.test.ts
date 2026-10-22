@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { RESET } from '../functions'
 import { tag } from '../tags'
 import { modalMachineAtom } from './modalMachineAtom'
 import { createStore, primitiveAtom } from './store'
@@ -7,6 +8,23 @@ import { createStore, primitiveAtom } from './store'
 const flushMicrotask = () => Promise.resolve()
 
 describe('modalMachineAtom', () => {
+	it('supports handlers returning RESET', async () => {
+		const machine = modalMachineAtom<
+			{ set: number; reset: void },
+			{ idle: number }
+		>(tag('idle', 0), {
+			idle: { set: (value) => tag('idle', value), reset: () => RESET },
+		})
+		const store = createStore()
+		store.send(machine, tag('set', 5))
+		await flushMicrotask()
+		expect(store.peek(machine.can, 'reset')).toBe(true)
+		expect(store.peek(machine.next, 'reset')).toEqual(tag('idle', 0))
+		store.send(machine, 'reset')
+		await flushMicrotask()
+		expect(store.peek(machine)).toEqual(tag('idle', 0))
+	})
+
 	it('shallow merges payloads within a mode and preserves unchanged state', async () => {
 		const machine = modalMachineAtom<
 			{ reset: void; set: number; start: void },
@@ -55,6 +73,11 @@ describe('modalMachineAtom', () => {
 		store.send(machine, { payload: 5, type: 'start' })
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual({ payload: 5, type: 'running' })
+		expect(store.peek(machine.can, RESET)).toBe(true)
+		expect(store.peek(machine.next, RESET)).toEqual(tag('stopped', 0))
+		store.send(machine, RESET)
+		await flushMicrotask()
+		expect(store.peek(machine)).toEqual(tag('stopped', 0))
 	})
 
 	it('supports custom result and factory options', async () => {
