@@ -1,7 +1,13 @@
-import { fromInit, isReset, merge, type Init, type Reset } from '../functions'
-import type { Tags } from '../tags'
+import {
+	fromInit,
+	isReset,
+	merge,
+	type Init,
+	type Reset,
+} from '../../functions'
+import type { Tags } from '../../tags'
+import type { AtomSymbol, Effect, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
-import type { AtomSymbol, Effect, Read, Write } from './store'
 
 export function modalMachineAtom<Event, State, Result = Tags<State>>(
 	init: Init<Tags<State>>,

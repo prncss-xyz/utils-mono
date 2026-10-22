@@ -2,8 +2,8 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { isReset } from '../functions'
 import { tag } from '../tags'
-import { coreMachineAtom } from './coreMachineAtom'
 import { focusAtom } from './focusAtom'
+import { coreMachineAtom } from './machine/coreMachineAtom'
 import { createStore, primitiveAtom } from './store'
 
 function setup() {
@@ -26,63 +26,49 @@ function setup() {
 	return { store: createStore(), machine, focused, sideEffect }
 }
 
-describe('focusAtom previews', () => {
-	it('maps values and updater functions through machine guards without writing', () => {
+describe('focusAtom', () => {
+	it('projects values and dispatches focused updates', async () => {
 		const { store, focused, machine, sideEffect } = setup()
-		expectTypeOf(store.peek(focused.next, 2)).toEqualTypeOf<number | null>()
-		expect(store.peek(focused.can, 2)).toBe(true)
-		expect(store.peek(focused.next, 2)).toBe(2)
+		expectTypeOf(store.peek(focused)).toEqualTypeOf<number | null>()
+		expect(store.peek(focused)).toBe(1)
+		expectTypeOf(store.peek(focused.can, 4)).toEqualTypeOf<boolean>()
+		expect(store.peek(focused.can, 4)).toBe(true)
 		expect(store.peek(focused.can, -1)).toBe(false)
-		expect(store.peek(focused.next, -1)).toBe(1)
-		expect(store.peek(focused.next, (count) => count + 3)).toBe(4)
-		expect(store.peek(machine)).toEqual({ count: 1 })
-		expect(store.peek(sideEffect)).toBe(0)
+		store.send(focused, 4)
+		await Promise.resolve()
+		expect(store.peek(focused)).toBe(4)
+		expect(store.peek(machine)).toEqual({ count: 4 })
+		expect(store.peek(sideEffect)).toBe(4)
 	})
 
-	it.each(['can', 'next'] as const)(
-		'dispatches updates through %s and tracks changes',
-		async (family) => {
-			const { store, focused, sideEffect } = setup()
-			const preview = store.resolve(focused.next, (count) => count + 1)
-			expect(preview.peek()).toBe(2)
-			if (family === 'can') store.send(focused.can, 4, undefined)
-			else store.send(focused.next, 4, undefined)
-			await Promise.resolve()
-			expect(store.peek(focused)).toBe(4)
-			expect(store.peek(sideEffect)).toBe(4)
-			expect(preview.peek()).toBe(5)
-		},
-	)
-
-	it('previews removal and treats nullish sources as no-ops', async () => {
+	it('supports removal and ignores updates to nullish sources', async () => {
 		const { store, focused } = setup()
-		expect(store.peek(focused.can, null)).toBe(true)
-		expect(store.peek(focused.next, undefined)).toBeNull()
-		store.send(focused.next, null, undefined)
+		store.send(focused, null)
 		await Promise.resolve()
+		expect(store.peek(focused)).toBeNull()
 		expect(store.peek(focused.can, 2)).toBe(false)
-		expect(store.peek(focused.next, 2)).toBeNull()
-		store.send(focused.can, 2, undefined)
+		store.send(focused, 2)
 		await Promise.resolve()
 		expect(store.peek(focused)).toBeNull()
 	})
 
-	it('supports modifier-only focuses and nested focuses', () => {
+	it('supports modifier-only and nested focuses', async () => {
 		const { store, machine } = setup()
 		const focused = focusAtom(machine, {
 			getter: (state) => state.count,
 			modifier: (modify, state) => tag('set', modify(state.count)),
 		})
-		expect(store.peek(focused.next, (count) => count + 2)).toBe(3)
 		const nested = focusAtom(focused, {
 			getter: (count) => String(count),
 			setter: (value) => () => Number(value),
 		})
-		expect(store.peek(nested.next, '5')).toBe('5')
-		expect(store.peek(nested.can, '-1')).toBe(false)
+		expect(store.peek(nested.can, '5')).toBe(true)
+		store.send(nested, '5')
+		await Promise.resolve()
+		expect(store.peek(nested)).toBe('5')
 	})
 
-	it('keeps ordinary source atoms supported', async () => {
+	it('supports ordinary source atoms', async () => {
 		const focused = focusAtom(primitiveAtom({ count: 1 }), {
 			getter: (state) => state.count,
 			setter: (count) => ({ count }),

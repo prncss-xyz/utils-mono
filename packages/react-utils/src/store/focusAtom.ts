@@ -5,9 +5,6 @@ import {
 	TRANSIENT,
 	type AtomFamily,
 	type AtomSymbol,
-	type Read,
-	type Write,
-	type Effect,
 } from './store'
 
 type Modify<Value> = (value: Value) => Value
@@ -24,37 +21,11 @@ type Modifier<Source, Event, Value> = (
 	source: NonNullish<Source>,
 ) => Event
 
-export type PreviewAtom<Value, Event> = AtomSymbol<Value, Event> & {
-	can: AtomFamily<boolean, Event, void>
-	next: AtomFamily<Value, Event, void>
-}
+type FocusAtom<Value, Event, SourceAtom> = AtomSymbol<Value, Event> &
+	(SourceAtom extends { can: AtomFamily<boolean, any, void> }
+		? { can: AtomFamily<boolean, Event, void> }
+		: {})
 
-type FocusAtom<Value, Event, SourceAtom> = SourceAtom extends {
-	can: AtomFamily<boolean, any, void>
-	next: AtomFamily<any, any, void>
-}
-	? PreviewAtom<Value, Event>
-	: AtomSymbol<Value, Event>
-
-/** Focuses a state-bearing atom through a transition, with write-free previews. */
-export function focusAtom<Source, Event, Value>(
-	sourceAtom: AtomSymbol<Source, Source>,
-	opts: {
-		getter: (source: Source, read: Read) => Value
-		transition: (
-			event: Event,
-			source: Source,
-			read: Read,
-			write: Write,
-		) => Source
-		effect?: Effect<Value>
-	},
-): PreviewAtom<Value, Event>
-/**
- * Focuses reads and updates on part of a source atom.
- * Sources with `can` and `next` also expose focused preview families; sending
- * to either family dispatches the focused update. Nullish sources ignore updates.
- */
 export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
 	sourceAtom: AtomSymbol<Source, Event> & SourceAtom,
 	opts: {
@@ -209,43 +180,6 @@ export function focusAtom<Source, Event, SourceAtom extends object = {}>(
 	},
 ): FocusAtom<never, null | undefined, SourceAtom>
 export function focusAtom(sourceAtom: any, opts: any): any {
-	if (opts.transition) {
-		const { getter, transition } = opts
-		const focused = derivedAtom(
-			(read) => getter(read(sourceAtom), read),
-			(read, write, event: any) => {
-				write(sourceAtom, transition(event, read(sourceAtom), read, write))
-			},
-			{ effect: opts.effect },
-		)
-		const preview = (event: any, read: Read) => {
-			const last = read(sourceAtom)
-			let dirty = false
-			const markDirty: Write = () => {
-				dirty = true
-			}
-			const next = transition(event, last, read, markDirty)
-			return { next, changed: dirty || !Object.is(next, last) }
-		}
-		return Object.assign(focused, {
-			can: atomFamily<boolean, any, void>(
-				(event) =>
-					derivedAtom(
-						(read) => preview(event, read).changed,
-						(_read, write) => write(focused, event),
-					),
-				{ TTL: TRANSIENT },
-			),
-			next: atomFamily<any, any, void>(
-				(event) =>
-					derivedAtom(
-						(read) => getter(preview(event, read).next, read),
-						(_read, write) => write(focused, event),
-					),
-				{ TTL: TRANSIENT },
-			),
-		})
-	}
 	const { getter, setter, modifier, remover } = opts
 	const project = (source: any) => {
 		isoAssert(getter)
@@ -272,28 +206,17 @@ export function focusAtom(sourceAtom: any, opts: any): any {
 			if (source != null) write(sourceAtom, eventFor(source, update))
 		},
 	)
-	if (!sourceAtom.can || !sourceAtom.next) return focused
-	const preview = (family: 'can' | 'next', update: any, read: Read) => {
-		const source = read(sourceAtom)
-		if (source == null) return family === 'can' ? false : project(source)
-		const event = eventFor(source, update)
-		return family === 'can'
-			? read(sourceAtom.can, event)
-			: project(read(sourceAtom.next, event))
-	}
+	if (!sourceAtom.can) return focused
 	return Object.assign(focused, {
 		can: atomFamily<boolean, any, void>(
 			(update) =>
 				derivedAtom(
-					(read) => preview('can', update, read),
-					(_read, write) => write(focused, update),
-				),
-			{ TTL: TRANSIENT },
-		),
-		next: atomFamily<any, any, void>(
-			(update) =>
-				derivedAtom(
-					(read) => preview('next', update, read),
+					(read) => {
+						const source = read(sourceAtom)
+						return source == null
+							? false
+							: read(sourceAtom.can, eventFor(source, update))
+					},
 					(_read, write) => write(focused, update),
 				),
 			{ TTL: TRANSIENT },

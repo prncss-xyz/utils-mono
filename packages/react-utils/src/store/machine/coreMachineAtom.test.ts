@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { isReset, RESET } from '../functions'
-import { tag, type Sendable } from '../tags'
+import { isReset, RESET } from '../../functions'
+import { tag, type Sendable } from '../../tags'
+import { createStore, primitiveAtom } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
-import { createStore, primitiveAtom } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 

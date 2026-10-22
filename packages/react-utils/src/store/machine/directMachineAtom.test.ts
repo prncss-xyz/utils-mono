@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { RESET } from '../functions'
-import { tag } from '../tags'
+import { RESET } from '../../functions'
+import { tag } from '../../tags'
+import { createStore, primitiveAtom } from '../store'
 import { directMachineAtom } from './directMachineAtom'
-import { createStore, primitiveAtom } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 

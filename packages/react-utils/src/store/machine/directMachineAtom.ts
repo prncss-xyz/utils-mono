@@ -1,6 +1,12 @@
-import { fromInit, isReset, merge, type Init, type Reset } from '../functions'
+import {
+	fromInit,
+	isReset,
+	merge,
+	type Init,
+	type Reset,
+} from '../../functions'
+import type { AtomSymbol, Effect, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
-import type { AtomSymbol, Effect, Read, Write } from './store'
 
 export function directMachineAtom<E, S extends object, R = S>(
 	init: Init<S>,
