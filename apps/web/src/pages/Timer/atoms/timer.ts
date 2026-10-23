@@ -1,4 +1,4 @@
-import { modalMachineAtom, tag } from '@prncss-xyz/react-utils'
+import { focusAtom, modalMachineAtom, tag } from '@prncss-xyz/react-utils'
 
 import { timeAtom } from './time'
 
@@ -23,4 +23,9 @@ export const timerAtom = modalMachineAtom<
 			tag('idle', { elapsed: read(timeAtom) - since }),
 		reset: (_, _state, read) => tag('running', { since: read(timeAtom) }),
 	},
+})
+
+export const runningAtom = focusAtom(timerAtom, {
+	getter: (timer) => timer.type === 'running',
+	setter: (next: boolean) => tag(next ? 'start' : 'stop'),
 })
