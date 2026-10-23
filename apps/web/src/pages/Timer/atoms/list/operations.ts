@@ -1,10 +1,8 @@
 import { isoAssert, RESET } from '@prncss-xyz/react-utils'
 
-export type ListState = {
-	nextId: number
-	items: { id: string; duration: number }[]
-	active: string
-}
+import type { ListState } from '.'
+
+export type { ListState } from '.'
 
 export function update(
 	{ target, duration }: { target: string; duration: number },

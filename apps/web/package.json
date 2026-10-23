@@ -21,7 +21,8 @@
 		"@prncss-xyz/react-utils": "workspace:*",
 		"@tanstack/react-router": "^1.170.39",
 		"react": "catalog:",
-		"react-dom": "catalog:"
+		"react-dom": "catalog:",
+		"zod": "catalog:"
 	},
 	"devDependencies": {
 		"@fast-check/vitest": "catalog:",
