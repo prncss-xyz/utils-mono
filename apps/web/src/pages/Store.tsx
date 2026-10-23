@@ -1,5 +1,9 @@
 'use client'
+
 import { Button, HStack, VStack } from '@astryxdesign/core'
+import { AppShell } from '@astryxdesign/core/AppShell'
+import { Heading } from '@astryxdesign/core/Heading'
+import { Section } from '@astryxdesign/core/Section'
 import {
 	RESET,
 	StoreProvider,
@@ -64,10 +68,28 @@ function Demo0() {
 	)
 }
 
-export function StoreDemo() {
+function StoreDemo() {
 	return (
 		<StoreProvider hydrate={[[double, 4]]}>
 			<Demo0 />
 		</StoreProvider>
+	)
+}
+
+export default function StorePage() {
+	return (
+		<AppShell contentPadding={0} height='auto' variant='wash'>
+			<VStack gap={0}>
+				<Section variant='transparent' padding={10}>
+					<Heading level={1} type='display-1' textWrap='balance'>
+						Store 2
+					</Heading>
+				</Section>
+
+				<Section variant='section' padding={10} dividers={['top']}>
+					<StoreDemo />
+				</Section>
+			</VStack>
+		</AppShell>
 	)
 }

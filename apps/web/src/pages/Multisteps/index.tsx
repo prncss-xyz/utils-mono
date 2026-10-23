@@ -8,6 +8,9 @@ import {
 	useToast,
 	VStack,
 } from '@astryxdesign/core'
+import { AppShell } from '@astryxdesign/core/AppShell'
+import { Heading } from '@astryxdesign/core/Heading'
+import { Section } from '@astryxdesign/core/Section'
 import { tag, useDialog } from '@prncss-xyz/react-utils'
 import { createElement, type ReactElement, useState } from 'react'
 
@@ -92,6 +95,24 @@ function Content() {
 	return <Button label='start' onClick={() => openDialog(FlowDialog, {})} />
 }
 
-export function Demo() {
+function Demo() {
 	return <Content />
+}
+
+export default function MultistepsPage() {
+	return (
+		<AppShell contentPadding={0} height='auto' variant='wash'>
+			<VStack gap={0}>
+				<Section variant='transparent' padding={10}>
+					<Heading level={1} type='display-1' textWrap='balance'>
+						Multisteps
+					</Heading>
+				</Section>
+
+				<Section variant='section' padding={10} dividers={['top']}>
+					<Demo />
+				</Section>
+			</VStack>
+		</AppShell>
+	)
 }

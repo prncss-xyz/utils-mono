@@ -1,4 +1,7 @@
+import { AppShell } from '@astryxdesign/core/AppShell'
 import { Button } from '@astryxdesign/core/Button'
+import { Heading } from '@astryxdesign/core/Heading'
+import { Section } from '@astryxdesign/core/Section'
 import { Text } from '@astryxdesign/core/Text'
 import { useToast } from '@astryxdesign/core/Toast'
 import { VStack } from '@astryxdesign/core/VStack'
@@ -79,7 +82,7 @@ function CompletionNotifier() {
 	return null
 }
 
-export function Timer() {
+function Timer() {
 	return (
 		<>
 			<TimeUpdater />
@@ -91,5 +94,20 @@ export function Timer() {
 				<EditButton />
 			</VStack>
 		</>
+	)
+}
+
+export default function TimerPage() {
+	return (
+		<AppShell contentPadding={0} height='auto' variant='wash'>
+			<Section variant='transparent' padding={10}>
+				<VStack gap={4} align='start'>
+					<Heading level={1} type='display-1' textWrap='balance'>
+						Timer
+					</Heading>
+					<Timer />
+				</VStack>
+			</Section>
+		</AppShell>
 	)
 }

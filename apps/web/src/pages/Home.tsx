@@ -6,7 +6,7 @@ import { VStack } from '@astryxdesign/core/VStack'
 
 import { RouterLink } from '@/components/RouterLink'
 
-export default function Page() {
+export default function HomePage() {
 	return (
 		<AppShell contentPadding={0} height='auto' variant='wash'>
 			<VStack gap={0}>

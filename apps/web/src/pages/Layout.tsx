@@ -2,7 +2,7 @@ import { LayerProvider } from '@astryxdesign/core/Layer'
 import { DialogProvider, StoreProvider } from '@prncss-xyz/react-utils'
 import { Outlet } from '@tanstack/react-router'
 
-export function InjectorLayout() {
+export function Layout() {
 	return (
 		<LayerProvider>
 			<StoreProvider>

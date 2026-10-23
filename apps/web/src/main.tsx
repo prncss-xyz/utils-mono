@@ -6,17 +6,17 @@ import {
 } from '@tanstack/react-router'
 import { createRoot } from 'react-dom/client'
 
-import { InjectorLayout } from './features/injector'
-import DialogPage from './pages/dialog'
-import HomePage from './pages/index'
-import MultistepsPage from './pages/multisteps'
-import ScopePage from './pages/scope'
-import StorePage from './pages/store'
-import TimerPage from './pages/timer'
+import DialogPage from './pages/Dialog'
+import HomePage from './pages/Home'
+import { Layout } from './pages/Layout'
+import MultistepsPage from './pages/Multisteps/index'
+import ScopePage from './pages/Scope'
+import StorePage from './pages/Store'
+import TimerPage from './pages/Timer/index'
 
 import './styles.css'
 
-const rootRoute = createRootRoute({ component: InjectorLayout })
+const rootRoute = createRootRoute({ component: Layout })
 const routeTree = rootRoute.addChildren([
 	createRoute({
 		getParentRoute: () => rootRoute,
