@@ -1,19 +1,19 @@
 import { derivedAtom, focusAtom, isoAssert, tag } from '@prncss-xyz/react-utils'
 
 import { formatTime } from './formatTime'
-import { listAtom } from './list'
+import { activeListAtom, allListAtom } from './list'
 import { timeAtom } from './time'
 import { runningAtom, timerAtom } from './timer'
 
 export const activeAtom = derivedAtom(
 	(read) => {
-		const { items, active } = read(listAtom)
+		const { items, active } = read(activeListAtom)
 		const item = items.find(({ id }) => id === active)
 		isoAssert(item, 'The active item must exist')
 		return item
 	},
 	(_read, write, target: string) => {
-		write(listAtom, tag('activate', { target }))
+		write(allListAtom, tag('activateItem', { target }))
 		write(timerAtom, 'reset')
 	},
 )
@@ -31,7 +31,7 @@ export const fulfilledAtom = derivedAtom(
 
 export const completeTimerAtom = derivedAtom(null, (read, write) => {
 	if (!read(runningAtom) || !read(fulfilledAtom)) return
-	const { items, active } = read(listAtom)
+	const { items, active } = read(activeListAtom)
 	const next = items[items.findIndex(({ id }) => id === active) + 1]
 	if (next) {
 		write(activeAtom, next.id)
@@ -50,8 +50,8 @@ export const timerDisplayAtom = focusAtom(countDownAtom, { getter: formatTime })
 export const updateDurationAtom = derivedAtom(
 	null,
 	(read, write, update: { target: string; duration: number }) => {
-		const { active } = read(listAtom)
-		write(listAtom, tag('update', update))
+		const { active } = read(activeListAtom)
+		write(allListAtom, tag('update', update))
 		if (update.target === active) write(timerAtom, 'reset')
 	},
 )
@@ -59,8 +59,40 @@ export const updateDurationAtom = derivedAtom(
 export const removeTimerAtom = derivedAtom(
 	null,
 	(read, write, target: string) => {
-		const { active } = read(listAtom)
-		write(listAtom, tag('remove', { target }))
+		const { active } = read(activeListAtom)
+		write(allListAtom, tag('remove', { target }))
 		if (target === active) write(timerAtom, 'reset')
 	},
 )
+
+export const activateListAtom = derivedAtom(
+	null,
+	(read, write, target: string) => {
+		isoAssert(
+			read(allListAtom).lists[target],
+			'The list to activate must exist',
+		)
+		write(runningAtom, false)
+		write(allListAtom, tag('activateList', { target }))
+	},
+)
+
+export const clearListAtom = derivedAtom(null, (read, write, list: string) => {
+	const state = read(allListAtom)
+	isoAssert(state.lists[list], 'The list to clear must exist')
+	if (state.active === list) {
+		write(runningAtom, false)
+		write(timerAtom, 'reset')
+	}
+	write(allListAtom, tag('clearList', { list }))
+})
+
+export const removeListAtom = derivedAtom(null, (read, write, list: string) => {
+	const state = read(allListAtom)
+	isoAssert(state.lists[list], 'The list to remove must exist')
+	if (state.active === list) {
+		write(runningAtom, false)
+		write(timerAtom, 'reset')
+	}
+	write(allListAtom, tag('removeList', { list }))
+})

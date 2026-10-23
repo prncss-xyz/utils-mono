@@ -1,46 +1,74 @@
 import {
-	RESET,
 	directMachineAtom,
+	focusAtom,
+	isoAssert,
 	localStorageAtom,
 } from '@prncss-xyz/react-utils'
 import { z } from 'zod'
 
-import { create, remove, update } from './operations'
+import { DEFAULT_DURATION } from './constants'
+import {
+	activateItem,
+	activateList,
+	clone,
+	cloneList,
+	removeList,
+	remove,
+	renameList,
+	clearList,
+	update,
+} from './operations'
 
-const listStateSchema = z
-	.object({
-		nextId: z.int().positive(),
-		items: z
-			.array(
-				z.object({
-					id: z.string().regex(/^(0|[1-9]\d*)$/),
-					duration: z.number().nonnegative(),
-				}),
-			)
-			.nonempty(),
-		active: z.string(),
-	})
-	.refine(
-		({ items, active, nextId }) =>
-			items.some(({ id }) => id === active) &&
-			new Set(items.map(({ id }) => id)).size === items.length &&
-			items.every(({ id }) => Number(id) < nextId),
-		'Active timer must exist, IDs must be unique, and nextId must exceed all IDs',
-	)
+const listStateSchema = z.object({
+	name: z.string().default(''),
+	items: z
+		.array(
+			z.object({
+				id: z.string(),
+				duration: z.number(),
+			}),
+		)
+		.nonempty(),
+	active: z.string(),
+})
 
-export type ListState = z.infer<typeof listStateSchema>
+type ListState = z.infer<typeof listStateSchema>
 
-export const listAtom = directMachineAtom(
-	{
-		nextId: 1,
-		items: [{ id: '0', duration: 1_000 }],
-		active: '0',
+const initList: ListState = {
+	name: '',
+	items: [{ id: '0', duration: DEFAULT_DURATION }],
+	active: '0',
+}
+
+const allListsSchema = z.object({
+	nextItemId: z.int(),
+	nextListId: z.int(),
+	active: z.string(),
+	lists: z.record(z.string(), listStateSchema),
+})
+
+export type AllListsState = z.infer<typeof allListsSchema>
+
+const allListsInit: AllListsState = {
+	nextItemId: 1,
+	nextListId: 1,
+	active: '0',
+	lists: {
+		'0': initList,
 	},
+}
+
+export const allListAtom = directMachineAtom(
+	allListsInit,
 	{
-		reset: (_: void) => RESET,
-		activate: ({ target }: { target: string }) => ({ active: target }),
+		clearList,
+		cloneList,
+		removeList,
+		renameList,
+		activateItem,
+		activateList,
 		remove,
-		create,
+		clone,
 		update,
 	},
 	{
@@ -50,7 +78,7 @@ export const listAtom = directMachineAtom(
 				(raw) => {
 					if (raw === null) return initial
 					try {
-						const result = listStateSchema.safeParse(JSON.parse(raw))
+						const result = allListsSchema.safeParse(JSON.parse(raw))
 						return result.success ? result.data : initial
 					} catch {
 						return initial
@@ -60,3 +88,11 @@ export const listAtom = directMachineAtom(
 			),
 	},
 )
+
+export const activeListAtom = focusAtom(allListAtom, {
+	getter: ({ lists, active }) => {
+		const list = lists[active]
+		isoAssert(list, 'The active list must exist')
+		return list
+	},
+})
