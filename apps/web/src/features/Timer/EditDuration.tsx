@@ -6,22 +6,18 @@ import {
 	TextInput,
 	VStack,
 } from '@astryxdesign/core'
-import {
-	isoAssert,
-	tag,
-	useAtomValue,
-	useSetAtom,
-} from '@prncss-xyz/react-utils'
+import { isoAssert, useAtomValue, useSetAtom } from '@prncss-xyz/react-utils'
 import { useState } from 'react'
 
-import { listAtom } from './list'
+import { updateDurationAtom } from './atoms'
+import { listAtom } from './atoms/list'
 
 export function EditDuration({ id, close }: { id: string; close: () => void }) {
 	const { items } = useAtomValue(listAtom)
 	const item = items.find((item) => item.id === id)
 	isoAssert(item, 'The item to edit must exist')
 	const [duration, setDuration] = useState(() => String(item.duration))
-	const update = useSetAtom(listAtom)
+	const update = useSetAtom(updateDurationAtom)
 	const value = Number(duration)
 	const valid = duration.trim() !== '' && Number.isFinite(value) && value >= 0
 
@@ -41,7 +37,7 @@ export function EditDuration({ id, close }: { id: string; close: () => void }) {
 						variant='primary'
 						isDisabled={!valid}
 						onClick={() => {
-							update(tag('update', { target: id, duration: value }))
+							update({ target: id, duration: value })
 							close()
 						}}
 					/>

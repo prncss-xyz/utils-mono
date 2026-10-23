@@ -1,9 +1,4 @@
-import {
-	isoAssert,
-	RESET,
-	directMachineAtom,
-	focusAtom,
-} from '@prncss-xyz/react-utils'
+import { RESET, directMachineAtom } from '@prncss-xyz/react-utils'
 
 import { create, remove, update } from './operations'
 
@@ -21,11 +16,3 @@ export const listAtom = directMachineAtom(
 		update,
 	},
 )
-
-export const activeAtom = focusAtom(listAtom, {
-	getter: ({ items, active }) => {
-		const item = items.find(({ id }) => id === active)
-		isoAssert(item, 'The active item must exist')
-		return item
-	},
-})

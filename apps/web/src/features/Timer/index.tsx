@@ -3,31 +3,23 @@ import { Text } from '@astryxdesign/core/Text'
 import { useToast } from '@astryxdesign/core/Toast'
 import { VStack } from '@astryxdesign/core/VStack'
 import {
+	toggle,
 	useAtom,
-	derivedAtom,
-	focusAtom,
 	useAtomValue,
 	useDialog,
 	useSetAtom,
-	toggle,
 } from '@prncss-xyz/react-utils'
 import { useEffect } from 'react'
 
+import {
+	activeAtom,
+	fulfilledAtom,
+	runningAtom,
+	timerDisplayAtom,
+} from './atoms'
+import { timeAtom } from './atoms/time'
+import { timerAtom } from './atoms/timer'
 import { EditDuration } from './EditDuration'
-import { formatTime } from './formatTime'
-import { activeAtom } from './list'
-import { timeAtom } from './time'
-import { elapsedTimeAtom, resetAtom, runningAtom } from './timer'
-
-const fulfilledAtom = derivedAtom(
-	(read) => read(elapsedTimeAtom) >= read(activeAtom).duration,
-)
-
-const countDownAtom = derivedAtom((read) =>
-	Math.max(0, read(activeAtom).duration - read(elapsedTimeAtom)),
-)
-
-const timerDisplayAtom = focusAtom(countDownAtom, { getter: formatTime })
 
 function TimerDisplay() {
 	const timerDisplay = useAtomValue(timerDisplayAtom)
@@ -36,21 +28,16 @@ function TimerDisplay() {
 
 function StartStopButton() {
 	const [running, setRunning] = useAtom(runningAtom)
-	const fulfilled = useAtomValue(fulfilledAtom)
-	const reset = useSetAtom(resetAtom)
 	return (
 		<Button
 			label={running ? 'Stop' : 'Start'}
-			onClick={() => {
-				if (!running && fulfilled) reset()
-				setRunning(toggle)
-			}}
+			onClick={() => setRunning(toggle)}
 		/>
 	)
 }
 
 function ResetButton() {
-	const [reset, setReset] = useAtom(resetAtom)
+	const [reset, setReset] = useAtom(timerAtom.can, 'reset')
 	const running = useAtomValue(runningAtom)
 	return (
 		<Button
