@@ -469,27 +469,35 @@ class Store {
 		const instance = this.getInstance(symbol, key)
 		return this.peekInstance(instance)
 	}
+	/** Setters read the pending state; public reads keep the committed snapshot. */
+	private readPending: Read = <S, Key, E>(
+		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+		key?: Key,
+	): S => {
+		const instance = this.getInstance(symbol, key)
+		const pending = this.mountWrites ?? this.tasks?.primitives
+		if (!pending?.size) return this.peekInstance(instance)
+		if (instance.symbol.type === 'primitive')
+			return pending.has(instance)
+				? pending.get(instance)
+				: this.peekInstance(instance)
+		return instance.symbol.getter(this.readPending)
+	}
 	private sendInstance<S, E>(instance: Instance<S>, event: E) {
 		const { symbol } = instance
 		switch (symbol.type) {
 			case 'primitive': {
 				const primitives = this.mountWrites ?? this.getTasks().primitives
-				let res: any
-				if (isFunction(event)) {
-					const last = primitives.has(instance)
-						? primitives.get(instance)
-						: this.peekInstance(instance)
-					res = event(last)
-				} else if (isReset(event)) {
-					res = fromInit(symbol.getter)
-				} else {
-					res = event
-				}
-				primitives.set(instance, res)
+				const next = isFunction(event)
+					? event(this.readPending(symbol))
+					: isReset(event)
+						? fromInit(symbol.getter)
+						: event
+				primitives.set(instance, next)
 				return
 			}
 			case 'derived': {
-				symbol.setter(this.peek.bind(this), this.send.bind(this), event)
+				symbol.setter(this.readPending, this.send.bind(this), event)
 				return
 			}
 			default:

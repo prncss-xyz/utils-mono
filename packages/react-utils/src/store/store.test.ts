@@ -186,6 +186,44 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(3)
 	})
 
+	it('composes derived writes against pending values through nested getters', async () => {
+		const count = primitiveAtom(10)
+		const doubled = derivedAtom((read) => read(count) * 2)
+		const members = atomFamily((_key: string) => doubled)
+		const update = derivedAtom(null, (read, write, amount: number) =>
+			write(count, read(members, 'count') / 2 + amount),
+		)
+		const store = createStore()
+		const subscriber = vi.fn()
+		store.subscribe(doubled, subscriber)
+		expect(store.peek(doubled)).toBe(20)
+
+		store.send(count, 0)
+		store.send(update, 2)
+		store.send(update, 3)
+		expect(store.peek(count)).toBe(10)
+		expect(store.peek(doubled)).toBe(20)
+		expect(subscriber).not.toHaveBeenCalled()
+
+		await flushMicrotask()
+		expect(store.peek(count)).toBe(5)
+		expect(store.peek(doubled)).toBe(10)
+		expect(subscriber).toHaveBeenCalledOnce()
+	})
+
+	it('lets primitive value writes replace earlier pending derived writes', async () => {
+		const count = primitiveAtom(1)
+		const increment = derivedAtom(null, (read, write) =>
+			write(count, read(count) + 1),
+		)
+		const store = createStore()
+		store.send(increment, undefined)
+		store.send(count, 10)
+		store.send(increment, undefined)
+		await flushMicrotask()
+		expect(store.peek(count)).toBe(11)
+	})
+
 	it('reads a one-argument atom family from a derived getter', () => {
 		const members = new Map<string, ReturnType<typeof primitiveAtom<string>>>()
 		const names = atomFamily((key: string) => {

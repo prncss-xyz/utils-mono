@@ -36,10 +36,15 @@ function TimerDisplay() {
 
 function StartStopButton() {
 	const [running, setRunning] = useAtom(runningAtom)
+	const fulfilled = useAtomValue(fulfilledAtom)
+	const reset = useSetAtom(resetAtom)
 	return (
 		<Button
 			label={running ? 'Stop' : 'Start'}
-			onClick={() => setRunning(toggle)}
+			onClick={() => {
+				if (!running && fulfilled) reset()
+				setRunning(toggle)
+			}}
 		/>
 	)
 }
