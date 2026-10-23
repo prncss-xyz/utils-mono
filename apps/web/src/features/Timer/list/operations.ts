@@ -6,6 +6,19 @@ export type ListState = {
 	active: string
 }
 
+export function update(
+	{ target, duration }: { target: string; duration: number },
+	{ items }: Pick<ListState, 'items'>,
+) {
+	const index = items.findIndex(({ id }) => id === target)
+	isoAssert(index !== -1, 'The item to update must exist')
+	return {
+		items: items.map((item, itemIndex) =>
+			itemIndex === index ? { ...item, duration } : item,
+		),
+	}
+}
+
 export function remove(
 	{ target }: { target: string },
 	{ items, active }: Pick<ListState, 'items' | 'active'>,

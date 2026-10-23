@@ -8,7 +8,7 @@ import {
 	useToast,
 	VStack,
 } from '@astryxdesign/core'
-import { tag, useDialog, DialogProvider } from '@prncss-xyz/react-utils'
+import { tag, useDialog } from '@prncss-xyz/react-utils'
 import { createElement, type ReactElement, useState } from 'react'
 
 import { multistep, type ShellProps } from './multistep'
@@ -88,14 +88,10 @@ function FlowDialog({ close }: { close: () => void }) {
 }
 
 function Content() {
-	const call = useDialog()
-	return <Button label='start' onClick={() => call(FlowDialog, {})} />
+	const openDialog = useDialog()
+	return <Button label='start' onClick={() => openDialog(FlowDialog, {})} />
 }
 
 export function Demo() {
-	return (
-		<DialogProvider>
-			<Content />
-		</DialogProvider>
-	)
+	return <Content />
 }

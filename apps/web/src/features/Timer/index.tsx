@@ -12,6 +12,7 @@ import {
 import { useEffect } from 'react'
 
 import { cmd } from '../commands'
+import { EditDuration } from './EditDuration'
 import { formatTime } from './formatTime'
 import { activeAtom } from './list'
 import { timeAtom } from './time'
@@ -63,6 +64,14 @@ function ResetButton() {
 	)
 }
 
+function EditButton() {
+	const { id } = useAtomValue(activeAtom)
+	const openDialog = useSetAtom(cmd.dialog)
+	return (
+		<Button label='Edit' onClick={() => openDialog([EditDuration, { id }])} />
+	)
+}
+
 function TimeUpdater() {
 	const setTime = useSetAtom(timeAtom)
 	useEffect(() => {
@@ -82,6 +91,7 @@ export function Timer() {
 				<TimerDisplay />
 				<StartStopButton />
 				<ResetButton />
+				<EditButton />
 			</VStack>
 		</>
 	)

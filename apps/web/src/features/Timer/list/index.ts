@@ -5,9 +5,9 @@ import {
 	focusAtom,
 } from '@prncss-xyz/react-utils'
 
-import { create, remove } from './operations'
+import { create, remove, update } from './operations'
 
-const listAtom = directMachineAtom(
+export const listAtom = directMachineAtom(
 	{
 		nextId: 1,
 		items: [{ id: '0', duration: 1_000 }],
@@ -15,9 +15,10 @@ const listAtom = directMachineAtom(
 	},
 	{
 		reset: (_: void) => RESET,
-		focus: ({ target }: { target: string }) => ({ active: target }),
+		activate: ({ target }: { target: string }) => ({ active: target }),
 		remove,
 		create,
+		update,
 	},
 )
 

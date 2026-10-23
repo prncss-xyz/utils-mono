@@ -1,29 +1,38 @@
 import { LayerProvider } from '@astryxdesign/core/Layer'
 import { useToast } from '@astryxdesign/core/Toast'
-import { StoreProvider, hydrate } from '@prncss-xyz/react-utils'
+import {
+	DialogProvider,
+	StoreProvider,
+	useDialog,
+	useSetAtom,
+} from '@prncss-xyz/react-utils'
 import { Outlet } from '@tanstack/react-router'
-import type { ReactNode } from 'react'
+import { useEffect } from 'react'
 
 import { dependencyAtom, type Dependencies } from './commands'
 
-function Injector({ children }: { children: ReactNode }) {
+function Injector() {
 	const showToast = useToast()
-	const dependencies: Dependencies = {
-		toast: (body) => showToast({ body }),
-	}
-	return (
-		<StoreProvider hydrate={[hydrate(dependencyAtom, dependencies)]}>
-			{children}
-		</StoreProvider>
-	)
+	const openDialog = useDialog()
+	const setDependencies = useSetAtom(dependencyAtom)
+	useEffect(() => {
+		const dependencies: Dependencies = {
+			toast: (body) => showToast({ body }),
+			dialog: (args) => openDialog(...args),
+		}
+		setDependencies(dependencies)
+	}, [openDialog, showToast, setDependencies])
+	return <Outlet />
 }
 
 export function InjectorLayout() {
 	return (
 		<LayerProvider>
-			<Injector>
-				<Outlet />
-			</Injector>
+			<StoreProvider>
+				<DialogProvider>
+					<Injector />
+				</DialogProvider>
+			</StoreProvider>
 		</LayerProvider>
 	)
 }

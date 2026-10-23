@@ -1,7 +1,7 @@
 'use client'
 
 import { AlertDialog, Button, useToast } from '@astryxdesign/core'
-import { DialogProvider, useDialog } from '@prncss-xyz/react-utils'
+import { useDialog } from '@prncss-xyz/react-utils'
 
 type DialogProps<Payload> = {
 	message: string
@@ -56,9 +56,5 @@ function Inner() {
 }
 
 export function Dialog() {
-	return (
-		<DialogProvider>
-			<Inner />
-		</DialogProvider>
-	)
+	return <Inner />
 }
