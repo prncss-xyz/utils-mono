@@ -3,7 +3,6 @@ import {
 	createContext,
 	useCallback,
 	useContext,
-	useMemo,
 	useRef,
 	useSyncExternalStore,
 } from 'react'
@@ -16,7 +15,13 @@ import {
 	type ResolvedAtom,
 } from './store'
 
-const StoreCtx = createContext(createStore())
+const StoreCtx = createContext<ReturnType<typeof createStore> | null>(null)
+
+function useStore() {
+	const store = useContext(StoreCtx)
+	if (!store) throw new Error('Atom hooks must be used within a StoreProvider')
+	return store
+}
 
 export function StoreProvider({
 	children,
@@ -36,12 +41,10 @@ function useResolvedAtom<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
-	const store = useContext(StoreCtx)
-	return useMemo(
-		() =>
-			atom.type === 'family' ? store.resolve(atom, key!) : store.resolve(atom),
-		[atom, key, store],
-	)
+	const store = useStore()
+	return atom.type === 'family'
+		? store.resolve(atom, key!)
+		: store.resolve(atom)
 }
 
 function useResolvedAtomValue<V, E>(atom: ResolvedAtom<V, E>) {
@@ -69,7 +72,7 @@ export function useSetAtom<V, Key, E>(
 	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
 	key?: Key,
 ) {
-	const store = useContext(StoreCtx)
+	const store = useStore()
 	const resolvedAtomRef = useRef<ResolvedAtom<V, E> | undefined>(undefined)
 	return useCallback(
 		(event: E) => {

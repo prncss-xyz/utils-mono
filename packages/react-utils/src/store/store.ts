@@ -42,7 +42,7 @@ export type AtomOptions<S> = {
 	onMount?: OnMount
 }
 
-type PrimitiveSymbol<S, E> = AtomOptions<S> & {
+export type PrimitiveSymbol<S, E> = AtomOptions<S> & {
 	type: 'primitive'
 	getter: (() => S) | S
 	readonly event?: E

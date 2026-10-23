@@ -10,7 +10,7 @@ import { create, remove } from './operations'
 const listAtom = directMachineAtom(
 	{
 		nextId: 1,
-		items: [{ id: '0', duration: 10_000 }],
+		items: [{ id: '0', duration: 1_000 }],
 		active: '0',
 	},
 	{

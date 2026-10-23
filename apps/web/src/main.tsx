@@ -2,11 +2,11 @@ import {
 	createRootRoute,
 	createRoute,
 	createRouter,
-	Outlet,
 	RouterProvider,
 } from '@tanstack/react-router'
 import { createRoot } from 'react-dom/client'
 
+import { InjectorLayout } from './features/injector'
 import DialogPage from './pages/dialog'
 import HomePage from './pages/index'
 import MultistepsPage from './pages/multisteps'
@@ -16,7 +16,7 @@ import TimerPage from './pages/timer'
 
 import './styles.css'
 
-const rootRoute = createRootRoute({ component: Outlet })
+const rootRoute = createRootRoute({ component: InjectorLayout })
 const routeTree = rootRoute.addChildren([
 	createRoute({
 		getParentRoute: () => rootRoute,

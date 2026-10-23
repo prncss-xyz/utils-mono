@@ -11,10 +11,24 @@ import {
 } from '@prncss-xyz/react-utils'
 import { useEffect } from 'react'
 
+import { cmd } from '../commands'
 import { formatTime } from './formatTime'
 import { activeAtom } from './list'
 import { timeAtom } from './time'
 import { elapsedTimeAtom, resetAtom, runningAtom } from './timer'
+
+const fulfilledAtom = derivedAtom(
+	(read) => read(elapsedTimeAtom) >= read(activeAtom).duration,
+	null,
+	{
+		effect: (fulfilled, _previous, get, set) => {
+			if (fulfilled && get(runningAtom)) {
+				set(runningAtom, false)
+				set(cmd.toast, 'done')
+			}
+		},
+	},
+)
 
 const countDownAtom = derivedAtom((read) =>
 	Math.max(0, read(activeAtom).duration - read(elapsedTimeAtom)),
@@ -49,20 +63,26 @@ function ResetButton() {
 	)
 }
 
-export function Timer() {
+function TimeUpdater() {
 	const setTime = useSetAtom(timeAtom)
-
 	useEffect(() => {
 		setTime(Date.now())
-		const interval = setInterval(() => setTime(Date.now()), 15) // 60 FPS
+		const interval = setInterval(() => setTime(Date.now()), 15)
 		return () => clearInterval(interval)
 	}, [setTime])
+	return null
+}
 
+export function Timer() {
+	useAtomValue(fulfilledAtom)
 	return (
-		<VStack gap={4} align='start'>
-			<TimerDisplay />
-			<StartStopButton />
-			<ResetButton />
-		</VStack>
+		<>
+			<TimeUpdater />
+			<VStack gap={4} align='start'>
+				<TimerDisplay />
+				<StartStopButton />
+				<ResetButton />
+			</VStack>
+		</>
 	)
 }
