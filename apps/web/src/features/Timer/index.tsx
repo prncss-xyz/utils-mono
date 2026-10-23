@@ -1,5 +1,6 @@
 import { Button } from '@astryxdesign/core/Button'
 import { Text } from '@astryxdesign/core/Text'
+import { useToast } from '@astryxdesign/core/Toast'
 import { VStack } from '@astryxdesign/core/VStack'
 import {
 	useAtom,
@@ -12,7 +13,6 @@ import {
 } from '@prncss-xyz/react-utils'
 import { useEffect } from 'react'
 
-import { cmd } from '../commands'
 import { EditDuration } from './EditDuration'
 import { formatTime } from './formatTime'
 import { activeAtom } from './list'
@@ -21,15 +21,6 @@ import { elapsedTimeAtom, resetAtom, runningAtom } from './timer'
 
 const fulfilledAtom = derivedAtom(
 	(read) => read(elapsedTimeAtom) >= read(activeAtom).duration,
-	null,
-	{
-		effect: (fulfilled, _previous, get, set) => {
-			if (fulfilled && get(runningAtom)) {
-				set(runningAtom, false)
-				set(cmd.toast, 'done')
-			}
-		},
-	},
 )
 
 const countDownAtom = derivedAtom((read) =>
@@ -83,11 +74,24 @@ function TimeUpdater() {
 	return null
 }
 
+function CompletionNotifier() {
+	const fulfilled = useAtomValue(fulfilledAtom)
+	const [running, setRunning] = useAtom(runningAtom)
+	const showToast = useToast()
+	useEffect(() => {
+		if (fulfilled && running) {
+			setRunning(false)
+			showToast({ body: 'done' })
+		}
+	}, [fulfilled, running, setRunning, showToast])
+	return null
+}
+
 export function Timer() {
-	useAtomValue(fulfilledAtom)
 	return (
 		<>
 			<TimeUpdater />
+			<CompletionNotifier />
 			<VStack gap={4} align='start'>
 				<TimerDisplay />
 				<StartStopButton />
