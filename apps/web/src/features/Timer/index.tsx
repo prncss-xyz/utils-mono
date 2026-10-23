@@ -6,6 +6,7 @@ import {
 	derivedAtom,
 	focusAtom,
 	useAtomValue,
+	useDialog,
 	useSetAtom,
 	toggle,
 } from '@prncss-xyz/react-utils'
@@ -66,9 +67,9 @@ function ResetButton() {
 
 function EditButton() {
 	const { id } = useAtomValue(activeAtom)
-	const openDialog = useSetAtom(cmd.dialog)
+	const openDialog = useDialog()
 	return (
-		<Button label='Edit' onClick={() => openDialog([EditDuration, { id }])} />
+		<Button label='Edit' onClick={() => openDialog(EditDuration, { id })} />
 	)
 }
 
