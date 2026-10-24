@@ -2,8 +2,11 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
+import viteReact from '@vitejs/plugin-react'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vite-plus'
+
+const react = () => viteReact({ compiler: true })
 
 const systemChromium = '/usr/bin/chromium'
 
@@ -50,9 +53,11 @@ export const storybookTestProject = {
 }
 
 export default defineConfig({
+	plugins: [react()],
 	pack: {
+		plugins: [react()],
 		dts: {
-			tsgo: true,
+			generator: 'tsgo',
 		},
 		exports: true,
 	},

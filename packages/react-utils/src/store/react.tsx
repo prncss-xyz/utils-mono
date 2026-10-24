@@ -1,11 +1,5 @@
 'use client'
-import {
-	createContext,
-	useCallback,
-	useContext,
-	useRef,
-	useSyncExternalStore,
-} from 'react'
+import { createContext, useContext, useRef, useSyncExternalStore } from 'react'
 
 import {
 	createStore,
@@ -73,15 +67,30 @@ export function useSetAtom<V, Key, E>(
 	key?: Key,
 ) {
 	const store = useStore()
-	const resolvedAtomRef = useRef<ResolvedAtom<V, E> | undefined>(undefined)
-	return useCallback(
-		(event: E) => {
-			resolvedAtomRef.current ??=
+	const resolvedAtomRef = useRef<
+		| {
+				store: ReturnType<typeof createStore>
+				atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>
+				key: Key | undefined
+				resolved: ResolvedAtom<V, E>
+		  }
+		| undefined
+	>(undefined)
+	return (event: E) => {
+		let cached = resolvedAtomRef.current
+		if (
+			!cached ||
+			cached.store !== store ||
+			cached.atom !== atom ||
+			!Object.is(cached.key, key)
+		) {
+			const resolved =
 				atom.type === 'family' ? store.resolve(atom, key!) : store.resolve(atom)
-			resolvedAtomRef.current.send(event)
-		},
-		[atom, key, store],
-	)
+			cached = { store, atom, key, resolved }
+			resolvedAtomRef.current = cached
+		}
+		cached.resolved.send(event)
+	}
 }
 
 export function useAtom<V, Key, E>(

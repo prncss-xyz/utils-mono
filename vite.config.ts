@@ -33,13 +33,17 @@ export default defineConfig({
 			},
 			'vp:test': {
 				command: 'vp test',
-				input: [{ auto: true }, '!node_modules/.cache/storybook/**'],
-				output: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+				cache: {
+					input: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+					output: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+				},
 			},
 			'vp:test:changed': {
 				command: 'vp test --changed',
-				input: [{ auto: true }, '!node_modules/.cache/storybook/**'],
-				output: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+				cache: {
+					input: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+					output: [{ auto: true }, '!node_modules/.cache/storybook/**'],
+				},
 			},
 		},
 	},
