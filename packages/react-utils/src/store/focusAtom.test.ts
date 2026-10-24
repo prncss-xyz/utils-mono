@@ -52,6 +52,16 @@ describe('focusAtom', () => {
 		expect(store.peek(focused)).toBeNull()
 	})
 
+	it('dispatches focused previews without setter arguments', async () => {
+		const { store, focused } = setup()
+		store.send(focused.can, 4)
+		await Promise.resolve()
+		expect(store.peek(focused)).toBe(4)
+		store.resolve(focused.can, 5).send()
+		await Promise.resolve()
+		expect(store.peek(focused)).toBe(5)
+	})
+
 	it('supports modifier-only and nested focuses', async () => {
 		const { store, machine } = setup()
 		const focused = focusAtom(machine, {

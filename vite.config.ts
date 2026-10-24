@@ -56,6 +56,14 @@ export default defineConfig({
 					include: ['apps/web/**/*.test.ts'],
 				},
 			},
+			{
+				test: {
+					environment: 'node',
+					globals: true,
+					include: ['packages/react-utils/**/*.test.ts'],
+					name: 'unit',
+				},
+			},
 			...(canRunBrowserTests
 				? [
 						{
@@ -63,16 +71,7 @@ export default defineConfig({
 							...storybookTestProject,
 						},
 					]
-				: [
-						{
-							test: {
-								environment: 'node',
-								globals: true,
-								include: ['packages/react-utils/**/*.test.ts'],
-								name: 'unit',
-							},
-						},
-					]),
+				: []),
 		],
 		coverage: {
 			provider: 'v8',

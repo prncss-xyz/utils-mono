@@ -42,56 +42,74 @@ export type AtomOptions<S> = {
 	onMount?: OnMount
 }
 
-export type PrimitiveSymbol<S, E> = AtomOptions<S> & {
+export type PrimitiveSymbol<S, Args extends unknown[]> = AtomOptions<S> & {
 	type: 'primitive'
 	getter: (() => S) | S
-	readonly event?: E
+	readonly args?: Args
 }
 
-type DerivedSymbol<S, E> = AtomOptions<S> & {
+type DerivedSymbol<S, Args extends unknown[]> = AtomOptions<S> & {
 	type: 'derived'
 	getter: Getter<S>
-	setter: Setter<E>
+	setter: Setter<Args>
 }
 
-export type AtomSymbol<S, E> = PrimitiveSymbol<S, E> | DerivedSymbol<S, E>
-export type AtomFamily<S, Key, E> = {
+export type AtomSymbol<S, Args extends unknown[]> =
+	| PrimitiveSymbol<S, Args>
+	| DerivedSymbol<S, Args>
+export type AtomFamily<S, Key, Args extends unknown[]> = {
 	type: 'family'
-	create: (key: Key) => AtomSymbol<S, E>
+	create: (key: Key) => AtomSymbol<S, Args>
 	TTL: number
 	hash: (k: Key) => unknown
 }
 
 export type Read = {
-	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
-	<S, E>(symbol: AtomSymbol<S, E>): S
+	<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+	): S
+	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>): S
 }
 export type Write = {
-	<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, event: E): void
-	<S, E>(symbol: AtomSymbol<S, E>, event: E): void
+	<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+		...args: Args
+	): void
+	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>, ...args: Args): void
 }
 export type Hydrate = readonly HydrateEntry[]
+// Effect<never> is contravariant, so write-only atoms need their own catch-all.
 type HydrateEntry =
-	| readonly [symbol: AtomSymbol<any, any>, event: any]
-	| readonly [symbol: AtomFamily<any, any, any>, key: any, event: any]
+	| readonly [symbol: AtomSymbol<any, any>, ...args: any[]]
+	| readonly [symbol: AtomSymbol<never, any>, ...args: any[]]
+	| readonly [symbol: AtomFamily<any, any, any>, key: any, ...args: any[]]
+	| readonly [symbol: AtomFamily<never, any, any>, key: any, ...args: any[]]
 type ValidHydrateEntry<Entry> = Entry extends readonly [
-	infer Symbol extends AtomFamily<any, any, any>,
-	unknown,
-	unknown,
+	infer Symbol extends AtomFamily<any, any, any> | AtomFamily<never, any, any>,
+	...unknown[],
 ]
-	? [Symbol] extends [AtomFamily<any, infer Key, infer Event>]
-		? readonly [Symbol, Key, Event]
+	? [Symbol] extends [AtomFamily<infer _Value, infer Key, infer Args>]
+		? readonly [Symbol, Key, ...Args]
 		: never
-	: Entry extends readonly [infer Symbol extends AtomSymbol<any, any>, unknown]
-		? [Symbol] extends [AtomSymbol<any, infer Event>]
-			? readonly [Symbol, Event]
+	: Entry extends readonly [
+				infer Symbol extends AtomSymbol<any, any> | AtomSymbol<never, any>,
+				...unknown[],
+		  ]
+		? [Symbol] extends [AtomSymbol<infer _Value, infer Args>]
+			? readonly [Symbol, ...Args]
 			: never
 		: never
 type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
 	readonly [Index in keyof Entries]: ValidHydrateEntry<Entries[Index]>
 }
 type Getter<S> = (read: Read) => S
-type Setter<E> = (read: Read, write: Write, e: E) => void
+type Setter<Args extends unknown[]> = (
+	read: Read,
+	write: Write,
+	...args: Args
+) => void
 export type Effect<S> = (
 	next: S,
 	last: S | undefined,
@@ -103,16 +121,16 @@ export type Effect<S> = (
 /** Runs in the effect microtask after the first subscription; cleans up on last release. */
 export type OnMount = (get: Read, set: Write) => void | (() => void)
 
-export type ResolvedAtom<S, E> = {
+export type ResolvedAtom<S, Args extends unknown[]> = {
 	peek: () => S
-	send: (event: E) => void
+	send: (...args: Args) => void
 	subscribe: (notify: () => void) => () => void
 }
 
 export function primitiveAtom<S>(
 	getter: S | (() => S),
 	opts?: AtomOptions<NoInfer<S>>,
-): AtomSymbol<S, SetStateWithReset<S>> {
+): AtomSymbol<S, [SetStateWithReset<S>]> {
 	return {
 		type: 'primitive' as const,
 		getter,
@@ -128,11 +146,26 @@ function nowrite(): never {
 	throw new Error('you cannot write this atom')
 }
 
-export function derivedAtom<S = never, E = void>(
+/**
+ * Infers setter arguments as a tuple. When specifying the value type explicitly,
+ * also specify the argument tuple (for example, derivedAtom<number, [n: number]>).
+ * Omitting the setter creates a read-only atom.
+ */
+export function derivedAtom<S = never>(
 	getter: Getter<S> | null | undefined,
-	setter?: Setter<E> | null | undefined,
+	setter?: null | undefined,
 	opts?: AtomOptions<NoInfer<S>>,
-): AtomSymbol<S, E> {
+): AtomSymbol<S, never>
+export function derivedAtom<S = never, Args extends unknown[] = []>(
+	getter: Getter<S> | null | undefined,
+	setter: Setter<Args>,
+	opts?: AtomOptions<NoInfer<S>>,
+): AtomSymbol<S, Args>
+export function derivedAtom<S = never>(
+	getter: Getter<S> | null | undefined,
+	setter?: Setter<any> | null | undefined,
+	opts?: AtomOptions<NoInfer<S>>,
+): AtomSymbol<S, any> {
 	return {
 		type: 'derived' as const,
 		getter: getter ?? noread,
@@ -141,10 +174,10 @@ export function derivedAtom<S = never, E = void>(
 	}
 }
 
-export function atomFamily<S, K, E>(
-	create: (key: K) => AtomSymbol<S, E>,
+export function atomFamily<S, K, Args extends unknown[]>(
+	create: (key: K) => AtomSymbol<S, Args>,
 	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
-): AtomFamily<S, K, E> {
+): AtomFamily<S, K, Args> {
 	return {
 		type: 'family' as const,
 		create,
@@ -153,23 +186,20 @@ export function atomFamily<S, K, E>(
 	}
 }
 
-export function hydrate<S, E>(
-	symbol: AtomSymbol<S, E>,
-	event: NoInfer<E>,
-): readonly [AtomSymbol<S, E>, E]
-export function hydrate<S, Key, E>(
-	symbol: AtomFamily<S, Key, E>,
+export function hydrate<S, Key, Args extends unknown[]>(
+	symbol: AtomFamily<S, Key, Args>,
 	key: NoInfer<Key>,
-	event: NoInfer<E>,
-): readonly [AtomFamily<S, Key, E>, Key, E]
+	...args: NoInfer<Args>
+): readonly [AtomFamily<S, Key, Args>, Key, ...Args]
+export function hydrate<S, Args extends unknown[]>(
+	symbol: AtomSymbol<S, Args>,
+	...args: NoInfer<Args>
+): readonly [AtomSymbol<S, Args>, ...Args]
 export function hydrate(
 	symbol: AtomSymbol<any, any> | AtomFamily<any, any, any>,
-	keyOrEvent: any,
-	event?: any,
+	...rest: unknown[]
 ) {
-	return symbol.type === 'family'
-		? ([symbol, keyOrEvent, event] as const)
-		: ([symbol, keyOrEvent] as const)
+	return [symbol, ...rest] as const
 }
 
 type Tasks = {
@@ -188,9 +218,16 @@ class Store {
 	private hydrating = true
 	constructor(hydrate: Hydrate = []) {
 		for (const entry of hydrate) {
-			const [symbol, keyOrEvent, event] = entry
-			if (symbol.type === 'family') this.send(symbol, keyOrEvent, event)
-			else this.send(symbol, keyOrEvent)
+			const [symbol, ...rest] = entry
+			const key = symbol.type === 'family' ? rest[0] : undefined
+			const args = symbol.type === 'family' ? rest.slice(1) : rest
+			this.sendInstance(
+				this.getInstance(
+					symbol as AtomSymbol<any, any> | AtomFamily<any, any, any>,
+					key,
+				),
+				args,
+			)
 		}
 		if (this.tasks) this.flush()
 		this.hydrating = false
@@ -206,8 +243,8 @@ class Store {
 		if (!this.hydrating) queueMicrotask(this.flush.bind(this))
 		return this.tasks
 	}
-	private getInstance<S, Key, E>(
-		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+	private getInstance<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
@@ -234,7 +271,9 @@ class Store {
 		}
 		return res
 	}
-	private createInstance<S, E>(symbol: AtomSymbol<S, E>): Instance<S> {
+	private createInstance<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+	): Instance<S> {
 		return {
 			symbol,
 			familyEntries: [],
@@ -442,8 +481,8 @@ class Store {
 				case 'derived': {
 					const previousDeps = instance.deps
 					instance.deps = new Set()
-					const read = (<T, Key, Event>(
-						target: AtomFamily<T, Key, Event> | AtomSymbol<T, Event>,
+					const read = (<T, Key, Args extends unknown[]>(
+						target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
 						key?: Key,
 					) => {
 						const dep = this.getInstance(target, key)
@@ -463,15 +502,21 @@ class Store {
 		}
 		return instance.value
 	}
-	peek<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key): S
-	peek<S, E>(symbol: AtomSymbol<S, E>): S
-	peek<S, Key, E>(symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>, key?: Key) {
+	peek<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+	): S
+	peek<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>): S
+	peek<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
+		key?: Key,
+	) {
 		const instance = this.getInstance(symbol, key)
 		return this.peekInstance(instance)
 	}
 	/** Setters read the pending state; public reads keep the committed snapshot. */
-	private readPending: Read = <S, Key, E>(
-		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+	private readPending: Read = <S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		key?: Key,
 	): S => {
 		const instance = this.getInstance(symbol, key)
@@ -483,10 +528,11 @@ class Store {
 				: this.peekInstance(instance)
 		return instance.symbol.getter(this.readPending)
 	}
-	private sendInstance<S, E>(instance: Instance<S>, event: E) {
+	private sendInstance<S>(instance: Instance<S>, args: readonly unknown[]) {
 		const { symbol } = instance
 		switch (symbol.type) {
 			case 'primitive': {
+				const event = args[0]
 				const primitives = this.mountWrites ?? this.getTasks().primitives
 				const next = isFunction(event)
 					? event(this.readPending(symbol))
@@ -497,23 +543,29 @@ class Store {
 				return
 			}
 			case 'derived': {
-				symbol.setter(this.readPending, this.send.bind(this), event)
+				symbol.setter(this.readPending, this.send.bind(this), ...args)
 				return
 			}
 			default:
 				return exhaustive(symbol)
 		}
 	}
-	send<S, Key, E>(symbol: AtomFamily<S, Key, E>, key: Key, next: E): void
-	send<S, E>(symbol: AtomSymbol<S, E>, next: E): void
-	send<S, Key, E>(
-		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
-		keyOrNext: Key | E,
-		next?: E,
+	send<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+		...args: Args
+	): void
+	send<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+		...args: Args
+	): void
+	send(
+		symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
+		...rest: unknown[]
 	): void {
-		const instance = this.getInstance(symbol, keyOrNext as any)
-		const event = symbol.type === 'family' ? next! : (keyOrNext as E)
-		this.sendInstance(instance, event)
+		const key = symbol.type === 'family' ? rest[0] : undefined
+		const args = symbol.type === 'family' ? rest.slice(1) : rest
+		this.sendInstance(this.getInstance(symbol, key), args)
 	}
 	private subscribeInstance<S>(instance: Instance<S>, notify: () => void) {
 		const subscribed = !instance.subscriptions.has(notify)
@@ -528,30 +580,35 @@ class Store {
 			if (instance.subscriptions.delete(notify)) this.release(instance)
 		}
 	}
-	resolve<S, Key, E>(
-		symbol: AtomFamily<S, Key, E>,
+	resolve<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
 		key: Key,
-	): ResolvedAtom<S, E>
-	resolve<S, E>(symbol: AtomSymbol<S, E>): ResolvedAtom<S, E>
-	resolve<S, Key, E>(
-		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+	): ResolvedAtom<S, Args>
+	resolve<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+	): ResolvedAtom<S, Args>
+	resolve<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		key?: Key,
-	): ResolvedAtom<S, E> {
+	): ResolvedAtom<S, Args> {
 		const instance = this.getInstance(symbol, key)
 		return {
 			peek: () => this.peekInstance(instance),
-			send: (event) => this.sendInstance(instance, event),
+			send: (...args) => this.sendInstance(instance, args),
 			subscribe: (notify) => this.subscribeInstance(instance, notify),
 		}
 	}
-	subscribe<S, Key, E>(
-		symbol: AtomFamily<S, Key, E>,
+	subscribe<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
 		key: Key,
 		notify: () => void,
 	): () => void
-	subscribe<S, E>(symbol: AtomSymbol<S, E>, notify: () => void): () => void
-	subscribe<S, Key, E>(
-		symbol: AtomFamily<S, Key, E> | AtomSymbol<S, E>,
+	subscribe<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+		notify: () => void,
+	): () => void
+	subscribe<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		keyOrNotify: Key | (() => void),
 		notify?: () => void,
 	): () => void {

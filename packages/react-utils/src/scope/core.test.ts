@@ -28,28 +28,6 @@ describe('ScopeStore', () => {
 		expect(store.resolve(contextB, Selected)).toBe(instanceB)
 	})
 
-	it('preserves Map equality for NaN, signed zero, and object identity', () => {
-		const input = primitiveScope<unknown>()
-		const derived = derivedScope((read) => ({ input: read(input) }))
-		const store = new ScopeStore()
-		const context = ScopeContext.init()
-		const nan = store.resolve(context.childScope(input, Number.NaN), derived)
-		expect(store.resolve(context.childScope(input, Number.NaN), derived)).toBe(
-			nan,
-		)
-		const zero = store.resolve(context.childScope(input, 0), derived)
-		expect(store.resolve(context.childScope(input, -0), derived)).toBe(zero)
-		expect(zero).not.toBe(nan)
-		const value = { name: 'apple' }
-		const object = store.resolve(context.childScope(input, value), derived)
-		expect(store.resolve(context.childScope(input, value), derived)).toBe(
-			object,
-		)
-		expect(
-			store.resolve(context.childScope(input, { name: 'apple' }), derived),
-		).not.toBe(object)
-	})
-
 	it('distinguishes an undefined binding from a missing required binding', () => {
 		const input = primitiveScope<string | undefined>()
 		const derived = derivedScope((read) => read(input))

@@ -51,13 +51,13 @@ describe('coreMachineAtom', () => {
 		expect(store.peek(machine.can, RESET)).toBe(true)
 		expect(store.peek(machine.next, RESET)).toBe(0)
 		expect(store.peek(machine)).toBe(5)
-		store.send(machine.next, RESET, undefined)
+		store.send(machine.next, RESET)
 		await flushMicrotask()
 		expect(store.peek(machine)).toBe(0)
 		expect(store.peek(machine.can, RESET)).toBe(false)
 	})
 	it.each(['can', 'next'] as const)(
-		'forwards void events from %s to the machine',
+		'dispatches from %s without setter arguments',
 		async (family) => {
 			const sideEffect = primitiveAtom(0)
 			const machine = coreMachineAtom<{ SET: number }, number>(
@@ -71,9 +71,9 @@ describe('coreMachineAtom', () => {
 			const store = createStore()
 
 			if (family === 'can') {
-				store.send(machine.can, tag('SET', 2), undefined)
+				store.send(machine.can, tag('SET', 2))
 			} else {
-				store.send(machine.next, tag('SET', 2), undefined)
+				store.send(machine.next, tag('SET', 2))
 			}
 			await flushMicrotask()
 

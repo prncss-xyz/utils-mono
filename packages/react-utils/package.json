@@ -17,6 +17,7 @@
 		"build": "vp pack",
 		"dev": "vp pack --watch",
 		"test": "vp test",
+		"tsc": "vp run vp:tsc",
 		"check": "vp check",
 		"prepublishOnly": "vp run build",
 		"storybook": "storybook dev",

@@ -217,9 +217,9 @@ describe('Store', () => {
 			write(count, read(count) + 1),
 		)
 		const store = createStore()
-		store.send(increment, undefined)
+		store.send(increment)
 		store.send(count, 10)
-		store.send(increment, undefined)
+		store.send(increment)
 		await flushMicrotask()
 		expect(store.peek(count)).toBe(11)
 	})
@@ -597,19 +597,15 @@ describe('Store', () => {
 			}
 		}
 		const source = primitiveAtom(1, { effect: effect('source') })
-		const left = derivedAtom<number, never>(
-			(read) => read(source),
-			() => {},
-			{ effect: effect('left') },
-		)
-		const right = derivedAtom<number, never>(
-			(read) => read(source),
-			() => {},
-			{ effect: effect('right') },
-		)
-		const leaf = derivedAtom<number, never>(
+		const left = derivedAtom<number>((read) => read(source), undefined, {
+			effect: effect('left'),
+		})
+		const right = derivedAtom<number>((read) => read(source), undefined, {
+			effect: effect('right'),
+		})
+		const leaf = derivedAtom<number>(
 			(read) => read(left) + read(right),
-			() => {},
+			undefined,
 			{ effect: effect('leaf') },
 		)
 		const store = createStore()
@@ -740,13 +736,9 @@ describe('Store', () => {
 		const sourceEffect = vi.fn(() => cleanup)
 		const source = primitiveAtom(1, { effect: sourceEffect })
 		let remount = () => {}
-		const consumer = derivedAtom<number, never>(
-			(read) => read(source),
-			() => {},
-			{
-				effect: () => () => remount(),
-			},
-		)
+		const consumer = derivedAtom<number>((read) => read(source), undefined, {
+			effect: () => () => remount(),
+		})
 		const store = createStore()
 		const unsubscribe = store.subscribe(consumer, () => {})
 		let unsubscribeAgain = () => {}
@@ -926,19 +918,15 @@ describe('Store', () => {
 				}
 			}
 		const source = primitiveAtom(0, { effect: effect('source') })
-		const left = derivedAtom<number, never>(
-			(read) => read(source) + 1,
-			() => {},
-			{ effect: effect('left') },
-		)
-		const right = derivedAtom<number, never>(
-			(read) => read(source) + 2,
-			() => {},
-			{ effect: effect('right') },
-		)
-		const leaf = derivedAtom<number, never>(
+		const left = derivedAtom<number>((read) => read(source) + 1, undefined, {
+			effect: effect('left'),
+		})
+		const right = derivedAtom<number>((read) => read(source) + 2, undefined, {
+			effect: effect('right'),
+		})
+		const leaf = derivedAtom<number>(
 			(read) => read(left) + read(right),
-			() => {},
+			undefined,
 			{ effect: effect('leaf') },
 		)
 		const store = createStore()
@@ -972,18 +960,14 @@ describe('Store', () => {
 				}
 			},
 		})
-		const parity = derivedAtom<number, never>(
-			(read) => read(source) % 2,
-			() => {},
-			{
-				effect: (next) => {
-					events.push(`run:parity:${next}`)
-					return () => {
-						events.push(`cleanup:parity:${next}`)
-					}
-				},
+		const parity = derivedAtom<number>((read) => read(source) % 2, undefined, {
+			effect: (next) => {
+				events.push(`run:parity:${next}`)
+				return () => {
+					events.push(`cleanup:parity:${next}`)
+				}
 			},
-		)
+		})
 		const store = createStore()
 		const unsubscribe = store.subscribe(parity, () => {})
 		await flushMicrotask()
@@ -1007,19 +991,15 @@ describe('Store', () => {
 				}
 			},
 		})
-		const consumer = derivedAtom<number, never>(
-			(read) => read(source),
-			() => {},
-			{
-				effect: (next) => {
-					events.push(`run:consumer:${next}`)
-					return () => {
-						events.push(`cleanup:consumer:${next}`)
-						unsubscribe()
-					}
-				},
+		const consumer = derivedAtom<number>((read) => read(source), undefined, {
+			effect: (next) => {
+				events.push(`run:consumer:${next}`)
+				return () => {
+					events.push(`cleanup:consumer:${next}`)
+					unsubscribe()
+				}
 			},
-		)
+		})
 		const store = createStore()
 		unsubscribe = store.subscribe(consumer, () => {})
 		await flushMicrotask()

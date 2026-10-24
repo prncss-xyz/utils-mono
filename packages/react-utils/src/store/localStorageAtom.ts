@@ -7,17 +7,17 @@ export function localStorageAtom<T extends string = string>(
 	key: string,
 	parse: (value: string | null) => T,
 	serialize?: (value: T) => string,
-): AtomSymbol<T, Update<T>>
+): AtomSymbol<T, [Update<T>]>
 export function localStorageAtom<T>(
 	key: string,
 	parse: (value: string | null) => T,
 	serialize: (value: T) => string,
-): AtomSymbol<T, Update<T>>
+): AtomSymbol<T, [Update<T>]>
 export function localStorageAtom<T>(
 	key: string,
 	parse: (value: string | null) => T,
 	serialize: (value: T) => string = (value: any) => value,
-): AtomSymbol<T, Update<T>> {
+): AtomSymbol<T, [Update<T>]> {
 	const getSnapshot = () => {
 		try {
 			return localStorage.getItem(key)

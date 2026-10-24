@@ -12,9 +12,12 @@ import {
 	type Write,
 } from '../store'
 
-export type PreviewAtom<Value, Event> = AtomSymbol<Value, Event> & {
-	can: AtomFamily<boolean, Event, void>
-	next: AtomFamily<Value, Event, void>
+export type PreviewAtom<Value, Args extends [unknown]> = AtomSymbol<
+	Value,
+	Args
+> & {
+	can: AtomFamily<boolean, Args[0], []>
+	next: AtomFamily<Value, Args[0], []>
 }
 
 type Transition<State, Event> = (
@@ -25,7 +28,7 @@ type Transition<State, Event> = (
 ) => State
 
 function preview<State, Event>(
-	atom: AtomSymbol<State, Event>,
+	atom: AtomSymbol<State, any>,
 	transition: Transition<State, Event>,
 	event: Event,
 	read: Read,
@@ -42,9 +45,9 @@ function preview<State, Event>(
 function canAtom<State, Event>(
 	atom: AtomSymbol<State, any>,
 	transition: Transition<State, Event>,
-	dispatch: AtomSymbol<any, Event>,
+	dispatch: AtomSymbol<any, [Event]>,
 ) {
-	return atomFamily<boolean, Event, void>(
+	return atomFamily<boolean, Event, []>(
 		(event) =>
 			derivedAtom(
 				(read) => preview(atom, transition, event, read).changed,
@@ -58,9 +61,9 @@ function nextAtom<State, Event, Value>(
 	atom: AtomSymbol<State, any>,
 	transition: Transition<State, Event>,
 	project: (state: State, read: Read) => Value,
-	dispatch: AtomSymbol<any, Event>,
+	dispatch: AtomSymbol<any, [Event]>,
 ) {
-	return atomFamily<Value, Event, void>(
+	return atomFamily<Value, Event, []>(
 		(event) =>
 			derivedAtom(
 				(read) => project(preview(atom, transition, event, read).next, read),
@@ -70,7 +73,7 @@ function nextAtom<State, Event, Value>(
 	)
 }
 
-export type MachineAtom<E, R> = PreviewAtom<R, Sendable<E> | Reset>
+export type MachineAtom<E, R> = PreviewAtom<R, [Sendable<E> | Reset]>
 
 /**
  * Creates a writable store symbol backed by a state-machine transition.

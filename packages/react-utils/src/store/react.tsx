@@ -31,8 +31,8 @@ export function StoreProvider({
 	)
 }
 
-function useResolvedAtom<V, Key, E>(
-	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+function useResolvedAtom<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>,
 	key?: Key,
 ) {
 	const store = useStore()
@@ -41,42 +41,48 @@ function useResolvedAtom<V, Key, E>(
 		: store.resolve(atom)
 }
 
-function useResolvedAtomValue<V, E>(atom: ResolvedAtom<V, E>) {
+function useResolvedAtomValue<V, Args extends unknown[]>(
+	atom: ResolvedAtom<V, Args>,
+) {
 	return useSyncExternalStore(atom.subscribe, atom.peek, atom.peek)
 }
 
-export function useAtomValue<V, Key, E>(
-	atom: AtomFamily<V, Key, E>,
+export function useAtomValue<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args>,
 	key: Key,
 ): V
-export function useAtomValue<V, E>(atom: AtomSymbol<V, E>): V
-export function useAtomValue<V, Key, E>(
-	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+export function useAtomValue<V, Args extends unknown[]>(
+	atom: AtomSymbol<V, Args>,
+): V
+export function useAtomValue<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>,
 	key?: Key,
 ) {
 	return useResolvedAtomValue(useResolvedAtom(atom, key))
 }
 
-export function useSetAtom<V, Key, E>(
-	atom: AtomFamily<V, Key, E>,
+export function useSetAtom<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args>,
 	key: Key,
-): (event: E) => void
-export function useSetAtom<V, E>(atom: AtomSymbol<V, E>): (event: E) => void
-export function useSetAtom<V, Key, E>(
-	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+): (...args: Args) => void
+export function useSetAtom<V, Args extends unknown[]>(
+	atom: AtomSymbol<V, Args>,
+): (...args: Args) => void
+export function useSetAtom<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>,
 	key?: Key,
 ) {
 	const store = useStore()
 	const resolvedAtomRef = useRef<
 		| {
 				store: ReturnType<typeof createStore>
-				atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>
+				atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>
 				key: Key | undefined
-				resolved: ResolvedAtom<V, E>
+				resolved: ResolvedAtom<V, Args>
 		  }
 		| undefined
 	>(undefined)
-	return (event: E) => {
+	return (...args: Args) => {
 		let cached = resolvedAtomRef.current
 		if (
 			!cached ||
@@ -89,19 +95,19 @@ export function useSetAtom<V, Key, E>(
 			cached = { store, atom, key, resolved }
 			resolvedAtomRef.current = cached
 		}
-		cached.resolved.send(event)
+		cached.resolved.send(...args)
 	}
 }
 
-export function useAtom<V, Key, E>(
-	atom: AtomFamily<V, Key, E>,
+export function useAtom<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args>,
 	key: Key,
-): readonly [V, (event: E) => void]
-export function useAtom<V, E>(
-	atom: AtomSymbol<V, E>,
-): readonly [V, (event: E) => void]
-export function useAtom<V, Key, E>(
-	atom: AtomFamily<V, Key, E> | AtomSymbol<V, E>,
+): readonly [V, (...args: Args) => void]
+export function useAtom<V, Args extends unknown[]>(
+	atom: AtomSymbol<V, Args>,
+): readonly [V, (...args: Args) => void]
+export function useAtom<V, Key, Args extends unknown[]>(
+	atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>,
 	key?: Key,
 ) {
 	const resolvedAtom = useResolvedAtom(atom, key)

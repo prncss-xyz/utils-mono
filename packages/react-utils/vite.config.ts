@@ -61,18 +61,24 @@ export default defineConfig({
 		},
 		exports: true,
 	},
+	run: {
+		tasks: {
+			'vp:tsc': 'tsc --noEmit',
+		},
+	},
 	test: {
-		projects: canRunBrowserTests
-			? [{ extends: true, ...storybookTestProject }]
-			: [
-					{
-						test: {
-							environment: 'node',
-							globals: true,
-							include: ['**/*.test.ts'],
-							name: 'unit',
-						},
-					},
-				],
+		projects: [
+			{
+				test: {
+					environment: 'node',
+					globals: true,
+					include: ['**/*.test.ts'],
+					name: 'unit',
+				},
+			},
+			...(canRunBrowserTests
+				? [{ extends: true, ...storybookTestProject }]
+				: []),
+		],
 	},
 })
