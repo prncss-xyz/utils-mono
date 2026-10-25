@@ -12,6 +12,20 @@ function call(cb: () => void) {
 	cb()
 }
 
+function runEach<T>(items: Iterable<T>, run: (item: T) => void) {
+	let failed = false
+	let error: unknown
+	for (const item of items) {
+		try {
+			run(item)
+		} catch (thrown) {
+			failed = true
+			error = thrown
+		}
+	}
+	if (failed) throw error
+}
+
 export const TRANSIENT = -1
 
 type FamilyEntry = {
@@ -229,6 +243,7 @@ class Store {
 	private mountWrites: Map<Instance<any>, any> | undefined
 	private flushingMounts: Set<Instance<any>> | undefined
 	private flushingEffects: Set<Instance<any>> | undefined
+	private activeLifecycleErrorReporter: ((error: unknown) => void) | undefined
 	private hydrating = true
 	constructor(hydrate: Hydrate = []) {
 		for (const entry of hydrate) {
@@ -321,8 +336,24 @@ class Store {
 		if (instance.symbol.type === 'derived') instance.dirty = true
 		if (instance.mountCount > 0) this.enqueueEffect(instance)
 		// A subscriber can recompute and re-add itself while being notified.
-		for (const sub of Array.from(instance.subs)) this.notify(sub)
-		instance.subscriptions.forEach(call)
+		let failed = false
+		let error: unknown
+		const attempt = (run: () => void) => {
+			try {
+				run()
+			} catch (thrown) {
+				if (this.activeLifecycleErrorReporter) {
+					this.activeLifecycleErrorReporter(thrown)
+				} else {
+					failed = true
+					error = thrown
+				}
+			}
+		}
+		for (const sub of Array.from(instance.subs)) attempt(() => this.notify(sub))
+		for (const subscription of Array.from(instance.subscriptions))
+			attempt(() => call(subscription))
+		if (failed) throw error
 	}
 	private retain<S>(instance: Instance<S>) {
 		if (instance.mountCount++ > 0) return
@@ -350,6 +381,13 @@ class Store {
 			else cleanup()
 		}
 	}
+	private reportLifecycleFailure(error: unknown) {
+		if (this.activeLifecycleErrorReporter) {
+			this.activeLifecycleErrorReporter(error)
+			return
+		}
+		throw error
+	}
 	private release<S>(instance: Instance<S>) {
 		if (--instance.mountCount > 0) return
 		// Detach ownership before user callbacks can change dependencies or remount.
@@ -361,11 +399,35 @@ class Store {
 		instance.effectCleanup = undefined
 		instance.effectValue = undefined
 		instance.effectActive = false
-		cleanup?.()
-		lifecycle?.cleanup?.()
+		let failed = false
+		let error: unknown
+		const attempt = (run: () => void) => {
+			try {
+				run()
+			} catch (thrown) {
+				if (this.activeLifecycleErrorReporter)
+					this.activeLifecycleErrorReporter(thrown)
+				else {
+					failed = true
+					error = thrown
+				}
+			}
+		}
+		attempt(() => cleanup?.())
+		attempt(() => lifecycle?.cleanup?.())
 		if (instance.familyEntries.length > 0)
 			this.getTasks().unmountedFamilyEntries.add(instance)
-		for (const dep of mountedDeps) this.release(dep)
+		try {
+			runEach(mountedDeps, (dep) => this.release(dep))
+		} catch (thrown) {
+			if (this.activeLifecycleErrorReporter)
+				this.activeLifecycleErrorReporter(thrown)
+			else {
+				failed = true
+				error = thrown
+			}
+		}
+		if (failed) throw error
 	}
 	private syncMountedDeps<S>(instance: Instance<S>) {
 		for (const dep of instance.deps) {
@@ -375,11 +437,24 @@ class Store {
 			this.retain(dep)
 		}
 		// Releasing a dependency can run user cleanup that changes this graph.
+		let failed = false
+		let error: unknown
 		for (const dep of Array.from(instance.mountedDeps)) {
-			if (instance.mountCount === 0) return
+			if (instance.mountCount === 0) break
 			if (instance.deps.has(dep)) continue
-			if (instance.mountedDeps.delete(dep)) this.release(dep)
+			if (!instance.mountedDeps.delete(dep)) continue
+			try {
+				this.release(dep)
+			} catch (thrown) {
+				if (this.activeLifecycleErrorReporter)
+					this.activeLifecycleErrorReporter(thrown)
+				else {
+					failed = true
+					error = thrown
+				}
+			}
 		}
+		if (failed) throw error
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
@@ -404,15 +479,36 @@ class Store {
 		this.tasks = undefined
 		this.flushingMounts = mounts
 		this.flushingEffects = effects
+		const previousReporter = this.activeLifecycleErrorReporter
+		let failed = false
+		let error: unknown
+		const attempt = (run: () => void) => {
+			try {
+				run()
+			} catch (thrown) {
+				failed = true
+				error = thrown
+			}
+		}
+		this.activeLifecycleErrorReporter = (thrown) => {
+			failed = true
+			error = thrown
+		}
 		const applyUpdates = (pending: Map<Instance<any>, any>) => {
 			while (pending.size > 0) {
 				const updates = [...pending]
 				pending.clear()
-				for (const [instance, next] of updates)
-					if (!Object.is(next, instance.value)) {
-						instance.value = next
-						this.notify(instance)
+				for (const [instance, next] of updates) {
+					try {
+						if (!Object.is(next, instance.value)) {
+							instance.value = next
+							this.notify(instance)
+						}
+					} catch (thrown) {
+						failed = true
+						error = thrown
 					}
+				}
 			}
 		}
 		const mount = (instance: Instance<any>) => {
@@ -420,66 +516,82 @@ class Store {
 				mounts.delete(instance)
 				return
 			}
+			mounts.delete(instance)
 			this.peekInstance(instance)
 			for (const dep of instance.deps) mount(dep)
 			mounts.delete(instance)
 			this.mountWrites = mountWrites
 			try {
 				this.mount(instance)
+			} catch (thrown) {
+				failed = true
+				error = thrown
 			} finally {
 				this.mountWrites = undefined
 			}
-			// Mount writes must settle before consumers mount or effects run.
-			applyUpdates(mountWrites)
+			attempt(() => applyUpdates(mountWrites))
 		}
-		applyUpdates(primitives)
-		do {
-			applyUpdates(mountWrites)
-			for (const instance of effects)
-				if (instance.mountCount > 0) this.peekInstance(instance)
-			for (const instance of mounts) mount(instance)
-		} while (mountWrites.size > 0 || mounts.size > 0)
-		this.flushingMounts = undefined
-		const visited = new Set<Instance<any>>()
-		const transitions: { instance: Instance<any>; next: any }[] = []
-		const collect = (instance: Instance<any>) => {
-			if (visited.has(instance) || instance.mountCount === 0) return
-			visited.add(instance)
-			const next = this.peekInstance(instance)
-			for (const dep of instance.deps) collect(dep)
-			if (
-				effects.has(instance) &&
-				(!instance.effectActive || !Object.is(next, instance.effectValue))
-			)
-				transitions.push({ instance, next })
-		}
-		for (const instance of effects) collect(instance)
-		this.flushingEffects = undefined
-		// Release consumers before the resources provided by their dependencies.
-		for (let index = transitions.length - 1; index >= 0; index--) {
-			const { instance } = transitions[index]!
-			if (instance.mountCount === 0) continue
-			const cleanup = instance.effectCleanup
-			instance.effectCleanup = undefined
-			cleanup?.()
-		}
-		// Recreate dependency resources before their consumers run.
-		for (const { instance, next } of transitions)
-			if (instance.mountCount > 0)
-				this.runEffect(instance, instance.symbol.effect, next)
-		let commandFailed = false
-		let commandError: unknown
-		const send = this.send.bind(this)
 		try {
-			for (const { setter, args } of commands) {
-				try {
-					setter(this.readPending, send, ...args)
-				} catch (error) {
-					commandFailed = true
-					commandError = error
-				}
+			try {
+				applyUpdates(primitives)
+				do {
+					applyUpdates(mountWrites)
+					for (const instance of effects)
+						if (instance.mountCount > 0) this.peekInstance(instance)
+					runEach(Array.from(mounts), mount)
+				} while (mountWrites.size > 0 || mounts.size > 0)
+			} catch (thrown) {
+				failed = true
+				error = thrown
+			} finally {
+				this.flushingMounts = undefined
 			}
+			const visited = new Set<Instance<any>>()
+			const transitions: { instance: Instance<any>; next: any }[] = []
+			const collect = (instance: Instance<any>) => {
+				if (visited.has(instance) || instance.mountCount === 0) return
+				visited.add(instance)
+				const next = this.peekInstance(instance)
+				for (const dep of instance.deps) collect(dep)
+				if (
+					effects.has(instance) &&
+					(!instance.effectActive || !Object.is(next, instance.effectValue))
+				)
+					transitions.push({ instance, next })
+			}
+			try {
+				runEach(effects, collect)
+			} catch (thrown) {
+				failed = true
+				error = thrown
+			} finally {
+				this.flushingEffects = undefined
+			}
+			for (let index = transitions.length - 1; index >= 0; index--) {
+				const instance = transitions[index]!.instance
+				if (instance.mountCount === 0) continue
+				const cleanup = instance.effectCleanup
+				instance.effectCleanup = undefined
+				attempt(() => cleanup?.())
+			}
+			for (const { instance, next } of transitions)
+				attempt(() => {
+					if (instance.mountCount > 0)
+						this.runEffect(instance, instance.symbol.effect, next)
+				})
+			attempt(() =>
+				runEach(commands, ({ setter, args }) => {
+					try {
+						setter(this.readPending, this.send.bind(this), ...args)
+					} catch (thrown) {
+						failed = true
+						error = thrown
+					}
+				}),
+			)
 		} finally {
+			this.flushingMounts = undefined
+			this.flushingEffects = undefined
 			for (const instance of unmountedFamilyEntries) {
 				if (instance.mountCount > 0) continue
 				for (const familyEntry of instance.familyEntries) {
@@ -498,9 +610,12 @@ class Store {
 				}
 				instance.familyEntries = []
 			}
+			this.mountWrites = undefined
+			this.activeLifecycleErrorReporter = previousReporter
 		}
-		if (commandFailed) throw commandError
+		if (failed) throw error
 	}
+
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance
 		if (instance.dirty) {

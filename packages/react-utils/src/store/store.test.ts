@@ -1328,6 +1328,582 @@ describe('mount scheduling', () => {
 	})
 })
 
+describe('lifecycle error isolation', () => {
+	it('continues fresh mounts and effects after effect-prepass dependency cleanup throws', async () => {
+		const selector = primitiveAtom(true)
+		const oldDep = primitiveAtom(1, {
+			effect: () => () => {
+				order.push('old cleanup')
+				throw new Error('cleanup failed')
+			},
+		})
+		const nextDep = primitiveAtom(2, {
+			onMount: () => {
+				order.push('fresh mount')
+			},
+			effect: () => {
+				order.push('fresh effect')
+			},
+		})
+		const order: string[] = []
+		const consumer = derivedAtom(
+			(get) => (get(selector) ? get(oldDep) : get(nextDep)),
+			undefined,
+			{ effect: () => {} },
+		)
+		const store = createStore()
+		const release = store.subscribe(consumer, vi.fn())
+		await flushMicrotask()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		try {
+			store.send(selector, false)
+			const flush = queued.shift()
+			expect(flush).toBeTypeOf('function')
+			expect(() => flush!()).toThrow('cleanup failed')
+			expect(order).toEqual(['old cleanup', 'fresh mount', 'fresh effect'])
+			release()
+		} finally {
+			queue.mockRestore()
+		}
+	})
+
+	it('applies writes from a throwing mount and remounts it only after release', () => {
+		const written = primitiveAtom(0)
+		const marker = new Error('mount failed')
+		let calls = 0
+		const atom = primitiveAtom(0, {
+			onMount: (_get, set) => {
+				calls++
+				set(written, calls)
+				throw marker
+			},
+		})
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const release = store.subscribe(atom, vi.fn())
+		expect(() => queued.shift()!()).toThrow(marker)
+		expect(store.peek(written)).toBe(1)
+		release()
+		const remount = store.subscribe(atom, vi.fn())
+		expect(() => queued.shift()!()).toThrow(marker)
+		expect(calls).toBe(2)
+		remount()
+		queue.mockRestore()
+	})
+
+	it('applies throwing consumer mount writes and allows an independent later batch', () => {
+		const source = primitiveAtom(0)
+		const written = primitiveAtom(0)
+		let calls = 0
+		const consumer = derivedAtom((get) => get(source), undefined, {
+			onMount: (_get, set) => {
+				calls++
+				set(written, calls)
+				throw 'consumer mount failed'
+			},
+		})
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		store.subscribe(consumer, vi.fn())
+		expect(() => queued.shift()!()).toThrow('consumer mount failed')
+		expect(store.peek(written)).toBe(1)
+		store.subscribe(primitiveAtom(1), vi.fn())
+		expect(() => queued.shift()!()).not.toThrow()
+		expect(calls).toBe(1)
+		queue.mockRestore()
+	})
+
+	it('continues all mounts and preserves the last undefined thrown value', () => {
+		const seen: number[] = []
+		const first = primitiveAtom(0, {
+			onMount: () => {
+				seen.push(1)
+				throw 'first'
+			},
+		})
+		const last = primitiveAtom(0, {
+			onMount: () => {
+				seen.push(2)
+				throw undefined
+			},
+		})
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		store.subscribe(first, vi.fn())
+		store.subscribe(last, vi.fn())
+		let thrown: unknown = 'not thrown'
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBeUndefined()
+		expect(seen).toEqual([1, 2])
+		queue.mockRestore()
+	})
+
+	it('does not let an earlier obsolete-dependency cleanup overwrite a later effect error', () => {
+		const selector = primitiveAtom(true)
+		const oldDep = primitiveAtom(1, {
+			effect: () => () => {
+				throw undefined
+			},
+		})
+		const nextDep = primitiveAtom(2)
+		const consumer = derivedAtom(
+			(get) => (get(selector) ? get(oldDep) : get(nextDep)),
+			undefined,
+			{
+				effect: () => () => {
+					throw 'first'
+				},
+			},
+		)
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const release = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		store.send(selector, false)
+		let thrown: unknown
+		let failed = false
+		try {
+			queued.shift()!()
+		} catch (error) {
+			failed = true
+			thrown = error
+		}
+		expect(failed).toBe(true)
+		expect(thrown).toBe('first')
+		expect(release).toThrow('first')
+		queue.mockRestore()
+	})
+
+	it('keeps the last command-era dependency cleanup error after an earlier command throws', () => {
+		const selector = primitiveAtom(true)
+		const first = commandAtom(() => {
+			throw new Error('first command')
+		})
+		const oldDep = primitiveAtom(1, {
+			effect: () => () => {
+				throw undefined
+			},
+		})
+		const nextDep = primitiveAtom(2)
+		const consumer = derivedAtom((get) =>
+			get(selector) ? get(oldDep) : get(nextDep),
+		)
+		const peekConsumer = commandAtom((read) => read(consumer))
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const release = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		store.send(selector, false)
+		store.send(first)
+		store.send(peekConsumer)
+		let thrown: unknown = 'not thrown'
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBeUndefined()
+		release()
+		queue.mockRestore()
+	})
+
+	it('preserves later cleanup failures after an earlier effect failure', () => {
+		const selector = primitiveAtom(true)
+		const oldDep = primitiveAtom(1, {
+			effect: () => () => {
+				throw undefined
+			},
+		})
+		const nextDep = primitiveAtom(2)
+		const seen: string[] = []
+		const consumer = derivedAtom(
+			(get) => (get(selector) ? get(oldDep) : get(nextDep)),
+			undefined,
+			{
+				effect: () => () => {
+					seen.push('effect cleanup')
+					throw 'effect error'
+				},
+			},
+		)
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const release = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		store.send(selector, false)
+		let thrown: unknown = 'not thrown'
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBe('effect error')
+		expect(seen).toEqual(['effect cleanup'])
+		expect(release).toThrow('effect error')
+		queue.mockRestore()
+	})
+
+	it('handles 20,000 throwing mounts and dependency cleanups iteratively', () => {
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		let mountCallbacks = 0
+		const mounts = Array.from({ length: 20_000 }, () =>
+			primitiveAtom(0, {
+				onMount: () => {
+					mountCallbacks++
+					throw 'counted'
+				},
+			}),
+		)
+		const releases = mounts.map((atom) => store.subscribe(atom, vi.fn()))
+		let thrown: unknown
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBe('counted')
+		expect(mountCallbacks).toBe(20_000)
+		for (const release of releases) release()
+
+		const deps = Array.from({ length: 20_000 }, (_, index) =>
+			primitiveAtom(index, {
+				effect: () => () => {
+					throw index
+				},
+			}),
+		)
+		const consumer = derivedAtom((get) =>
+			deps.reduce((sum, dep) => sum + get(dep), 0),
+		)
+		const releaseConsumer = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		let cleanupError: unknown
+		try {
+			releaseConsumer()
+		} catch (error) {
+			cleanupError = error
+		}
+		expect(cleanupError).toBe(19_999)
+		queue.mockRestore()
+	})
+
+	it('runs family mount cleanup, releases deps, and evicts despite throwing effect cleanup', async () => {
+		const events: string[] = []
+		const dep = primitiveAtom(1, {
+			effect: () => () => {
+				events.push('dep cleanup')
+			},
+		})
+		let creates = 0
+		const mountCleanup = vi.fn(() => {
+			events.push('mount cleanup')
+		})
+		const members = atomFamily((key: string) => {
+			creates++
+			return derivedAtom((get) => get(dep) + key.length, undefined, {
+				onMount: () => mountCleanup,
+				effect: () => () => {
+					events.push('effect cleanup')
+					throw 'effect failed'
+				},
+			})
+		})
+		const store = createStore()
+		const release = store.subscribe(members, 'x', vi.fn())
+		await flushMicrotask()
+		expect(() => release()).toThrow('effect failed')
+		expect(mountCleanup).toHaveBeenCalledOnce()
+		expect(events).toEqual(['effect cleanup', 'mount cleanup', 'dep cleanup'])
+		await flushMicrotask()
+		store.peek(members, 'x')
+		expect(creates).toBe(2)
+	})
+
+	it('continues dropping both dependencies and committing queued primitive updates', () => {
+		const selector = primitiveAtom(true)
+		const a = primitiveAtom(1, {
+			effect: () => () => {
+				throw 'A cleanup'
+			},
+		})
+		const bCleaned = vi.fn()
+		const b = primitiveAtom(2, { effect: () => () => bCleaned() })
+		const unrelated = primitiveAtom(0)
+		const consumer = derivedAtom(
+			(get) => (get(selector) ? get(a) + get(b) : 0),
+			undefined,
+			{ effect: () => {} },
+		)
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		store.send(selector, false)
+		store.send(unrelated, 1)
+		let thrown: unknown
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBe('A cleanup')
+		expect(bCleaned).toHaveBeenCalledOnce()
+		expect(store.peek(unrelated)).toBe(1)
+		queue.mockRestore()
+	})
+
+	it('reentrant dependency cleanup does not double-release through unmount and remount', () => {
+		const selector = primitiveAtom(true)
+		const events: string[] = []
+		let releaseConsumer: (() => void) | undefined
+		let remount: (() => void) | undefined
+		const oldDep = primitiveAtom(1, {
+			effect: () => () => {
+				events.push('old cleanup')
+				releaseConsumer?.()
+				releaseConsumer = undefined
+				remount = store.subscribe(consumer, vi.fn())
+			},
+		})
+		const nextDep = primitiveAtom(2, {
+			effect: () => () => {
+				events.push('next cleanup')
+			},
+		})
+		const consumer = derivedAtom((get) =>
+			get(selector) ? get(oldDep) : get(nextDep),
+		)
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		releaseConsumer = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		store.send(selector, false)
+		queued.shift()!()
+		releaseConsumer?.()
+		releaseConsumer = undefined
+		expect(events).toEqual(['old cleanup'])
+		remount?.()
+		expect(events).toEqual(['old cleanup'])
+		queue.mockRestore()
+	})
+
+	it('resets flush state after a derived getter throws during mount', () => {
+		let getterCalls = 0
+		const trigger = primitiveAtom(false)
+		const writer = primitiveAtom(0, {
+			onMount: (_get, set) => set(trigger, true),
+		})
+		const broken = derivedAtom((get) => {
+			if (!get(trigger)) return 0
+			getterCalls++
+			throw 'getter failed'
+		})
+		const store = createStore()
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const healthyEffect = vi.fn()
+		const healthy = primitiveAtom(1, { effect: healthyEffect })
+		store.subscribe(writer, vi.fn())
+		expect(() => store.subscribe(broken, vi.fn())).not.toThrow()
+		const flush = queued.shift()
+		expect(flush).toBeTypeOf('function')
+		expect(() => flush!()).toThrow('getter failed')
+		expect(getterCalls).toBe(1)
+		store.subscribe(healthy, vi.fn())
+		expect(queued).toHaveLength(1)
+		expect(() => queued.shift()!()).not.toThrow()
+		expect(getterCalls).toBe(1)
+		expect(healthyEffect).toHaveBeenCalledOnce()
+		queue.mockRestore()
+	})
+
+	it('runs all throwing cleanups and callbacks, then propagates the last error', () => {
+		const order: string[] = []
+		const values = [primitiveAtom(0), primitiveAtom(0)]
+		const atoms = values.map((value, index) =>
+			derivedAtom((get) => get(value), undefined, {
+				effect: (next) => {
+					if (next > 0) {
+						order.push(`effect ${index}`)
+						throw `effect ${index}`
+					}
+					return () => {
+						order.push(`cleanup ${index}`)
+						throw `cleanup ${index}`
+					}
+				},
+			}),
+		)
+		const store = createStore()
+		const familyValues: object[] = []
+		const family = atomFamily(
+			() => {
+				const value = {}
+				familyValues.push(value)
+				return primitiveAtom(value)
+			},
+			{ TTL: 0 },
+		)
+		const healthy = primitiveAtom(0, {
+			effect: () => {
+				order.push('healthy effect')
+			},
+		})
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		const familyRelease = store.subscribe(family, 'key', vi.fn())
+		const originalFamilyValue = familyValues[0]
+		const releases = [
+			...atoms.map((atom) => store.subscribe(atom, vi.fn())),
+			store.subscribe(healthy, vi.fn()),
+		]
+		queued.shift()!()
+		const trigger = primitiveAtom(0)
+		const consumer = derivedAtom((get) => get(trigger), undefined, {
+			effect: () => {
+				if (store.peek(trigger) === 0)
+					return () => {
+						order.push('throwing cleanup')
+						throw 'cleanup last'
+					}
+				order.push('throwing callback')
+				throw 'callback last'
+			},
+		})
+		const releaseConsumer = store.subscribe(consumer, vi.fn())
+		queued.shift()!()
+		order.length = 0
+		familyRelease()
+		store.send(values[0]!, 1)
+		store.send(values[1]!, 1)
+		store.send(healthy, 1)
+		store.send(trigger, 1)
+		store.send(
+			commandAtom(() => {
+				order.push('command')
+				expect(store.peek(family, 'key')).toBe(originalFamilyValue)
+			}),
+		)
+		let thrown: unknown
+		try {
+			queued.shift()!()
+		} catch (error) {
+			thrown = error
+		}
+		expect(thrown).toBe('callback last')
+		expect(order).toEqual([
+			'throwing cleanup',
+			'cleanup 1',
+			'cleanup 0',
+			'effect 0',
+			'effect 1',
+			'healthy effect',
+			'throwing callback',
+			'command',
+		])
+		expect(store.peek(family, 'key')).not.toBe(originalFamilyValue)
+		store.send(healthy, 2)
+		expect(() => queued.shift()!()).not.toThrow()
+		expect(() => releaseConsumer()).not.toThrow()
+		for (const release of releases) release()
+		queue.mockRestore()
+	})
+
+	it('finishes notifying every subscriber before propagating the last thrown value', () => {
+		const source = primitiveAtom(0)
+		const store = createStore()
+		const first = new Error('first')
+		const last = new Error('last')
+		const seen: number[] = []
+		const queued: VoidFunction[] = []
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((fn) => {
+				queued.push(fn)
+			})
+		store.subscribe(source, () => {
+			throw first
+		})
+		store.subscribe(source, () => {
+			seen.push(1)
+			throw last
+		})
+		store.subscribe(source, () => seen.push(2))
+		const initialFlush = queued.shift()
+		initialFlush?.()
+		seen.length = 0
+		store.send(source, 1)
+		const flush = queued.shift()
+		expect(flush).toBeTypeOf('function')
+		expect(() => flush!()).toThrow(last)
+		expect(seen).toEqual([1, 2])
+		queue.mockRestore()
+	})
+})
+
 describe('effect values', () => {
 	it.each(['primitive', 'derived'] as const)(
 		'treats undefined as a real %s value and only cleans up on unmount',
