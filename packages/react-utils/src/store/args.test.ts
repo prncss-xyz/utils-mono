@@ -6,6 +6,7 @@ import { focusAtom } from './focusAtom'
 import { useAtom, useSetAtom } from './react'
 import {
 	atomFamily,
+	commandAtom,
 	createStore,
 	derivedAtom,
 	hydrate,
@@ -147,18 +148,16 @@ describe('setter argument tuples', () => {
 
 	it('forwards argument tuples from mount and effect writes', async () => {
 		const calls: unknown[][] = []
-		const command = derivedAtom(
-			null,
-			(_read, _write, ...args: [string, number]) => {
-				calls.push(args)
-			},
-		)
+		const command = commandAtom((_read, _write, ...args: [string, number]) => {
+			calls.push(args)
+		})
 		const source = primitiveAtom(0, {
 			onMount: (_read, write) => write(command, 'mount', 1),
 			effect: (_next, _last, _read, write) => write(command, 'effect', 2),
 		})
 		const store = createStore()
 		const release = store.subscribe(source, () => {})
+		await Promise.resolve()
 		await Promise.resolve()
 		expect(calls).toEqual([
 			['mount', 1],
@@ -167,18 +166,23 @@ describe('setter argument tuples', () => {
 		release()
 	})
 
-	it('forwards command arguments without changing their length', () => {
+	it('forwards command arguments without changing their length after a microtask', async () => {
 		const dependencies = {
 			zero: vi.fn<() => void>(),
 			update: vi.fn<(n: number, label: string, enabled?: boolean) => void>(),
 			rest: vi.fn<(...args: number[]) => void>(),
 		}
 		const { dependencyAtom, cmd } = createCommands<typeof dependencies>()
+		expect(cmd.zero).toBe(cmd.zero)
+		expect(cmd.zero).not.toBe(cmd.update)
+		expect(cmd.zero).not.toBe(createCommands<typeof dependencies>().cmd.zero)
 		const store = createStore([hydrate(dependencyAtom, dependencies)])
 		store.send(cmd.zero)
 		store.send(cmd.update, 2, 'hello')
 		store.resolve(cmd.update).send(3, 'world', undefined)
 		store.send(cmd.rest, 1, 2, 3)
+		expect(dependencies.zero).not.toHaveBeenCalled()
+		await Promise.resolve()
 		expect(dependencies.zero.mock.calls).toEqual([[]])
 		expect(dependencies.update.mock.calls).toEqual([
 			[2, 'hello'],
@@ -188,6 +192,60 @@ describe('setter argument tuples', () => {
 		expectTypeOf(cmd.update).toEqualTypeOf<
 			AtomSymbol<never, Parameters<typeof dependencies.update>>
 		>()
+	})
+
+	it('defers missing createCommands dependency assertion until scheduled flush', () => {
+		const { cmd } = createCommands<{ missing: (value: number) => void }>()
+		const store = createStore()
+		let scheduled!: VoidFunction
+		const queue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((cb) => {
+				scheduled = cb
+			})
+		expect(() => store.send(cmd.missing, 1)).not.toThrow()
+		queue.mockRestore()
+		expect(() => scheduled()).toThrow(
+			'dependencyAtom must be hydrated with StoreProvider before using commands',
+		)
+	})
+
+	it('infers command tuples and rejects invalid calls through every dispatch API', () => {
+		const zero = commandAtom(() => {})
+		const optional = commandAtom((_read, _write, _value?: number) => {})
+		const rest = commandAtom((_read, _write, ..._values: number[]) => {})
+		const multiple = commandAtom(
+			(_read, _write, _n: number, _label: string) => {},
+		)
+		const family = atomFamily((_key: string) => multiple)
+		const store = createStore()
+		store.send(zero)
+		store.send(optional)
+		store.resolve(optional).send(undefined)
+		store.send(rest, 1, 2)
+		store.send(multiple, 1, 'ok')
+		store.resolve(multiple).send(2, 'ok')
+		store.send(family, 'key', 3, 'ok')
+		store.resolve(family, 'key').send(4, 'ok')
+		function useCommandTypeChecks() {
+			expectTypeOf(useSetAtom(multiple)).toEqualTypeOf<
+				(n: number, label: string) => void
+			>()
+		}
+		expect(useCommandTypeChecks).toBeTypeOf('function')
+		const check = () => {
+			// @ts-expect-error no argument accepted
+			store.send(zero, undefined)
+			// @ts-expect-error required tuple item missing
+			store.send(multiple, 1)
+			// @ts-expect-error wrong tuple item
+			store.resolve(multiple).send('bad', 'ok')
+			// @ts-expect-error family member arguments required
+			store.send(family, 'key', 1)
+			// @ts-expect-error family argument type invalid
+			store.resolve(family, 'key').send(1, 2)
+		}
+		expect(check).toBeTypeOf('function')
 	})
 
 	it('infers tuple types and rejects invalid calls across the public API', () => {

@@ -52,6 +52,7 @@ type DerivedSymbol<S, Args extends unknown[]> = AtomOptions<S> & {
 	type: 'derived'
 	getter: Getter<S>
 	setter: Setter<Args>
+	command?: true
 }
 
 export type AtomSymbol<S, Args extends unknown[]> =
@@ -174,6 +175,18 @@ export function derivedAtom<S = never>(
 	}
 }
 
+/**
+ * Creates a write-only command dispatched after effects in a microtask. Reads see
+ * pending state. Commands are skipped during hydration. Self-dispatch loops are
+ * the caller's responsibility. Async promises are ignored; handle errors yourself,
+ * and work after an await runs in a later batch.
+ */
+export function commandAtom<Args extends unknown[] = []>(
+	callback: Setter<Args>,
+): AtomSymbol<never, Args> {
+	return { type: 'derived', getter: noread, setter: callback, command: true }
+}
+
 export function atomFamily<S, K, Args extends unknown[]>(
 	create: (key: K) => AtomSymbol<S, Args>,
 	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
@@ -207,6 +220,7 @@ type Tasks = {
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
 	unmountedFamilyEntries: Set<Instance<any>>
+	commands: { setter: Setter<any>; args: readonly unknown[] }[]
 }
 
 class Store {
@@ -239,6 +253,7 @@ class Store {
 			primitives: new Map(),
 			effects: new Set(),
 			unmountedFamilyEntries: new Set(),
+			commands: [],
 		}
 		if (!this.hydrating) queueMicrotask(this.flush.bind(this))
 		return this.tasks
@@ -383,7 +398,8 @@ class Store {
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
-		const { mounts, primitives, effects, unmountedFamilyEntries } = this.tasks
+		const { mounts, primitives, effects, unmountedFamilyEntries, commands } =
+			this.tasks
 		const mountWrites = new Map<Instance<any>, any>()
 		this.tasks = undefined
 		this.flushingMounts = mounts
@@ -451,29 +467,43 @@ class Store {
 		for (const { instance, next } of transitions)
 			if (instance.mountCount > 0)
 				this.runEffect(instance, instance.symbol.effect, next)
-		for (const instance of unmountedFamilyEntries) {
-			if (instance.mountCount > 0) continue
-			for (const familyEntry of instance.familyEntries) {
-				const { entry, hashedKey, TTL } = familyEntry
-				if (TTL === Infinity) continue
-				if (TTL === 0) {
-					if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
-					continue
+		let commandFailed = false
+		let commandError: unknown
+		const send = this.send.bind(this)
+		try {
+			for (const { setter, args } of commands) {
+				try {
+					setter(this.readPending, send, ...args)
+				} catch (error) {
+					commandFailed = true
+					commandError = error
 				}
-				const timeout = setTimeout(() => {
-					instance.familyRemovalTimeouts.delete(timeout)
-					if (instance.mountCount === 0 && entry.get(hashedKey) === instance)
-						entry.delete(hashedKey)
-				}, TTL)
-				instance.familyRemovalTimeouts.set(timeout, familyEntry)
 			}
-			instance.familyEntries = []
+		} finally {
+			for (const instance of unmountedFamilyEntries) {
+				if (instance.mountCount > 0) continue
+				for (const familyEntry of instance.familyEntries) {
+					const { entry, hashedKey, TTL } = familyEntry
+					if (TTL === Infinity) continue
+					if (TTL === 0) {
+						if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
+						continue
+					}
+					const timeout = setTimeout(() => {
+						instance.familyRemovalTimeouts.delete(timeout)
+						if (instance.mountCount === 0 && entry.get(hashedKey) === instance)
+							entry.delete(hashedKey)
+					}, TTL)
+					instance.familyRemovalTimeouts.set(timeout, familyEntry)
+				}
+				instance.familyEntries = []
+			}
 		}
+		if (commandFailed) throw commandError
 	}
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance
 		if (instance.dirty) {
-			instance.dirty = false
 			switch (symbol.type) {
 				case 'primitive':
 					instance.value = fromInit(symbol.getter)
@@ -491,6 +521,7 @@ class Store {
 						return this.peekInstance(dep)
 					}) as Read
 					instance.value = symbol.getter(read)
+					instance.dirty = false
 					for (const dep of previousDeps)
 						if (!instance.deps.has(dep)) dep.subs.delete(instance)
 					if (instance.mountCount > 0) this.syncMountedDeps(instance)
@@ -543,6 +574,11 @@ class Store {
 				return
 			}
 			case 'derived': {
+				if (symbol.command) {
+					if (!this.hydrating)
+						this.getTasks().commands.push({ setter: symbol.setter, args })
+					return
+				}
 				symbol.setter(this.readPending, this.send.bind(this), ...args)
 				return
 			}
@@ -619,6 +655,7 @@ class Store {
 	}
 }
 
+/** Commands dispatched during hydration are skipped. */
 export function createStore(): Store
 export function createStore<
 	const Entries extends readonly (readonly unknown[])[],

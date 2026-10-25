@@ -7,6 +7,7 @@ import {
 	atomFamily,
 	hydrate,
 	primitiveAtom,
+	commandAtom,
 	TRANSIENT,
 } from './store'
 
@@ -1025,6 +1026,157 @@ describe('Store', () => {
 		await flushMicrotask()
 
 		expect(events).toEqual(['run:0', 'cleanup:0', 'run:1'])
+	})
+})
+
+describe('command atoms', () => {
+	it('runs queued sends once, FIFO, after a microtask without subscribers', async () => {
+		const calls: number[] = []
+		const command = commandAtom((_read, _write, value: number) =>
+			calls.push(value),
+		)
+		const store = createStore()
+		store.send(command, 1)
+		store.send(command, 2)
+		expect(calls).toEqual([])
+		await flushMicrotask()
+		expect(calls).toEqual([1, 2])
+	})
+
+	it('runs after mounts/effects and queues their commands in the next batch', async () => {
+		const order: string[] = []
+		const command = commandAtom((_read, _write, label: string) => {
+			order.push(label)
+			if (label === 'first') store.send(command, 'second')
+		})
+		const trigger = primitiveAtom(0, {
+			onMount: (_read, write) => {
+				order.push('mount')
+				write(command, 'mount-command')
+			},
+			effect: (_next, _last, _read, write) => {
+				order.push('effect')
+				write(command, 'first')
+			},
+		})
+		const store = createStore()
+		const release = store.subscribe(trigger, () => {})
+		store.send(command, 'same-batch')
+		await flushMicrotask()
+		expect(order).toEqual(['mount', 'effect', 'same-batch'])
+		await flushMicrotask()
+		expect(order).toEqual([
+			'mount',
+			'effect',
+			'same-batch',
+			'mount-command',
+			'first',
+		])
+		expect(order).not.toContain('second')
+		await flushMicrotask()
+		expect(order.at(-1)).toBe('second')
+		release()
+	})
+
+	it('reads committed and own pending values while peek remains committed', async () => {
+		const value = primitiveAtom(1)
+		const seen: number[] = []
+		const command = commandAtom((read, write) => {
+			seen.push(read(value))
+			write(value, read(value) + 1)
+			seen.push(read(value))
+			seen.push(store.peek(value))
+		})
+		const store = createStore()
+		store.send(value, 5)
+		store.send(command)
+		await flushMicrotask()
+		expect(seen).toEqual([5, 6, 5])
+		expect(store.peek(value)).toBe(5)
+		await flushMicrotask()
+		expect(store.peek(value)).toBe(6)
+	})
+
+	it('dispatches through resolved atoms, derived setters and family members', async () => {
+		const values: number[] = []
+		const command = commandAtom((_read, _write, n: number) => values.push(n))
+		const family = atomFamily((_key: string) => command)
+		const derived = derivedAtom(null, (_read, write, n: number) =>
+			write(command, n),
+		)
+		const store = createStore()
+		store.resolve(command).send(1)
+		store.send(derived, 2)
+		store.send(family, 'key', 3)
+		await flushMicrotask()
+		expect(values).toEqual([1, 2, 3])
+		expect(() => store.peek(command)).toThrow()
+		expect(() => store.resolve(command).peek()).toThrow()
+		expect(() => store.subscribe(command, () => {})).toThrow()
+		expect(() => store.peek(derivedAtom((read) => read(command)))).toThrow()
+	})
+
+	it('continues after command errors, performs housekeeping, and recovers', async () => {
+		const calls: string[] = []
+		const identities: object[] = []
+		const family = atomFamily((_key: string) => primitiveAtom({}), { TTL: 0 })
+		const store = createStore()
+		let scheduled!: VoidFunction
+		const capturedQueue = vi
+			.spyOn(globalThis, 'queueMicrotask')
+			.mockImplementation((cb) => {
+				scheduled = cb
+			})
+		const familyRelease = store.subscribe(family, 'key', () => {})
+		const beforeEviction = store.peek(family, 'key')
+		const identityCommand = commandAtom((read, _write) => {
+			identities.push(read(family, 'key'))
+		})
+		store.send(identityCommand)
+		familyRelease()
+		const errorCommand = commandAtom((_read, _write, value: string) => {
+			calls.push(value)
+			if (value !== 'ok')
+				throw value === 'undefined' ? undefined : new Error(value)
+		})
+		store.send(errorCommand, 'first')
+		store.send(errorCommand, 'undefined')
+		store.send(errorCommand, 'ok')
+		capturedQueue.mockRestore()
+		let didThrow = false
+		let thrown: unknown
+		try {
+			scheduled()
+		} catch (error) {
+			didThrow = true
+			thrown = error
+		}
+		expect(didThrow).toBe(true)
+		expect(thrown).toBeUndefined()
+		expect(identities).toEqual([beforeEviction])
+		expect(store.peek(family, 'key')).not.toBe(beforeEviction)
+		expect(calls).toEqual(['first', 'undefined', 'ok'])
+		store.send(errorCommand, 'ok')
+		await flushMicrotask()
+		expect(calls.at(-1)).toBe('ok')
+	})
+
+	it('skips hydrated command entries and setter dispatches but applies other writes', () => {
+		const calls: number[] = []
+		const command = commandAtom((_read, _write, n: number) => calls.push(n))
+		const value = primitiveAtom(0)
+		const derived = derivedAtom(null, (_read, write, n: number) => {
+			write(value, n)
+			write(command, n)
+		})
+		const store = createStore([
+			[command, 1],
+			[derived, 2],
+		] as const)
+		expect(store.peek(value)).toBe(2)
+		expect(calls).toEqual([])
+		store.send(command, 3)
+		return Promise.resolve().then(() => expect(calls).toEqual([3]))
 	})
 })
 
