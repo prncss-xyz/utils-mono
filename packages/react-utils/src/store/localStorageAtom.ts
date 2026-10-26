@@ -19,11 +19,8 @@ export function localStorageAtom<T>(
 	serialize: (value: T) => string = (value: any) => value,
 ): AtomSymbol<T, [Update<T>]> {
 	const getSnapshot = () => {
-		try {
-			return localStorage.getItem(key)
-		} catch (_) {
-			return null
-		}
+		if (typeof window === 'undefined') return null
+		return localStorage.getItem(key)
 	}
 	const raw = primitiveAtom<string | null>(getSnapshot, {
 		onMount: (_get, set) => {

@@ -26,13 +26,7 @@ export function useLocalStorage<T>(
 		}
 	}
 
-	const getSnapshot = () => {
-		try {
-			return localStorage.getItem(key)
-		} catch (_) {
-			return null
-		}
-	}
+	const getSnapshot = () => localStorage.getItem(key)
 
 	const getServerSnapshot = () => null
 

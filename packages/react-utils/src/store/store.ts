@@ -408,11 +408,8 @@ class Store {
 			for (const dep of instance.deps) mount(dep)
 			mounts.delete(instance)
 			this.mountWrites = mountWrites
-			try {
-				this.mount(instance)
-			} finally {
-				this.mountWrites = undefined
-			}
+			this.mount(instance)
+			this.mountWrites = undefined
 			// Mount writes must settle before consumers mount or effects run.
 			applyUpdates(mountWrites)
 		}
