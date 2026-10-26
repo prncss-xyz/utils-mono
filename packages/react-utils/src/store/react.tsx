@@ -1,11 +1,17 @@
 'use client'
-import { createContext, useContext, useRef, useSyncExternalStore } from 'react'
+import {
+	createContext,
+	useContext,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from 'react'
 
 import {
 	createStore,
 	type AtomFamily,
 	type AtomSymbol,
-	type Hydrate,
+	type ValidHydrate,
 	type ResolvedAtom,
 } from './store'
 
@@ -17,18 +23,24 @@ function useStore() {
 	return store
 }
 
-export function StoreProvider({
+/**
+ * Creates and hydrates the store on the first render; later hydrate changes are ignored.
+ * Remount with a new key to start over. React may retry the initializer before committing
+ * (including in StrictMode); hydration runs neither effects nor onMount callbacks.
+ */
+export function StoreProvider<
+	const Entries extends readonly (readonly unknown[])[] = [],
+>({
 	children,
 	hydrate,
 }: {
 	children: React.ReactNode
-	hydrate?: Hydrate
+	hydrate?: Entries & ValidHydrate<Entries>
 }) {
-	return (
-		<StoreCtx.Provider value={hydrate ? createStore(hydrate) : createStore()}>
-			{children}
-		</StoreCtx.Provider>
+	const [store] = useState(() =>
+		hydrate ? createStore(hydrate) : createStore(),
 	)
+	return <StoreCtx.Provider value={store}>{children}</StoreCtx.Provider>
 }
 
 function useResolvedAtom<V, Key, Args extends unknown[]>(

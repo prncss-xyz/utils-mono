@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { type SetStateWithReset } from '../functions'
 import { createCommands } from './commandAtoms'
 import { focusAtom } from './focusAtom'
-import { useAtom, useSetAtom } from './react'
+import { StoreProvider, useAtom, useSetAtom } from './react'
 import {
 	atomFamily,
 	createStore,
@@ -228,6 +228,28 @@ describe('setter argument tuples', () => {
 
 		// These calls are checked by tsc, never executed.
 		const checkTypes = (write: Write, read: Read) => {
+			StoreProvider({ children: null })
+			StoreProvider({
+				children: null,
+				hydrate: [
+					[update, 1, 'ok'],
+					[family, 'key', 2, 'ok'],
+				],
+			})
+			StoreProvider({
+				children: null,
+				hydrate: [hydrate(update, 1, 'ok'), hydrate(family, 'key', 2, 'ok')],
+			})
+			// @ts-expect-error provider hydration validates setter arguments
+			StoreProvider({ children: null, hydrate: [[update, 'bad', 'ok']] })
+			// @ts-expect-error provider hydration validates family keys
+			StoreProvider({ children: null, hydrate: [[family, 1, 2, 'ok']] })
+			// @ts-expect-error provider hydration requires every setter argument
+			StoreProvider({ children: null, hydrate: [[update, 1]] })
+			// @ts-expect-error helper hydration validates setter arguments
+			StoreProvider({ children: null, hydrate: [hydrate(update, 'bad', 'ok')] })
+			// @ts-expect-error helper hydration validates family keys
+			StoreProvider({ children: null, hydrate: [hydrate(family, 1, 2, 'ok')] })
 			write(update, 1, 'ok')
 			write(family, 'key', 1, 'ok')
 			write(zero)

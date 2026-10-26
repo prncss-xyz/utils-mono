@@ -101,7 +101,7 @@ type ValidHydrateEntry<Entry> = Entry extends readonly [
 			? readonly [Symbol, ...Args]
 			: never
 		: never
-type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
+export type ValidHydrate<Entries extends readonly (readonly unknown[])[]> = {
 	readonly [Index in keyof Entries]: ValidHydrateEntry<Entries[Index]>
 }
 type Getter<S> = (read: Read) => S
