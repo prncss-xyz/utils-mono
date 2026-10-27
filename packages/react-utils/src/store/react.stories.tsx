@@ -5,6 +5,8 @@ import preview from '../../.storybook/preview'
 import { StoreProvider, useAtom, useAtomValue, useSetAtom } from './react'
 import { atomFamily, derivedAtom, primitiveAtom, TRANSIENT } from './store'
 
+const flushMicrotask = () => Promise.resolve()
+
 const members = atomFamily(
 	(_key: string | undefined) => {
 		const value = primitiveAtom('0')
@@ -203,5 +205,60 @@ export const ProviderLifetime = meta.story({
 		await expect(canvas.getByLabelText('Cached sends')).toHaveTextContent('0')
 		await userEvent.click(canvas.getByRole('button', { name: 'Send cached' }))
 		await expect(canvas.getByLabelText('Cached sends')).toHaveTextContent('1')
+	},
+})
+
+const expiring = atomFamily((_key: string) => primitiveAtom('initial'))
+
+function ExpiringWriter() {
+	const [renders, setRenders] = useState(0)
+	const send = useSetAtom(expiring, 'a')
+	return (
+		<>
+			<output aria-label='Writer renders'>{renders}</output>
+			<button type='button' onClick={() => setRenders((value) => value + 1)}>
+				Rerender writer
+			</button>
+			<button type='button' onClick={() => send('first')}>
+				Write first
+			</button>
+			<button type='button' onClick={() => send('second')}>
+				Write second
+			</button>
+		</>
+	)
+}
+
+function ExpiringReader() {
+	return <output aria-label='Reader'>{useAtomValue(expiring, 'a')}</output>
+}
+
+function ExpiringHarness() {
+	const [mounted, setMounted] = useState(true)
+	return (
+		<StoreProvider>
+			<ExpiringWriter />
+			<button type='button' onClick={() => setMounted((value) => !value)}>
+				Toggle reader
+			</button>
+			{mounted && <ExpiringReader />}
+		</StoreProvider>
+	)
+}
+
+export const WriterAcrossEviction = meta.story({
+	render: () => <ExpiringHarness />,
+	play: async ({ canvas, userEvent }) => {
+		await userEvent.click(canvas.getByRole('button', { name: 'Write first' }))
+		await expect(canvas.getByLabelText('Reader')).toHaveTextContent('first')
+		await userEvent.click(canvas.getByRole('button', { name: 'Toggle reader' }))
+		await flushMicrotask()
+		await userEvent.click(
+			canvas.getByRole('button', { name: 'Rerender writer' }),
+		)
+		await expect(canvas.getByLabelText('Writer renders')).toHaveTextContent('1')
+		await userEvent.click(canvas.getByRole('button', { name: 'Write second' }))
+		await userEvent.click(canvas.getByRole('button', { name: 'Toggle reader' }))
+		await expect(canvas.getByLabelText('Reader')).toHaveTextContent('second')
 	},
 })

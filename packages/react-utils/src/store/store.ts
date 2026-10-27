@@ -174,6 +174,10 @@ export function derivedAtom<S = never>(
 	}
 }
 
+/**
+ * The `create` factory must return a fresh, unique symbol on every call,
+ * including when it recreates the same key after an eviction.
+ */
 export function atomFamily<S, K, Args extends unknown[]>(
 	create: (key: K) => AtomSymbol<S, Args>,
 	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
@@ -451,21 +455,29 @@ class Store {
 		for (const instance of unmountedFamilyEntries) {
 			if (instance.mountCount > 0) continue
 			for (const familyEntry of instance.familyEntries) {
-				const { entry, hashedKey, TTL } = familyEntry
+				const { TTL } = familyEntry
 				if (TTL === Infinity) continue
 				if (TTL === 0) {
-					if (entry.get(hashedKey) === instance) entry.delete(hashedKey)
+					this.evict(instance, familyEntry)
 					continue
 				}
 				const timeout = setTimeout(() => {
 					instance.familyRemovalTimeouts.delete(timeout)
-					if (instance.mountCount === 0 && entry.get(hashedKey) === instance)
-						entry.delete(hashedKey)
+					if (instance.mountCount === 0) this.evict(instance, familyEntry)
 				}, TTL)
 				instance.familyRemovalTimeouts.set(timeout, familyEntry)
 			}
 			instance.familyEntries = []
 		}
+	}
+	private evict<S>(instance: Instance<S>, { entry, hashedKey }: FamilyEntry) {
+		if (entry.get(hashedKey) !== instance) return
+		entry.delete(hashedKey)
+		for (const sub of Array.from(instance.subs)) this.notify(sub)
+		instance.subs.clear()
+		for (const dep of instance.deps) dep.subs.delete(instance)
+		instance.deps.clear()
+		if (instance.symbol.type === 'derived') instance.dirty = true
 	}
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance
@@ -588,11 +600,19 @@ class Store {
 		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		key?: Key,
 	): ResolvedAtom<S, Args> {
-		const instance = this.getInstance(symbol, key)
+		if (symbol.type !== 'family' || symbol.TTL < 0) {
+			const instance = this.getInstance(symbol, key)
+			return {
+				peek: () => this.peekInstance(instance),
+				send: (...args) => this.sendInstance(instance, args),
+				subscribe: (notify) => this.subscribeInstance(instance, notify),
+			}
+		}
 		return {
-			peek: () => this.peekInstance(instance),
-			send: (...args) => this.sendInstance(instance, args),
-			subscribe: (notify) => this.subscribeInstance(instance, notify),
+			peek: () => this.peekInstance(this.getInstance(symbol, key)),
+			send: (...args) => this.sendInstance(this.getInstance(symbol, key), args),
+			subscribe: (notify) =>
+				this.subscribeInstance(this.getInstance(symbol, key), notify),
 		}
 	}
 	subscribe<S, Key, Args extends unknown[]>(

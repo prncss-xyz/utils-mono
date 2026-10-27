@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, assert, describe, expect, it, vi } from 'vitest'
 
 import { RESET, type SetStateWithReset } from '../functions'
 import {
@@ -8,11 +8,25 @@ import {
 	hydrate,
 	primitiveAtom,
 	TRANSIENT,
+	type AtomSymbol,
+	type Read,
 } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
+const keptHandle = (TTL = 0) => {
+	const create = vi.fn((key: string) => primitiveAtom(key))
+	const names = atomFamily(create, { TTL })
+	const store = createStore()
+	const handle = store.resolve(names, 'first')
+	return { create, names, store, handle }
+}
+
 describe('Store', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
 	it('hydrates atoms before the store is returned', () => {
 		const count = primitiveAtom(0)
 		const str = primitiveAtom('')
@@ -885,7 +899,6 @@ describe('Store', () => {
 		vi.advanceTimersByTime(1)
 		store.peek(names, 'first')
 		expect(create).toHaveBeenCalledTimes(2)
-		vi.useRealTimers()
 	})
 
 	it('cancels positive TTL removal when the member remounts', async () => {
@@ -904,7 +917,108 @@ describe('Store', () => {
 
 		expect(create).toHaveBeenCalledOnce()
 		unsubscribeAgain()
-		vi.useRealTimers()
+	})
+
+	it('sends and peeks through a kept handle after TTL 0 eviction', async () => {
+		const { create, names, store, handle } = keptHandle()
+
+		handle.subscribe(() => {})()
+		await flushMicrotask()
+		handle.send('replaced')
+		await flushMicrotask()
+
+		expect(create).toHaveBeenCalledTimes(2)
+		expect(store.peek(names, 'first')).toBe('replaced')
+		expect(handle.peek()).toBe('replaced')
+	})
+
+	it('sends and peeks through a kept handle after positive TTL eviction', async () => {
+		vi.useFakeTimers()
+		const { create, names, store, handle } = keptHandle(100)
+
+		handle.subscribe(() => {})()
+		await flushMicrotask()
+		vi.advanceTimersByTime(100)
+		handle.send('replaced')
+		await flushMicrotask()
+
+		expect(create).toHaveBeenCalledTimes(2)
+		expect(store.peek(names, 'first')).toBe('replaced')
+		expect(handle.peek()).toBe('replaced')
+	})
+
+	it('retains and releases the replacement entry when subscribing through a kept handle', async () => {
+		const { create, names, store, handle } = keptHandle()
+		const notify = vi.fn()
+
+		handle.subscribe(() => {})()
+		await flushMicrotask()
+		const unsubscribe = handle.subscribe(notify)
+		await flushMicrotask()
+		store.send(names, 'first', 'updated')
+		await flushMicrotask()
+
+		expect(create).toHaveBeenCalledTimes(2)
+		expect(store.peek(names, 'first')).toBe('updated')
+		expect(notify).toHaveBeenCalledOnce()
+
+		unsubscribe()
+		await flushMicrotask()
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(3)
+	})
+
+	it('keeps TTL-negative handles pinned to their instance', async () => {
+		const { create, names, store, handle } = keptHandle(TRANSIENT)
+
+		handle.send('pinned')
+		await flushMicrotask()
+		handle.subscribe(() => {})()
+		await flushMicrotask()
+
+		expect(handle.peek()).toBe('pinned')
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('recomputes a derived atom after its family member is replaced', async () => {
+		const names = atomFamily((key: string) => primitiveAtom(key))
+		const upper = derivedAtom((read) => read(names, 'first').toUpperCase())
+		const store = createStore()
+
+		store.subscribe(upper, () => {})()
+		await flushMicrotask()
+		store.send(names, 'first', 'replaced')
+		await flushMicrotask()
+		const unsubscribe = store.subscribe(upper, () => {})
+
+		expect(store.peek(upper)).toBe('REPLACED')
+		unsubscribe()
+	})
+
+	it('detaches an evicted derived member from its dependencies', async () => {
+		const base = primitiveAtom(1)
+		const getter = vi.fn((read: Read) => read(base) * 2)
+		let member: AtomSymbol<number, never> | undefined
+		const doubles = atomFamily((_key: string) => {
+			member = derivedAtom(getter)
+			return member
+		})
+		const store = createStore()
+		const subsOfBase = () =>
+			(store as any).contents.get(base).subs as Set<unknown>
+
+		store.subscribe(doubles, 'first', () => {})()
+		expect(subsOfBase().size).toBe(1)
+		await flushMicrotask()
+
+		expect(subsOfBase().size).toBe(0)
+		expect(getter).toHaveBeenCalledOnce()
+		store.send(base, 5)
+		await flushMicrotask()
+		assert(member)
+		expect(store.peek(member)).toBe(10)
+		expect(getter).toHaveBeenCalledTimes(2)
 	})
 
 	it('cleans dependants first and reruns dependencies first after a batched value change', async () => {
