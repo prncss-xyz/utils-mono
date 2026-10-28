@@ -813,6 +813,68 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledOnce()
 	})
 
+	it('caches resolved atom handles per store', () => {
+		const atom = primitiveAtom(0)
+		const store = createStore()
+
+		expect(store.resolve(atom)).toBe(store.resolve(atom))
+		expect(createStore().resolve(atom)).not.toBe(store.resolve(atom))
+	})
+
+	it.each([0, 100, Infinity])(
+		'caches resolved family handles for equal hashes with TTL %s',
+		(TTL) => {
+			const create = vi.fn((key: { id: string; label: string }) =>
+				primitiveAtom(key.label),
+			)
+			const family = atomFamily(create, { TTL, hash: (key) => key.id })
+			const store = createStore()
+			const first = { id: 'same', label: 'first' }
+			const handle = store.resolve(family, first)
+
+			expect(store.resolve(family, { id: 'same', label: 'second' })).toBe(
+				handle,
+			)
+			expect(handle.peek()).toBe('first')
+			expect(create).toHaveBeenCalledExactlyOnceWith(first)
+		},
+	)
+
+	it.each([0, 100])(
+		'replaces resolved handles after TTL %s eviction while old handles stay usable',
+		async (TTL) => {
+			vi.useFakeTimers()
+			const { names, store, handle } = keptHandle(TTL)
+			handle.subscribe(() => {})()
+			await flushMicrotask()
+			vi.advanceTimersByTime(TTL)
+
+			const replacement = store.resolve(names, 'first')
+			expect(replacement).not.toBe(handle)
+			expect(store.resolve(names, 'first')).toBe(replacement)
+			const notify = vi.fn()
+			const unsubscribe = handle.subscribe(notify)
+			handle.send('updated')
+			await flushMicrotask()
+
+			expect(replacement.peek()).toBe('updated')
+			expect(handle.peek()).toBe('updated')
+			expect(notify).toHaveBeenCalledOnce()
+			unsubscribe()
+		},
+	)
+
+	it('creates a distinct handle and instance for each transient resolve', async () => {
+		const { names, store, handle } = keptHandle(TRANSIENT)
+		const other = store.resolve(names, 'first')
+
+		expect(other).not.toBe(handle)
+		handle.send('updated')
+		await flushMicrotask()
+		expect(handle.peek()).toBe('updated')
+		expect(other.peek()).toBe('first')
+	})
+
 	it('does not cache atom family members when TTL is negative', () => {
 		const create = vi.fn((key: string) => primitiveAtom(key))
 		const names = atomFamily(create, { TTL: TRANSIENT })

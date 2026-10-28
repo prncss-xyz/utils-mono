@@ -21,6 +21,7 @@ type FamilyEntry = {
 }
 
 type Instance<S> = {
+	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<any, any>
 	familyEntries: FamilyEntry[]
 	familyRemovalTimeouts: Map<ReturnType<typeof setTimeout>, FamilyEntry>
@@ -279,6 +280,7 @@ class Store {
 		symbol: AtomSymbol<S, Args>,
 	): Instance<S> {
 		return {
+			handle: undefined,
 			symbol,
 			familyEntries: [],
 			familyRemovalTimeouts: new Map(),
@@ -600,20 +602,21 @@ class Store {
 		symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 		key?: Key,
 	): ResolvedAtom<S, Args> {
+		const instance = this.getInstance(symbol, key)
+		if (instance.handle) return instance.handle
 		if (symbol.type !== 'family' || symbol.TTL < 0) {
-			const instance = this.getInstance(symbol, key)
-			return {
+			return (instance.handle = {
 				peek: () => this.peekInstance(instance),
 				send: (...args) => this.sendInstance(instance, args),
 				subscribe: (notify) => this.subscribeInstance(instance, notify),
-			}
+			})
 		}
-		return {
+		return (instance.handle = {
 			peek: () => this.peekInstance(this.getInstance(symbol, key)),
 			send: (...args) => this.sendInstance(this.getInstance(symbol, key), args),
 			subscribe: (notify) =>
 				this.subscribeInstance(this.getInstance(symbol, key), notify),
-		}
+		})
 	}
 	subscribe<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
