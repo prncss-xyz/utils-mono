@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { expect } from 'storybook/test'
 
 import preview from '../../.storybook/preview'
@@ -260,5 +260,48 @@ export const WriterAcrossEviction = meta.story({
 		await userEvent.click(canvas.getByRole('button', { name: 'Write second' }))
 		await userEvent.click(canvas.getByRole('button', { name: 'Toggle reader' }))
 		await expect(canvas.getByLabelText('Reader')).toHaveTextContent('second')
+	},
+})
+
+function createFirstRenderFixture() {
+	let generations = 0
+	return {
+		family: atomFamily((_key: string) => primitiveAtom(() => ++generations)),
+		generations: () => generations,
+		ready: false,
+		pending: undefined as Promise<void> | undefined,
+	}
+}
+
+let firstRenderFixture = createFirstRenderFixture()
+
+function FirstRenderReader() {
+	const value = useAtomValue(firstRenderFixture.family, 'a')
+	if (!firstRenderFixture.ready) {
+		firstRenderFixture.pending ??= Promise.resolve().then(() => {
+			firstRenderFixture.ready = true
+		})
+		throw firstRenderFixture.pending
+	}
+	return <output aria-label='Live generation'>{value}</output>
+}
+
+export const EvictionBeforeSubscription = meta.story({
+	beforeEach: () => {
+		firstRenderFixture = createFirstRenderFixture()
+	},
+	render: () => (
+		<StoreProvider>
+			<Suspense fallback={null}>
+				<FirstRenderReader />
+			</Suspense>
+		</StoreProvider>
+	),
+	play: async ({ canvas }) => {
+		const output = await canvas.findByLabelText('Live generation')
+		await expect(firstRenderFixture.generations()).toBeGreaterThanOrEqual(2)
+		await expect(output).toHaveTextContent(
+			String(firstRenderFixture.generations()),
+		)
 	},
 })

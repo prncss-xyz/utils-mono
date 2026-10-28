@@ -178,6 +178,9 @@ export function derivedAtom<S = never>(
 /**
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.
+ * TTL 0 evicts unwritten, unmounted entries in the next microtask. A first render
+ * can peek before eviction and subscribe afterward; its re-resolving handle reaches
+ * a new entry, costing one recreation and possibly an extra render for lazy primitives.
  */
 export function atomFamily<S, K, Args extends unknown[]>(
 	create: (key: K) => AtomSymbol<S, Args>,
@@ -211,7 +214,7 @@ type Tasks = {
 	mounts: Set<Instance<any>>
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
-	unmountedFamilyEntries: Set<Instance<any>>
+	pendingFamilyEvictions: Set<Instance<any>>
 }
 
 class Store {
@@ -220,6 +223,7 @@ class Store {
 	private mountWrites: Map<Instance<any>, any> | undefined
 	private flushingMounts: Set<Instance<any>> | undefined
 	private flushingEffects: Set<Instance<any>> | undefined
+	private flushingFamilyEvictions: Set<Instance<any>> | undefined
 	private hydrating = true
 	constructor(hydrate: Hydrate = []) {
 		for (const entry of hydrate) {
@@ -243,7 +247,7 @@ class Store {
 			mounts: new Set(),
 			primitives: new Map(),
 			effects: new Set(),
-			unmountedFamilyEntries: new Set(),
+			pendingFamilyEvictions: new Set(),
 		}
 		if (!this.hydrating) queueMicrotask(this.flush.bind(this))
 		return this.tasks
@@ -266,6 +270,8 @@ class Store {
 				res = this.getInstance(symbol.create(key!))
 				entry.set(hashedKey, res)
 				res.familyEntries.push({ entry, hashedKey, TTL: symbol.TTL })
+				if (symbol.TTL < Infinity)
+					this.getTasks().pendingFamilyEvictions.add(res)
 			}
 			return res
 		}
@@ -315,15 +321,20 @@ class Store {
 		for (const sub of Array.from(instance.subs)) this.notify(sub)
 		instance.subscriptions.forEach(call)
 	}
-	private retain<S>(instance: Instance<S>) {
-		if (instance.mountCount++ > 0) return
-		this.peekInstance(instance)
-		this.syncMountedDeps(instance)
+	private cancelEviction<S>(instance: Instance<S>) {
+		this.tasks?.pendingFamilyEvictions.delete(instance)
+		this.flushingFamilyEvictions?.delete(instance)
 		for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
 			clearTimeout(timeout)
 			instance.familyEntries.push(familyEntry)
 		}
 		instance.familyRemovalTimeouts.clear()
+	}
+	private retain<S>(instance: Instance<S>) {
+		if (instance.mountCount++ > 0) return
+		this.cancelEviction(instance)
+		this.peekInstance(instance)
+		this.syncMountedDeps(instance)
 		if (instance.mountCount === 0) return
 		;(this.flushingMounts ?? this.getTasks().mounts).add(instance)
 		this.enqueueEffect(instance)
@@ -355,7 +366,7 @@ class Store {
 		cleanup?.()
 		lifecycle?.cleanup?.()
 		if (instance.familyEntries.length > 0)
-			this.getTasks().unmountedFamilyEntries.add(instance)
+			this.getTasks().pendingFamilyEvictions.add(instance)
 		for (const dep of mountedDeps) this.release(dep)
 	}
 	private syncMountedDeps<S>(instance: Instance<S>) {
@@ -389,11 +400,12 @@ class Store {
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
-		const { mounts, primitives, effects, unmountedFamilyEntries } = this.tasks
+		const { mounts, primitives, effects, pendingFamilyEvictions } = this.tasks
 		const mountWrites = new Map<Instance<any>, any>()
 		this.tasks = undefined
 		this.flushingMounts = mounts
 		this.flushingEffects = effects
+		this.flushingFamilyEvictions = pendingFamilyEvictions
 		const applyUpdates = (pending: Map<Instance<any>, any>) => {
 			while (pending.size > 0) {
 				const updates = [...pending]
@@ -454,7 +466,7 @@ class Store {
 		for (const { instance, next } of transitions)
 			if (instance.mountCount > 0)
 				this.runEffect(instance, instance.symbol.effect, next)
-		for (const instance of unmountedFamilyEntries) {
+		for (const instance of pendingFamilyEvictions) {
 			if (instance.mountCount > 0) continue
 			for (const familyEntry of instance.familyEntries) {
 				const { TTL } = familyEntry
@@ -471,6 +483,7 @@ class Store {
 			}
 			instance.familyEntries = []
 		}
+		this.flushingFamilyEvictions = undefined
 	}
 	private evict<S>(instance: Instance<S>, { entry, hashedKey }: FamilyEntry) {
 		if (entry.get(hashedKey) !== instance) return
@@ -541,6 +554,8 @@ class Store {
 	}
 	private sendInstance<S>(instance: Instance<S>, args: readonly unknown[]) {
 		const { symbol } = instance
+		if (symbol.type === 'primitive' || symbol.getter !== noread)
+			this.cancelEviction(instance)
 		switch (symbol.type) {
 			case 'primitive': {
 				const event = args[0]

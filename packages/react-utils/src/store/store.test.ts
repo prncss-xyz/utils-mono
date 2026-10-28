@@ -1,6 +1,7 @@
 import { afterEach, assert, describe, expect, it, vi } from 'vitest'
 
 import { RESET, type SetStateWithReset } from '../functions'
+import { createCommands } from './commandAtoms'
 import {
 	createStore,
 	derivedAtom,
@@ -1409,4 +1410,205 @@ describe('effect values', () => {
 			expect(cleanup).toHaveBeenCalledTimes(4)
 		},
 	)
+})
+
+describe('family eviction', () => {
+	afterEach(() => vi.useRealTimers())
+
+	it.each([0, 100, Infinity])(
+		'expires peek-only entries according to TTL %s',
+		async (TTL) => {
+			vi.useFakeTimers()
+			const { create, names, store } = keptHandle(TTL)
+			store.peek(names, 'first')
+			await flushMicrotask()
+			if (TTL > 0 && TTL < Infinity) {
+				vi.advanceTimersByTime(TTL - 1)
+				store.peek(names, 'first')
+				expect(create).toHaveBeenCalledOnce()
+				vi.advanceTimersByTime(1)
+			}
+			store.peek(names, 'first')
+			expect(create).toHaveBeenCalledTimes(TTL === Infinity ? 1 : 2)
+		},
+	)
+
+	it('evicts an unmounted dependency without recomputing until its next read', async () => {
+		const create = vi.fn((_key: string) => primitiveAtom(1))
+		const family = atomFamily(create)
+		const getter = vi.fn((read: Read) => read(family, 'a') * 2)
+		const double = derivedAtom(getter)
+		const store = createStore()
+		expect(store.peek(double)).toBe(2)
+		await flushMicrotask()
+		await flushMicrotask()
+		expect(create).toHaveBeenCalledOnce()
+		expect(getter).toHaveBeenCalledOnce()
+		expect(store.peek(double)).toBe(2)
+		expect(create).toHaveBeenCalledTimes(2)
+		expect(getter).toHaveBeenCalledTimes(2)
+	})
+
+	it('retains a peeked entry subscribed before the flush and evicts on release', async () => {
+		const { create, names, store } = keptHandle()
+		store.peek(names, 'first')
+		const release = store.subscribe(names, 'first', () => {})
+		await flushMicrotask()
+		expect(create).toHaveBeenCalledOnce()
+		release()
+		await flushMicrotask()
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it.each(['primitive', 'readable', 'write-only'] as const)(
+		'applies write retention to %s members',
+		async (kind) => {
+			const values = atomFamily((_key: string) => primitiveAtom(0))
+			const create = vi.fn((_key: string) =>
+				kind === 'primitive'
+					? primitiveAtom(0)
+					: derivedAtom(
+							kind === 'readable' ? (read: Read) => read(values, 'a') : null,
+							(_read, write, value: SetStateWithReset<number>) =>
+								write(values, 'a', value),
+						),
+			)
+			const family = atomFamily(create)
+			const store = createStore()
+			store.send(family, 'a', 7)
+			await flushMicrotask()
+			if (kind === 'primitive' || kind === 'readable') {
+				expect(store.peek(family, 'a')).toBe(7)
+				expect(create).toHaveBeenCalledOnce()
+			} else {
+				expect(store.peek(values, 'a')).toBe(7)
+				store.resolve(family, 'a')
+				expect(create).toHaveBeenCalledTimes(2)
+			}
+		},
+	)
+
+	it('keeps hydrated primitives and evicts hydrated write-only members in the constructor', () => {
+		const values = atomFamily((_key: string) => primitiveAtom(0))
+		const create = vi.fn((_key: string) =>
+			derivedAtom(null, (_read, write, value: number) =>
+				write(values, 'a', value),
+			),
+		)
+		const commands = atomFamily(create)
+		const store = createStore([
+			[values, 'b', 5],
+			[commands, 'a', 7],
+		])
+		expect(store.peek(values, 'a')).toBe(7)
+		expect(store.peek(values, 'b')).toBe(5)
+		store.resolve(commands, 'a')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('evicts entries created during a flush in the following flush', async () => {
+		const store = createStore()
+		const ephemeralCreate = vi.fn((_key: string) => primitiveAtom(0))
+		const ephemeral = atomFamily(ephemeralCreate)
+		const trigger = primitiveAtom(0, {
+			effect: () => {
+				store.peek(ephemeral, 'a')
+			},
+		})
+		const release = store.subscribe(trigger, () => {})
+		await flushMicrotask()
+		store.peek(ephemeral, 'a')
+		expect(ephemeralCreate).toHaveBeenCalledOnce()
+		await flushMicrotask()
+		store.peek(ephemeral, 'a')
+		expect(ephemeralCreate).toHaveBeenCalledTimes(2)
+		release()
+	})
+
+	it.each(['direct', 'effect', 'onMount', 'command'] as const)(
+		'keeps a released TTL-0 entry written by %s',
+		async (source) => {
+			const { create, names, store } = keptHandle()
+			const release = store.subscribe(names, 'first', () => {})
+			await flushMicrotask()
+			release()
+			const write = () => store.send(names, 'first', 'saved')
+			let releaseTrigger: (() => void) | undefined
+			if (source === 'direct') write()
+			else if (source === 'command') store.send(derivedAtom(null, write))
+			else {
+				const trigger = primitiveAtom(
+					0,
+					source === 'effect' ? { effect: write } : { onMount: write },
+				)
+				releaseTrigger = store.subscribe(trigger, () => {})
+			}
+			await flushMicrotask()
+			await flushMicrotask()
+			expect(store.peek(names, 'first')).toBe('saved')
+			expect(create).toHaveBeenCalledOnce()
+			releaseTrigger?.()
+		},
+	)
+
+	it('cancels a positive TTL timeout on write and evicts after a later mount cycle', async () => {
+		vi.useFakeTimers()
+		const { create, names, store } = keptHandle(100)
+		store.subscribe(names, 'first', () => {})()
+		await flushMicrotask()
+		vi.advanceTimersByTime(50)
+		store.send(names, 'first', 'saved')
+		await flushMicrotask()
+		vi.advanceTimersByTime(100)
+		expect(store.peek(names, 'first')).toBe('saved')
+		expect(create).toHaveBeenCalledOnce()
+		store.subscribe(names, 'first', () => {})()
+		await flushMicrotask()
+		vi.advanceTimersByTime(100)
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('does not let writes before release or subsequent peeks cancel eviction', async () => {
+		const { create, names, store } = keptHandle()
+		const release = store.subscribe(names, 'first', () => {})
+		store.send(names, 'first', 'lost')
+		release()
+		store.peek(names, 'first')
+		await flushMicrotask()
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('evicts normally after a canceled TTL-0 eviction and a new mount cycle', async () => {
+		const { create, names, store } = keptHandle()
+		store.subscribe(names, 'first', () => {})()
+		store.send(names, 'first', 'saved')
+		await flushMicrotask()
+		expect(store.peek(names, 'first')).toBe('saved')
+		store.subscribe(names, 'first', () => {})()
+		await flushMicrotask()
+		expect(store.peek(names, 'first')).toBe('first')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+})
+
+describe('command family eviction', () => {
+	it('evicts command members while retaining the primitive family entries they write', async () => {
+		const values = atomFamily((_key: string) => primitiveAtom(0))
+		const commands = createCommands<{ save: (value: number) => void }>()
+		const create = vi.fn((_key: string) => commands.cmd.save)
+		const family = atomFamily(create)
+		const store = createStore()
+		store.send(commands.dependencyAtom, {
+			save: (value) => store.send(values, 'a', value),
+		})
+		await flushMicrotask()
+		store.send(family, 'a', 7)
+		await flushMicrotask()
+		expect(store.peek(values, 'a')).toBe(7)
+		store.resolve(family, 'a')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
 })
