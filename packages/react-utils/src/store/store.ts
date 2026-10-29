@@ -14,11 +14,17 @@ function call(cb: () => void) {
 
 export const TRANSIENT = -1
 
-type FamilyEntry = {
-	entry: Map<unknown, Instance<any>>
-	hashedKey: unknown
-	TTL: number
-}
+type FamilyStorage<Key> =
+	| { type: 'hash'; map: Map<unknown, Instance<any>> }
+	| { type: 'eq'; pairs: [Key, Instance<any>][] }
+
+type FamilySlot =
+	| (Extract<FamilyStorage<unknown>, { type: 'hash' }> & {
+			hashedKey: unknown
+	  })
+	| Extract<FamilyStorage<unknown>, { type: 'eq' }>
+
+type FamilyEntry = FamilySlot & { TTL: number }
 
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
@@ -62,8 +68,17 @@ export type AtomFamily<S, Key, Args extends unknown[]> = {
 	type: 'family'
 	create: (key: Key) => AtomSymbol<S, Args>
 	TTL: number
-	hash: (k: Key) => unknown
+	lookup: FamilyLookup<Key>
 }
+
+type FamilyLookup<Key> =
+	| { type: 'hash'; hash: (k: Key) => unknown }
+	| { type: 'eq'; eq: (a: Key, b: Key) => boolean }
+
+export type AtomFamilyOptions<Key> = { TTL?: number } & (
+	| { hash?: Extract<FamilyLookup<Key>, { type: 'hash' }>['hash']; eq?: never }
+	| { eq?: Extract<FamilyLookup<Key>, { type: 'eq' }>['eq']; hash?: never }
+)
 
 export type Read = {
 	<S, Key, Args extends unknown[]>(
@@ -181,16 +196,26 @@ export function derivedAtom<S = never>(
  * TTL 0 evicts unwritten, unmounted entries in the next microtask. A first render
  * can peek before eviction and subscribe afterward; its re-resolving handle reaches
  * a new entry, costing one recreation and possibly an extra render for lazy primitives.
+ * Keys are matched either by `hash` (default: identity), stored in a Map, or by
+ * `eq`, stored as key/value pairs and resolved to the first stored key for which
+ * `eq(stored, key)` holds; `hash` and `eq` are mutually exclusive. `eq` lookup is a
+ * linear scan, and stored keys are kept by reference, so they must not be mutated.
  */
 export function atomFamily<S, K, Args extends unknown[]>(
 	create: (key: K) => AtomSymbol<S, Args>,
-	opts?: Partial<{ TTL: number; hash: (k: K) => unknown }>,
+	opts?: AtomFamilyOptions<K>,
 ): AtomFamily<S, K, Args> {
+	isoAssert(
+		!(opts?.hash && opts?.eq),
+		'atomFamily accepts either hash or eq, not both',
+	)
 	return {
 		type: 'family' as const,
 		create,
 		TTL: opts?.TTL ?? 0,
-		hash: opts?.hash ?? id,
+		lookup: opts?.eq
+			? { type: 'eq', eq: opts.eq }
+			: { type: 'hash', hash: opts?.hash ?? id },
 	}
 }
 
@@ -258,22 +283,42 @@ class Store {
 	): Instance<S> {
 		if (symbol.type === 'family') {
 			if (symbol.TTL < 0) return this.getInstance(symbol.create(key!))
-			let entry: Map<unknown, Instance<S>> | undefined =
-				this.contents.get(symbol)
-			if (entry === undefined) {
-				entry = new Map()
-				this.contents.set(symbol, entry)
+			const { lookup } = symbol
+			switch (lookup.type) {
+				case 'hash': {
+					const storage = this.getFamilyStorage(symbol, () => ({
+						type: 'hash',
+						map: new Map(),
+					}))
+					isoAssert(storage.type === 'hash')
+					const { map } = storage
+					const hashedKey = lookup.hash(key!)
+					return (
+						map.get(hashedKey) ??
+						this.createFamilyInstance(symbol, key!, (instance) => {
+							map.set(hashedKey, instance)
+							return { type: 'hash', map, hashedKey }
+						})
+					)
+				}
+				case 'eq': {
+					const storage = this.getFamilyStorage(symbol, () => ({
+						type: 'eq',
+						pairs: [],
+					}))
+					isoAssert(storage.type === 'eq')
+					const { pairs } = storage
+					return (
+						pairs.find(([k]) => lookup.eq(k, key!))?.[1] ??
+						this.createFamilyInstance(symbol, key!, (instance) => {
+							pairs.push([key!, instance])
+							return { type: 'eq', pairs }
+						})
+					)
+				}
+				default:
+					return exhaustive(lookup)
 			}
-			const hashedKey = symbol.hash(key!)
-			let res = entry.get(hashedKey)
-			if (res === undefined) {
-				res = this.getInstance(symbol.create(key!))
-				entry.set(hashedKey, res)
-				res.familyEntries.push({ entry, hashedKey, TTL: symbol.TTL })
-				if (symbol.TTL < Infinity)
-					this.getTasks().pendingFamilyEvictions.add(res)
-			}
-			return res
 		}
 		let res = this.contents.get(symbol)
 		if (res === undefined) {
@@ -281,6 +326,28 @@ class Store {
 			this.contents.set(symbol, res)
 		}
 		return res
+	}
+	private getFamilyStorage<Key>(
+		symbol: AtomFamily<any, Key, any>,
+		init: () => FamilyStorage<Key>,
+	): FamilyStorage<Key> {
+		let storage: FamilyStorage<Key> | undefined = this.contents.get(symbol)
+		if (storage === undefined) {
+			storage = init()
+			this.contents.set(symbol, storage)
+		}
+		return storage
+	}
+	private createFamilyInstance<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+		register: (instance: Instance<S>) => FamilySlot,
+	): Instance<S> {
+		const instance = this.getInstance(symbol.create(key))
+		instance.familyEntries.push({ ...register(instance), TTL: symbol.TTL })
+		if (symbol.TTL < Infinity)
+			this.getTasks().pendingFamilyEvictions.add(instance)
+		return instance
 	}
 	private createInstance<S, Args extends unknown[]>(
 		symbol: AtomSymbol<S, Args>,
@@ -485,9 +552,22 @@ class Store {
 		}
 		this.flushingFamilyEvictions = undefined
 	}
-	private evict<S>(instance: Instance<S>, { entry, hashedKey }: FamilyEntry) {
-		if (entry.get(hashedKey) !== instance) return
-		entry.delete(hashedKey)
+	private evict<S>(instance: Instance<S>, entry: FamilyEntry) {
+		switch (entry.type) {
+			case 'hash': {
+				if (entry.map.get(entry.hashedKey) !== instance) return
+				entry.map.delete(entry.hashedKey)
+				break
+			}
+			case 'eq': {
+				const index = entry.pairs.findIndex(([, value]) => value === instance)
+				if (index === -1) return
+				entry.pairs.splice(index, 1)
+				break
+			}
+			default:
+				return exhaustive(entry)
+		}
 		for (const sub of Array.from(instance.subs)) this.notify(sub)
 		instance.subs.clear()
 		for (const dep of instance.deps) dep.subs.delete(instance)

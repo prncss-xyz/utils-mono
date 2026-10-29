@@ -1,6 +1,7 @@
 import { afterEach, assert, describe, expect, it, vi } from 'vitest'
 
 import { RESET, type SetStateWithReset } from '../functions'
+import { shallowEqual } from '../shallow-equal'
 import { createCommands } from './commandAtoms'
 import {
 	createStore,
@@ -9,6 +10,7 @@ import {
 	hydrate,
 	primitiveAtom,
 	TRANSIENT,
+	type AtomFamilyOptions,
 	type AtomSymbol,
 	type Read,
 } from './store'
@@ -44,14 +46,6 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(6)
 		expect(store.peek(doubled)).toBe(12)
 		expect(store.peek(str)).toBe('a')
-	})
-
-	it('hydrates atom family members before the store is returned', () => {
-		const members = atomFamily((key: string) => primitiveAtom(key.length))
-		const store = createStore([[members, 'first', 10]])
-
-		expect(store.peek(members, 'first')).toBe(10)
-		expect(store.peek(members, 'second')).toBe(6)
 	})
 
 	it('creates reusable, typed hydration entries', () => {
@@ -814,6 +808,40 @@ describe('Store', () => {
 		expect(create).toHaveBeenCalledOnce()
 	})
 
+	it('matches family members with the eq function', () => {
+		const create = vi.fn((key: string[]) => primitiveAtom(key.join()))
+		const lists = atomFamily(create, { eq: shallowEqual })
+		const store = createStore()
+
+		expect(store.peek(lists, ['a', 'b'])).toBe('a,b')
+		expect(store.peek(lists, ['a', 'b'])).toBe('a,b')
+		expect(store.peek(lists, ['b', 'a'])).toBe('b,a')
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('returns the first eq match', () => {
+		const create = vi.fn((key: { n: number }) => primitiveAtom(key.n))
+		const family = atomFamily(create, {
+			eq: (a, b) => Math.abs(a.n - b.n) <= 5,
+		})
+		const store = createStore()
+
+		expect(store.peek(family, { n: 10 })).toBe(10)
+		expect(store.peek(family, { n: 20 })).toBe(20)
+		expect(store.peek(family, { n: 15 })).toBe(10)
+		expect(create).toHaveBeenCalledTimes(2)
+	})
+
+	it('rejects hash together with eq', () => {
+		expect(() =>
+			atomFamily((key: string[]) => primitiveAtom(key.length), {
+				hash: (key: string[]) => key.join(),
+				// @ts-expect-error hash and eq are mutually exclusive
+				eq: shallowEqual,
+			}),
+		).toThrow('atomFamily accepts either hash or eq, not both')
+	})
+
 	it('caches resolved atom handles per store', () => {
 		const atom = primitiveAtom(0)
 		const store = createStore()
@@ -821,49 +849,6 @@ describe('Store', () => {
 		expect(store.resolve(atom)).toBe(store.resolve(atom))
 		expect(createStore().resolve(atom)).not.toBe(store.resolve(atom))
 	})
-
-	it.each([0, 100, Infinity])(
-		'caches resolved family handles for equal hashes with TTL %s',
-		(TTL) => {
-			const create = vi.fn((key: { id: string; label: string }) =>
-				primitiveAtom(key.label),
-			)
-			const family = atomFamily(create, { TTL, hash: (key) => key.id })
-			const store = createStore()
-			const first = { id: 'same', label: 'first' }
-			const handle = store.resolve(family, first)
-
-			expect(store.resolve(family, { id: 'same', label: 'second' })).toBe(
-				handle,
-			)
-			expect(handle.peek()).toBe('first')
-			expect(create).toHaveBeenCalledExactlyOnceWith(first)
-		},
-	)
-
-	it.each([0, 100])(
-		'replaces resolved handles after TTL %s eviction while old handles stay usable',
-		async (TTL) => {
-			vi.useFakeTimers()
-			const { names, store, handle } = keptHandle(TTL)
-			handle.subscribe(() => {})()
-			await flushMicrotask()
-			vi.advanceTimersByTime(TTL)
-
-			const replacement = store.resolve(names, 'first')
-			expect(replacement).not.toBe(handle)
-			expect(store.resolve(names, 'first')).toBe(replacement)
-			const notify = vi.fn()
-			const unsubscribe = handle.subscribe(notify)
-			handle.send('updated')
-			await flushMicrotask()
-
-			expect(replacement.peek()).toBe('updated')
-			expect(handle.peek()).toBe('updated')
-			expect(notify).toHaveBeenCalledOnce()
-			unsubscribe()
-		},
-	)
 
 	it('creates a distinct handle and instance for each transient resolve', async () => {
 		const { names, store, handle } = keptHandle(TRANSIENT)
@@ -1410,6 +1395,81 @@ describe('effect values', () => {
 			expect(cleanup).toHaveBeenCalledTimes(4)
 		},
 	)
+})
+
+describe.each([
+	{ mode: 'hash', lookup: { hash: (key: string[]) => key.join() } },
+	{ mode: 'eq', lookup: { eq: shallowEqual } },
+] as const)('array-keyed family with $mode lookup', ({ lookup }) => {
+	const makeFamily = (opts: Pick<AtomFamilyOptions<string[]>, 'TTL'> = {}) => {
+		const create = vi.fn((key: string[]) => primitiveAtom(key.join()))
+		return { create, family: atomFamily(create, { ...opts, ...lookup }) }
+	}
+
+	afterEach(() => vi.useRealTimers())
+
+	it.each([0, 100, Infinity])(
+		'caches resolved family handles with TTL %s',
+		(TTL) => {
+			const { create, family } = makeFamily({ TTL })
+			const store = createStore()
+			const first = ['a']
+			const handle = store.resolve(family, first)
+
+			expect(store.resolve(family, ['a'])).toBe(handle)
+			expect(handle.peek()).toBe('a')
+			expect(create).toHaveBeenCalledExactlyOnceWith(first)
+			expect(store.resolve(family, ['b'])).not.toBe(handle)
+		},
+	)
+
+	it('evicts only the expired family member', async () => {
+		const { create, family } = makeFamily()
+		const store = createStore()
+		const kept = store.resolve(family, ['kept'])
+		const unsubscribe = kept.subscribe(() => {})
+		store.peek(family, ['dropped'])
+		await flushMicrotask()
+
+		expect(store.resolve(family, ['kept'])).toBe(kept)
+		store.peek(family, ['dropped'])
+		expect(create).toHaveBeenCalledTimes(3)
+		unsubscribe()
+	})
+
+	it.each([0, 100])(
+		'replaces resolved handles after TTL %s eviction while old handles stay usable',
+		async (TTL) => {
+			vi.useFakeTimers()
+			const { family } = makeFamily({ TTL })
+			const store = createStore()
+			const handle = store.resolve(family, ['a'])
+			handle.subscribe(() => {})()
+			await flushMicrotask()
+			vi.advanceTimersByTime(TTL)
+
+			const replacement = store.resolve(family, ['a'])
+			expect(replacement).not.toBe(handle)
+			expect(store.resolve(family, ['a'])).toBe(replacement)
+			const notify = vi.fn()
+			const unsubscribe = handle.subscribe(notify)
+			handle.send('updated')
+			await flushMicrotask()
+
+			expect(replacement.peek()).toBe('updated')
+			expect(handle.peek()).toBe('updated')
+			expect(notify).toHaveBeenCalledOnce()
+			unsubscribe()
+		},
+	)
+
+	it('hydrates family members', () => {
+		const { family } = makeFamily({ TTL: Infinity })
+		const store = createStore([hydrate(family, ['a'], 'hydrated')])
+
+		expect(store.peek(family, ['a'])).toBe('hydrated')
+		expect(store.peek(family, ['b'])).toBe('b')
+	})
 })
 
 describe('family eviction', () => {
