@@ -5,6 +5,7 @@ import {
 	isFunction,
 	isoAssert,
 	isReset,
+	noop,
 	type SetStateWithReset,
 } from '../functions'
 
@@ -22,6 +23,14 @@ type FamilySlot =
 
 type FamilyEntry = FamilySlot & { TTL: number }
 
+type Registration = object
+
+type Delivery = {
+	instance: Instance<any>
+	callback: () => void
+	registration: Registration
+}
+
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<any, any>
@@ -35,7 +44,7 @@ type Instance<S> = {
 	mountLifecycle: { cleanup?: () => void } | undefined
 	deps: Set<Instance<any>>
 	subs: Set<Instance<any>>
-	subscriptions: Set<() => void>
+	subscriptions: Map<() => void, Registration>
 	mountCount: number
 	mountedDeps: Set<Instance<any>>
 }
@@ -364,7 +373,7 @@ class Store {
 			mountLifecycle: undefined,
 			deps: new Set(),
 			subs: new Set(),
-			subscriptions: new Set(),
+			subscriptions: new Map(),
 			mountCount: 0,
 			mountedDeps: new Set(),
 		}
@@ -384,15 +393,21 @@ class Store {
 		if (instance.mountCount > 0) this.enqueueEffect(instance)
 		for (const sub of instance.subs) this.invalidate(sub, affected)
 	}
+	/**
+	 * Delivers to a snapshot of subscription registrations. A registration
+	 * removed or replaced before its turn is skipped; one created during
+	 * delivery (including a re-subscription by the same callback) waits for a
+	 * later notification.
+	 */
 	private notify(roots: Iterable<Instance<any>>) {
 		const affected = new Set<Instance<any>>()
 		for (const root of roots) this.invalidate(root, affected)
-		const deliveries: { instance: Instance<any>; callback: () => void }[] = []
+		const deliveries: Delivery[] = []
 		for (const instance of affected)
-			for (const callback of instance.subscriptions)
-				deliveries.push({ instance, callback })
-		for (const { instance, callback } of deliveries)
-			if (instance.subscriptions.has(callback)) callback()
+			for (const [callback, registration] of instance.subscriptions)
+				deliveries.push({ instance, callback, registration })
+		for (const { instance, callback, registration } of deliveries)
+			if (instance.subscriptions.get(callback) === registration) callback()
 	}
 	private cancelEviction<S>(instance: Instance<S>) {
 		this.tasks?.pendingFamilyEvictions.delete(instance)
@@ -682,16 +697,14 @@ class Store {
 		this.sendInstance(this.getInstance(symbol, key), args)
 	}
 	private subscribeInstance<S>(instance: Instance<S>, notify: () => void) {
-		const subscribed = !instance.subscriptions.has(notify)
-		if (subscribed) {
-			instance.subscriptions.add(notify)
-			this.retain(instance)
-		}
-		let active = subscribed
+		if (instance.subscriptions.has(notify)) return noop
+		const registration = {}
+		instance.subscriptions.set(notify, registration)
+		this.retain(instance)
 		return () => {
-			if (!active) return
-			active = false
-			if (instance.subscriptions.delete(notify)) this.release(instance)
+			if (instance.subscriptions.get(notify) !== registration) return
+			instance.subscriptions.delete(notify)
+			this.release(instance)
 		}
 	}
 	resolve<S, Key, Args extends unknown[]>(

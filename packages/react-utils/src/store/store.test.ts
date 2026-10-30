@@ -161,15 +161,95 @@ describe('Store', () => {
 		const atom = primitiveAtom(0)
 		const store = createStore()
 		const later = vi.fn()
-		let releaseLater = () => {}
-		store.subscribe(atom, () => releaseLater())
-		releaseLater = store.subscribe(atom, later)
+		let unsubscribeLater = () => {}
+		const earlier = vi.fn(() => unsubscribeLater())
+		const unsubscribeEarlier = store.subscribe(atom, earlier)
+		unsubscribeLater = store.subscribe(atom, later)
 		await flushMicrotask()
 
 		store.send(atom, 1)
 		await flushMicrotask()
 
+		expect(earlier).toHaveBeenCalledOnce()
 		expect(later).not.toHaveBeenCalled()
+
+		unsubscribeEarlier()
+	})
+
+	it('delivers once per write to a callback that re-subscribes itself', async () => {
+		const atom = primitiveAtom(0)
+		const store = createStore()
+		const notify = vi.fn(() => {
+			unsubscribe()
+			unsubscribe = store.subscribe(atom, notify)
+		})
+		let unsubscribe = store.subscribe(atom, notify)
+		await flushMicrotask()
+
+		store.send(atom, 1)
+		await flushMicrotask()
+
+		expect(notify).toHaveBeenCalledOnce()
+
+		store.send(atom, 2)
+		await flushMicrotask()
+
+		expect(notify).toHaveBeenCalledTimes(2)
+
+		unsubscribe()
+	})
+
+	it('skips a subscriber replaced by re-subscribing before its turn', async () => {
+		const atom = primitiveAtom(0)
+		const store = createStore()
+		const second = vi.fn()
+		const first = vi.fn(() => {
+			if (first.mock.calls.length > 1) return
+			unsubscribeSecond()
+			unsubscribeSecond = store.subscribe(atom, second)
+		})
+		const unsubscribeFirst = store.subscribe(atom, first)
+		let unsubscribeSecond = store.subscribe(atom, second)
+		await flushMicrotask()
+
+		store.send(atom, 1)
+		await flushMicrotask()
+
+		expect(second).not.toHaveBeenCalled()
+
+		store.send(atom, 2)
+		await flushMicrotask()
+
+		expect(second).toHaveBeenCalledOnce()
+
+		unsubscribeFirst()
+		unsubscribeSecond()
+	})
+
+	it('delays a subscriber added during notification until a future notification', async () => {
+		const atom = primitiveAtom(0)
+		const store = createStore()
+		const added = vi.fn()
+		let unsubscribeAdded = () => {}
+		const first = vi.fn(() => {
+			if (first.mock.calls.length > 1) return
+			unsubscribeAdded = store.subscribe(atom, added)
+		})
+		const unsubscribeFirst = store.subscribe(atom, first)
+		await flushMicrotask()
+
+		store.send(atom, 1)
+		await flushMicrotask()
+
+		expect(added).not.toHaveBeenCalled()
+
+		store.send(atom, 2)
+		await flushMicrotask()
+
+		expect(added).toHaveBeenCalledOnce()
+
+		unsubscribeFirst()
+		unsubscribeAdded()
 	})
 
 	it('applies queued sends after flushing', async () => {
