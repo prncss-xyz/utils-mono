@@ -56,6 +56,10 @@ export default defineConfig({
 	plugins: [react()],
 	pack: {
 		plugins: [react()],
+		unbundle: true,
+		checks: {
+			moduleLevelDirective: false,
+		},
 		dts: {
 			generator: 'tsgo',
 		},
