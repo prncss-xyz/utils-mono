@@ -102,6 +102,76 @@ describe('Store', () => {
 		expect(store.peek(count)).toBe(0)
 	})
 
+	it('exposes only the settled value to diamond subscribers', async () => {
+		const source = primitiveAtom(0)
+		const left = derivedAtom((read) => read(source) + 1)
+		const right = derivedAtom((read) => read(source) + 2)
+		const leaf = derivedAtom((read) => read(left) + read(right))
+		const store = createStore()
+		const seen: number[] = []
+		store.subscribe(leaf, () => seen.push(store.peek(leaf)))
+		await flushMicrotask()
+
+		store.send(source, 2)
+		await flushMicrotask()
+
+		expect(seen).toEqual([7])
+	})
+
+	it('invalidates every changed dependency before notifying a derived atom', async () => {
+		const a = primitiveAtom(0)
+		const b = primitiveAtom(0)
+		const sum = derivedAtom((read) => read(a) + read(b))
+		const store = createStore()
+		const seen: number[] = []
+		store.subscribe(sum, () => seen.push(store.peek(sum)))
+		await flushMicrotask()
+
+		store.send(a, 1)
+		store.send(b, 2)
+		await flushMicrotask()
+
+		expect(seen).toEqual([3])
+	})
+
+	it.each([
+		['first', 'second'],
+		['second', 'first'],
+	] as const)(
+		'composes subscriber updaters with the whole committing batch (writes %s then %s)',
+		async (firstWritten, secondWritten) => {
+			const atoms = { first: primitiveAtom(0), second: primitiveAtom(0) }
+			const values = { first: 1, second: 10 }
+			const store = createStore()
+			store.subscribe(atoms.first, () =>
+				store.send(atoms.second, (value) => value + 1),
+			)
+			await flushMicrotask()
+
+			store.send(atoms[firstWritten], values[firstWritten])
+			store.send(atoms[secondWritten], values[secondWritten])
+			await flushMicrotask()
+			await flushMicrotask()
+
+			expect(store.peek(atoms.second)).toBe(11)
+		},
+	)
+
+	it('skips a subscriber unsubscribed by an earlier callback in the same delivery', async () => {
+		const atom = primitiveAtom(0)
+		const store = createStore()
+		const later = vi.fn()
+		let releaseLater = () => {}
+		store.subscribe(atom, () => releaseLater())
+		releaseLater = store.subscribe(atom, later)
+		await flushMicrotask()
+
+		store.send(atom, 1)
+		await flushMicrotask()
+
+		expect(later).not.toHaveBeenCalled()
+	})
+
 	it('applies queued sends after flushing', async () => {
 		const count = primitiveAtom(1)
 		const store = createStore()
@@ -1268,6 +1338,23 @@ describe('onMount', () => {
 })
 
 describe('mount scheduling', () => {
+	it('delivers only the settled value once when onMount writes several dependencies', async () => {
+		const a = primitiveAtom(0)
+		const b = primitiveAtom(0)
+		const sum = derivedAtom((read) => read(a) + read(b), undefined, {
+			onMount: (_get, set) => {
+				set(a, 1)
+				set(b, 2)
+			},
+		})
+		const store = createStore()
+		const seen: number[] = []
+		store.subscribe(sum, () => seen.push(store.peek(sum)))
+		await flushMicrotask()
+
+		expect(seen).toEqual([3])
+	})
+
 	it('skips callbacks when released before the mount microtask', async () => {
 		const onMount = vi.fn()
 		const effect = vi.fn()

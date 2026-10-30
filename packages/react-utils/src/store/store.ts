@@ -8,10 +8,6 @@ import {
 	type SetStateWithReset,
 } from '../functions'
 
-function call(cb: () => void) {
-	cb()
-}
-
 export const TRANSIENT = -1
 
 type FamilyStorage<Key> =
@@ -381,12 +377,22 @@ class Store {
 		}
 		this.getTasks().effects.add(instance)
 	}
-	private notify<S>(instance: Instance<S>) {
+	private invalidate<S>(instance: Instance<S>, affected: Set<Instance<any>>) {
+		if (affected.has(instance)) return
+		affected.add(instance)
 		if (instance.symbol.type === 'derived') instance.dirty = true
 		if (instance.mountCount > 0) this.enqueueEffect(instance)
-		// A subscriber can recompute and re-add itself while being notified.
-		for (const sub of Array.from(instance.subs)) this.notify(sub)
-		instance.subscriptions.forEach(call)
+		for (const sub of instance.subs) this.invalidate(sub, affected)
+	}
+	private notify(roots: Iterable<Instance<any>>) {
+		const affected = new Set<Instance<any>>()
+		for (const root of roots) this.invalidate(root, affected)
+		const deliveries: { instance: Instance<any>; callback: () => void }[] = []
+		for (const instance of affected)
+			for (const callback of instance.subscriptions)
+				deliveries.push({ instance, callback })
+		for (const { instance, callback } of deliveries)
+			if (instance.subscriptions.has(callback)) callback()
 	}
 	private cancelEviction<S>(instance: Instance<S>) {
 		this.tasks?.pendingFamilyEvictions.delete(instance)
@@ -477,11 +483,13 @@ class Store {
 			while (pending.size > 0) {
 				const updates = [...pending]
 				pending.clear()
+				const changed: Instance<any>[] = []
 				for (const [instance, next] of updates)
 					if (!Object.is(next, instance.value)) {
 						instance.value = next
-						this.notify(instance)
+						changed.push(instance)
 					}
+				this.notify(changed)
 			}
 		}
 		const mount = (instance: Instance<any>) => {
@@ -568,7 +576,7 @@ class Store {
 			default:
 				return exhaustive(entry)
 		}
-		for (const sub of Array.from(instance.subs)) this.notify(sub)
+		this.notify(instance.subs)
 		instance.subs.clear()
 		for (const dep of instance.deps) dep.subs.delete(instance)
 		instance.deps.clear()
