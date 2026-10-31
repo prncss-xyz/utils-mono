@@ -867,6 +867,414 @@ describe('Store', () => {
 		expect(cleanups[1]).toHaveBeenCalledOnce()
 	})
 
+	describe('conditional dependency cleanup ordering', () => {
+		const setup = (equal = false) => {
+			const events: string[] = []
+			const resource = (name: string, value: number) =>
+				primitiveAtom(value, {
+					effect: () => {
+						events.push(`${name} setup`)
+						return () => events.push(`${name} cleanup`)
+					},
+				})
+			const first = resource('first', 1)
+			const second = resource('second', equal ? 1 : 2)
+			const chooseFirst = primitiveAtom(true)
+			const store = createStore()
+			const consumer = derivedAtom<number>(
+				(read) => read(read(chooseFirst) ? first : second),
+				undefined,
+				{
+					effect: (value) => {
+						events.push(`consumer ${value} setup`)
+						return () => events.push(`consumer ${value} cleanup`)
+					},
+				},
+			)
+			return { events, first, second, chooseFirst, store, consumer }
+		}
+
+		it('cleans the consumer before releasing its removed resource', async () => {
+			const { events, chooseFirst, store, consumer } = setup()
+			const release = store.subscribe(consumer, () => store.peek(consumer))
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			expect(events).toEqual([
+				'consumer 1 cleanup',
+				'first cleanup',
+				'second setup',
+				'consumer 2 setup',
+			])
+			release()
+		})
+
+		it('keeps nested removed dependencies alive for an unchanged ancestor effect', async () => {
+			const { events, chooseFirst, first, second, store } = setup(true)
+			const middle = derivedAtom((read) =>
+				read(read(chooseFirst) ? first : second),
+			)
+			const consumer = derivedAtom<number>((read) => read(middle), undefined, {
+				effect: () => () => events.push('ancestor cleanup'),
+			})
+			const release = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			expect(events).toEqual(['second setup'])
+			release()
+			expect(events.indexOf('ancestor cleanup')).toBeLessThan(
+				events.indexOf('first cleanup'),
+			)
+		})
+
+		it('preserves old ownership when a removed intermediate consumer also switches', async () => {
+			const { events, chooseFirst, first, second, store } = setup()
+			const middle = derivedAtom((read) =>
+				read(read(chooseFirst) ? first : second),
+			)
+			const outer = derivedAtom<number>(
+				(read) => (read(chooseFirst) ? read(middle) : 0),
+				undefined,
+				{ effect: () => () => events.push('outer cleanup') },
+			)
+			const release = store.subscribe(outer, () => store.peek(outer))
+			const releaseMiddle = store.subscribe(middle, () => store.peek(middle))
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			expect(events.indexOf('outer cleanup')).toBeLessThan(
+				events.indexOf('first cleanup'),
+			)
+			release()
+			releaseMiddle()
+			expect(mountCount(store, first)).toBe(0)
+			expect(mountCount(store, second)).toBe(0)
+		})
+
+		it('keeps a shared old resource through both consumer cleanups', async () => {
+			const { events, chooseFirst, first, second, store, consumer } = setup()
+			const other = derivedAtom<number>(
+				(read) => read(read(chooseFirst) ? first : second),
+				undefined,
+				{ effect: () => () => events.push('other cleanup') },
+			)
+			const release = store.subscribe(consumer, () => {})
+			const releaseOther = store.subscribe(other, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			expect(events.indexOf('first cleanup')).toBeGreaterThan(
+				events.indexOf('consumer 1 cleanup'),
+			)
+			expect(events.indexOf('first cleanup')).toBeGreaterThan(
+				events.indexOf('other cleanup'),
+			)
+			expect(events.filter((event) => event === 'first cleanup')).toHaveLength(
+				1,
+			)
+			release()
+			releaseOther()
+		})
+
+		it.each([false, true])(
+			'cleans reversed dependencies after an equal consumer update: %s',
+			async (updateWhileEqual) => {
+				const events: string[] = []
+				const choice = primitiveAtom(true)
+				const source = primitiveAtom(1)
+				const effect = (name: string) => (value: number) => {
+					events.push(`${name}${value} setup`)
+					return () => events.push(`${name}${value} cleanup`)
+				}
+				const b = derivedAtom<number>(
+					(read): number => (read(choice) ? read(source) : read(a) + 1),
+					undefined,
+					{ effect: effect('B') },
+				)
+				const a = derivedAtom<number>(
+					(read): number => (read(choice) ? Math.min(read(b), 1) + 1 : 1),
+					undefined,
+					{ effect: effect('A') },
+				)
+				const store = createStore()
+				const releaseB = store.subscribe(b, () => {})
+				const releaseA = store.subscribe(a, () => {})
+				await flushMicrotask()
+				if (updateWhileEqual) {
+					store.send(source, 3)
+					await flushMicrotask()
+				}
+				events.length = 0
+				store.send(choice, false)
+				await flushMicrotask()
+				expect(events).toEqual([
+					'A2 cleanup',
+					`B${updateWhileEqual ? 3 : 1} cleanup`,
+					'A1 setup',
+					'B2 setup',
+				])
+				events.length = 0
+				store.send(choice, true)
+				await flushMicrotask()
+				expect(events).toEqual([
+					'B2 cleanup',
+					'A1 cleanup',
+					`B${updateWhileEqual ? 3 : 1} setup`,
+					'A2 setup',
+				])
+				releaseA()
+				releaseB()
+			},
+		)
+
+		it.each([
+			[false, false],
+			[true, false],
+			[false, true],
+			[true, true],
+		])(
+			'releases equal-valued reversed dependencies with reversed release order %s and cleanup remount %s',
+			async (reverseReleaseOrder, remount) => {
+				const events: string[] = []
+				const choice = primitiveAtom(true)
+				let remountConsumer = () => {}
+				const effect = (name: string) => () => {
+					events.push(`${name} setup`)
+					return () => {
+						events.push(`${name} cleanup`)
+						if (name === 'A') remountConsumer()
+					}
+				}
+				const b = derivedAtom<number>(
+					(read): number => (read(choice) ? 1 : read(a)),
+					undefined,
+					{ effect: effect('B') },
+				)
+				const a = derivedAtom<number>(
+					(read): number => (read(choice) ? read(b) : 1),
+					undefined,
+					{ effect: effect('A') },
+				)
+				const store = createStore()
+				const releaseB = store.subscribe(b, () => {})
+				const releaseA = store.subscribe(a, () => {})
+				let releaseAgain = () => {}
+				if (remount)
+					remountConsumer = () => {
+						remountConsumer = () => {}
+						releaseAgain = store.subscribe(b, () => {})
+					}
+				await flushMicrotask()
+				events.length = 0
+				store.send(choice, false)
+				await flushMicrotask()
+				expect(events).toEqual([])
+				const releases = reverseReleaseOrder
+					? [releaseB, releaseA]
+					: [releaseA, releaseB]
+				releases[0]!()
+				expect(events).toEqual([])
+				releases[1]!()
+				if (remount) {
+					expect(events).toEqual(['A cleanup'])
+					await flushMicrotask()
+					expect(events).toEqual(['A cleanup', 'A setup'])
+					expect(mountCount(store, a)).toBe(1)
+					expect(mountCount(store, b)).toBe(1)
+					releaseAgain()
+					expect(events).toEqual([
+						'A cleanup',
+						'A setup',
+						'B cleanup',
+						'A cleanup',
+					])
+				} else expect(events).toEqual(['A cleanup', 'B cleanup'])
+				expect(mountCount(store, a)).toBe(0)
+				expect(mountCount(store, b)).toBe(0)
+			},
+		)
+
+		it.each([false, true])(
+			'preserves original resource cleanup after equal-value double reversal with reversed release order %s',
+			async (reverseReleaseOrder) => {
+				const events: string[] = []
+				const choice = primitiveAtom(true)
+				let resourceLive = false
+				let consumerSawLiveResource = false
+				const b = derivedAtom<number>(
+					(read): number => (read(choice) ? 1 : read(a)),
+					undefined,
+					{
+						effect: () => {
+							resourceLive = true
+							return () => {
+								events.push('B cleanup')
+								resourceLive = false
+							}
+						},
+					},
+				)
+				const a = derivedAtom<number>(
+					(read): number => (read(choice) ? read(b) : 1),
+					undefined,
+					{
+						effect: () => () => {
+							events.push('A cleanup')
+							consumerSawLiveResource = resourceLive
+						},
+					},
+				)
+				const store = createStore()
+				const releaseB = store.subscribe(b, () => {})
+				const releaseA = store.subscribe(a, () => {})
+				await flushMicrotask()
+				store.send(choice, false)
+				await flushMicrotask()
+				store.send(choice, true)
+				await flushMicrotask()
+				expect(events).toEqual([])
+				const releases = reverseReleaseOrder
+					? [releaseB, releaseA]
+					: [releaseA, releaseB]
+				releases[0]!()
+				expect(events).toEqual([])
+				releases[1]!()
+				expect(events).toEqual(['A cleanup', 'B cleanup'])
+				expect(consumerSawLiveResource).toBe(true)
+				expect(mountCount(store, a)).toBe(0)
+				expect(mountCount(store, b)).toBe(0)
+			},
+		)
+
+		it.each([false, true])(
+			'orders retained resources across intermediate effect reruns with an indirect resource: %s',
+			async (indirect) => {
+				const events: string[] = []
+				const effect = (name: string) => (value: number) => {
+					events.push(`${name}${value} setup`)
+					return () => events.push(`${name}${value} cleanup`)
+				}
+				const firstResource = primitiveAtom(1, { effect: effect('first') })
+				const first = derivedAtom((read) => read(firstResource))
+				const second = primitiveAtom(1, { effect: effect('second') })
+				const chooseFirst = primitiveAtom(true)
+				const middle = derivedAtom(
+					(read) =>
+						read(chooseFirst)
+							? indirect
+								? read(first)
+								: read(firstResource)
+							: read(second),
+					undefined,
+					{ effect: effect('middle') },
+				)
+				const outer = derivedAtom(
+					(read) => Math.min(read(middle), 1),
+					undefined,
+					{ effect: effect('outer') },
+				)
+				const store = createStore()
+				const release = store.subscribe(outer, () => {})
+				await flushMicrotask()
+				store.send(chooseFirst, false)
+				await flushMicrotask()
+				store.send(second, 2)
+				await flushMicrotask()
+				expect(events).not.toContain('outer1 cleanup')
+				expect(events).not.toContain('first1 cleanup')
+				events.length = 0
+				store.send(second, 0)
+				store.send(firstResource, 3)
+				await flushMicrotask()
+				expect(events).toContain('outer1 cleanup')
+				expect(events).toContain('first1 cleanup')
+				expect(events.indexOf('outer1 cleanup')).toBeLessThan(
+					events.indexOf('first1 cleanup'),
+				)
+				expect(events.indexOf('outer1 cleanup')).toBeLessThan(
+					events.indexOf('middle2 cleanup'),
+				)
+				release()
+				expect(mountCount(store, firstResource)).toBe(0)
+				expect(mountCount(store, second)).toBe(0)
+			},
+		)
+
+		it('keeps removed resources while equal values preserve the old effect', async () => {
+			const { events, chooseFirst, second, first, store, consumer } =
+				setup(true)
+			const release = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			expect(events).toEqual(['second setup'])
+			const notify = vi.fn()
+			const releaseNotify = store.subscribe(consumer, notify)
+			store.send(first, 3)
+			await flushMicrotask()
+			expect(notify).not.toHaveBeenCalled()
+			events.length = 0
+			store.send(second, 2)
+			await flushMicrotask()
+			expect(events).toEqual([
+				'consumer 1 cleanup',
+				'first cleanup',
+				'second cleanup',
+				'second setup',
+				'consumer 2 setup',
+			])
+			releaseNotify()
+			release()
+		})
+
+		it('releases retained equal-value resources after the final consumer cleanup', async () => {
+			const { events, chooseFirst, store, consumer } = setup(true)
+			const release = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			events.length = 0
+			release()
+			expect(events[0]).toBe('consumer 1 cleanup')
+			expect(events).toContain('first cleanup')
+			expect(events).toContain('second cleanup')
+		})
+
+		it('preserves ownership when old resource cleanup remounts the consumer', async () => {
+			const { events, chooseFirst, first, store, consumer } = setup()
+			let releaseAgain = () => {}
+			first.effect = () => () => {
+				events.push('first cleanup')
+				release()
+				releaseAgain = store.subscribe(consumer, () => {})
+			}
+			const release = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(chooseFirst, false)
+			await flushMicrotask()
+			await flushMicrotask()
+			expect(events.indexOf('consumer 1 cleanup')).toBeLessThan(
+				events.indexOf('first cleanup'),
+			)
+			expect(mountCount(store, consumer)).toBe(1)
+			releaseAgain()
+			expect(mountCount(store, consumer)).toBe(0)
+			expect(events.filter((event) => event === 'first cleanup')).toHaveLength(
+				1,
+			)
+			expect(events.filter((event) => event === 'second cleanup')).toHaveLength(
+				1,
+			)
+		})
+	})
+
 	it('keeps shared dependencies mounted until their last consumer releases them', async () => {
 		const cleanup = vi.fn()
 		const effect = vi.fn(() => cleanup)

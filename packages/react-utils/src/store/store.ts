@@ -26,7 +26,18 @@ type FamilySlot =
 type FamilyEntry = FamilySlot & { TTL: number }
 
 type MountLifecycle = { cleanup?: () => void }
-type EffectLifecycle<S> = MountLifecycle & { readonly value: S }
+type EffectLifecycle<S> = MountLifecycle & {
+	readonly value: S
+	readonly instance: Instance<S>
+	cleaning: boolean
+	deferredReleases: Set<DeferredRelease>
+	dependencies: Set<Instance<any>>
+}
+
+type DeferredRelease = {
+	dependency: Instance<any>
+	owners: Set<EffectLifecycle<any>>
+}
 
 type Registration = object
 
@@ -53,6 +64,7 @@ type Instance<S> = {
 	subscriptions: Map<() => void, Registration>
 	mountCount: number
 	mountedDeps: Set<Instance<any>>
+	deferredOwners: Set<DeferredRelease>
 }
 
 export type AtomOptions<S> = {
@@ -388,6 +400,7 @@ class Store {
 			subscriptions: new Map(),
 			mountCount: 0,
 			mountedDeps: new Set(),
+			deferredOwners: new Set(),
 		}
 	}
 	private enqueueEffect<S>(instance: Instance<S>) {
@@ -468,14 +481,17 @@ class Store {
 		}
 	}
 	private release<S>(instance: Instance<S>) {
-		if (--instance.mountCount > 0) return
+		if (--instance.mountCount > 0) {
+			this.releaseUnowned(instance)
+			return
+		}
 		const mountedDeps = this.detachMountedDeps(instance)
 		const mountLifecycle = instance.mountLifecycle
 		instance.mountLifecycle = undefined
 		const effectLifecycle = instance.effectLifecycle
 		instance.effectLifecycle = undefined
-		effectLifecycle?.cleanup?.()
-		mountLifecycle?.cleanup?.()
+		if (effectLifecycle) this.cleanupEffect(effectLifecycle, mountLifecycle)
+		else mountLifecycle?.cleanup?.()
 		if (instance.familyEntries.length > 0)
 			this.getTasks().pendingFamilyEvictions.add(instance)
 		for (const dep of mountedDeps) this.release(dep)
@@ -510,8 +526,159 @@ class Store {
 	}
 	private unlink<S>(instance: Instance<S>, dep: Instance<any>) {
 		if (!instance.mountedDeps.delete(dep)) return
+		const owners = new Set<EffectLifecycle<any>>()
+		const visited = new Set<Instance<any>>()
+		const collect = (consumer: Instance<any>) => {
+			if (visited.has(consumer)) return
+			visited.add(consumer)
+			const lifecycle = consumer.effectLifecycle
+			if (lifecycle && (lifecycle.cleanup || lifecycle.cleaning))
+				owners.add(lifecycle)
+			for (const deferred of consumer.deferredOwners)
+				for (const owner of deferred.owners) owners.add(owner)
+			for (const sub of consumer.mountedSubs) collect(sub)
+		}
+		collect(instance)
 		dep.mountedSubs.delete(instance)
-		this.release(dep)
+		if (owners.size === 0) this.release(dep)
+		else {
+			const deferred: DeferredRelease = { dependency: dep, owners }
+			dep.deferredOwners.add(deferred)
+			for (const owner of owners) owner.deferredReleases.add(deferred)
+		}
+	}
+	private getCleanupOrder(instances: Iterable<Instance<any>>) {
+		const cleanupInstances = new Map<EffectLifecycle<any>, Instance<any>>()
+		for (const instance of instances)
+			if (instance.effectLifecycle)
+				cleanupInstances.set(instance.effectLifecycle, instance)
+		const dependencies = new Map<
+			EffectLifecycle<any>,
+			Set<EffectLifecycle<any>>
+		>()
+		const deferredDependencies: [EffectLifecycle<any>, EffectLifecycle<any>][] =
+			[]
+		const collect = (lifecycle: EffectLifecycle<any>) => {
+			if (dependencies.has(lifecycle)) return
+			const deps = new Set<EffectLifecycle<any>>()
+			dependencies.set(lifecycle, deps)
+			const collectDependency = (
+				dependency: Instance<any>,
+				deferred: boolean,
+				visited = new Set<Instance<any>>(),
+			): void => {
+				if (visited.has(dependency)) return
+				visited.add(dependency)
+				const dependencyLifecycle = dependency.effectLifecycle
+				if (dependencyLifecycle) {
+					if (deferred)
+						deferredDependencies.push([lifecycle, dependencyLifecycle])
+					else deps.add(dependencyLifecycle)
+					collect(dependencyLifecycle)
+				} else
+					for (const dep of dependency.mountedDeps)
+						collectDependency(dep, deferred, visited)
+			}
+			for (const dependency of lifecycle.dependencies)
+				collectDependency(dependency, false)
+			for (const { dependency } of lifecycle.deferredReleases)
+				collectDependency(dependency, true)
+		}
+		for (const lifecycle of cleanupInstances.keys()) collect(lifecycle)
+		const reaches = (
+			from: EffectLifecycle<any>,
+			to: EffectLifecycle<any>,
+			visited = new Set<EffectLifecycle<any>>(),
+		): boolean => {
+			if (from === to) return true
+			if (visited.has(from)) return false
+			visited.add(from)
+			for (const dependency of dependencies.get(from)!)
+				if (reaches(dependency, to, visited)) return true
+			return false
+		}
+		for (const [lifecycle, dependency] of deferredDependencies)
+			if (!reaches(dependency, lifecycle))
+				dependencies.get(lifecycle)!.add(dependency)
+		const cleanupOrder: Instance<any>[] = []
+		const visited = new Set<EffectLifecycle<any>>()
+		const order = (lifecycle: EffectLifecycle<any>) => {
+			if (visited.has(lifecycle)) return
+			visited.add(lifecycle)
+			for (const dependency of dependencies.get(lifecycle)!) order(dependency)
+			const instance = cleanupInstances.get(lifecycle)
+			if (instance) cleanupOrder.push(instance)
+		}
+		for (const lifecycle of cleanupInstances.keys()) order(lifecycle)
+		return cleanupOrder
+	}
+	private unownedComponent(instance: Instance<any>) {
+		const component = new Set<Instance<any>>()
+		const collect = (current: Instance<any>): boolean => {
+			if (component.has(current)) return true
+			component.add(current)
+			if (
+				current.mountCount >
+				current.mountedSubs.size + current.deferredOwners.size
+			)
+				return false
+			for (const consumer of current.mountedSubs)
+				if (!collect(consumer)) return false
+			for (const deferred of current.deferredOwners)
+				for (const owner of deferred.owners)
+					if (
+						owner.cleaning ||
+						owner.instance.effectLifecycle !== owner ||
+						!collect(owner.instance)
+					)
+						return false
+			return true
+		}
+		return collect(instance) ? component : undefined
+	}
+	private releaseUnowned(instance: Instance<any>) {
+		const component = this.unownedComponent(instance)
+		if (!component) return
+		const order = this.getCleanupOrder(component)
+		for (let index = order.length - 1; index >= 0; index--) {
+			const consumer = order[index]!
+			if (consumer.mountCount === 0 || !this.unownedComponent(consumer))
+				continue
+			const lifecycle = consumer.effectLifecycle
+			const mountLifecycle = consumer.mountLifecycle
+			consumer.effectLifecycle = undefined
+			consumer.mountLifecycle = undefined
+			if (lifecycle) this.cleanupEffect(lifecycle, mountLifecycle)
+			else mountLifecycle?.cleanup?.()
+			if (consumer.mountCount > 0) {
+				;(this.flushingMounts ?? this.getTasks().mounts).add(consumer)
+				this.enqueueEffect(consumer)
+			}
+		}
+	}
+	private cleanupEffect(
+		lifecycle: EffectLifecycle<any>,
+		mountLifecycle?: MountLifecycle,
+	) {
+		if (lifecycle.cleaning) {
+			mountLifecycle?.cleanup?.()
+			return
+		}
+		const cleanup = lifecycle.cleanup
+		lifecycle.cleanup = undefined
+		lifecycle.cleaning = true
+		cleanup?.()
+		mountLifecycle?.cleanup?.()
+		for (const deferred of lifecycle.deferredReleases) {
+			lifecycle.deferredReleases.delete(deferred)
+			deferred.owners.delete(lifecycle)
+			if (deferred.owners.size === 0) {
+				deferred.dependency.deferredOwners.delete(deferred)
+				this.release(deferred.dependency)
+			}
+		}
+		lifecycle.dependencies.clear()
+		lifecycle.cleaning = false
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
@@ -520,10 +687,25 @@ class Store {
 	) {
 		const previous = instance.effectLifecycle
 		const last = previous?.value
-		const previousCleanup = previous?.cleanup
-		if (previous) previous.cleanup = undefined
-		previousCleanup?.()
-		const lifecycle: EffectLifecycle<S> = { value: next }
+		if (previous) this.cleanupEffect(previous)
+		const lifecycle: EffectLifecycle<S> = {
+			value: next,
+			instance,
+			cleaning: false,
+			deferredReleases: new Set(),
+			dependencies: new Set(),
+		}
+		const visited = new Set<Instance<any>>()
+		const collect = (dependency: Instance<any>) => {
+			if (visited.has(dependency)) return
+			visited.add(dependency)
+			if (dependency.effectLifecycle) {
+				lifecycle.dependencies.add(dependency)
+				return
+			}
+			for (const dep of dependency.mountedDeps) collect(dep)
+		}
+		for (const dep of instance.mountedDeps) collect(dep)
 		instance.effectLifecycle = lifecycle
 		const cleanup = effect?.(
 			next,
@@ -603,14 +785,15 @@ class Store {
 		}
 		for (const instance of effects) collect(instance)
 		this.flushingEffects = undefined
+		const cleanupOrder = this.getCleanupOrder(
+			transitions.map(({ instance }) => instance),
+		)
 		// Release consumers before the resources provided by their dependencies.
-		for (let index = transitions.length - 1; index >= 0; index--) {
-			const { instance } = transitions[index]!
+		for (let index = cleanupOrder.length - 1; index >= 0; index--) {
+			const instance = cleanupOrder[index]!
 			if (instance.mountCount === 0) continue
 			const lifecycle = instance.effectLifecycle
-			const cleanup = lifecycle?.cleanup
-			if (lifecycle) lifecycle.cleanup = undefined
-			cleanup?.()
+			if (lifecycle) this.cleanupEffect(lifecycle)
 		}
 		// Recreate dependency resources before their consumers run.
 		for (const { instance, next } of transitions)
