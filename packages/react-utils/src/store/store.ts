@@ -36,17 +36,18 @@ type Delivery = {
 	registration: Registration
 }
 
+type Freshness = { type: 'dirty' } | { type: 'clean'; validatedAt: number }
+
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<any, any>
 	familyEntries: FamilyEntry[]
 	familyRemovalTimeouts: Map<ReturnType<typeof setTimeout>, FamilyEntry>
-	dirty: boolean
+	freshness: Freshness
 	value: S
 	effectLifecycle: EffectLifecycle<S> | undefined
 	mountLifecycle: MountLifecycle | undefined
 	version: number
-	validatedAt: number
 	depVersions: Map<Instance<any>, number>
 	mountedSubs: Set<Instance<any>>
 	subscriptions: Map<() => void, Registration>
@@ -371,7 +372,10 @@ class Store {
 			symbol,
 			familyEntries: [],
 			familyRemovalTimeouts: new Map(),
-			dirty: symbol.type === 'derived',
+			freshness:
+				symbol.type === 'derived'
+					? { type: 'dirty' }
+					: { type: 'clean', validatedAt: -1 },
 			value:
 				symbol.type === 'primitive'
 					? fromInit(symbol.getter)
@@ -379,7 +383,6 @@ class Store {
 			effectLifecycle: undefined,
 			mountLifecycle: undefined,
 			version: 0,
-			validatedAt: -1,
 			depVersions: new Map(),
 			mountedSubs: new Set(),
 			subscriptions: new Map(),
@@ -402,7 +405,8 @@ class Store {
 	private invalidate<S>(instance: Instance<S>, affected: Set<Instance<any>>) {
 		if (affected.has(instance)) return
 		affected.add(instance)
-		if (instance.symbol.type === 'derived') instance.dirty = true
+		if (instance.symbol.type === 'derived')
+			instance.freshness = { type: 'dirty' }
 		if (instance.mountCount > 0) {
 			this.enqueueReconcile(instance)
 			this.enqueueEffect(instance)
@@ -653,13 +657,14 @@ class Store {
 		)
 		this.publishChange(instance)
 		instance.depVersions.clear()
-		if (instance.symbol.type === 'derived') instance.dirty = true
+		if (instance.symbol.type === 'derived')
+			instance.freshness = { type: 'dirty' }
 	}
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance
 		if (symbol.type === 'derived') this.revalidateUnmounted(instance)
-		if (instance.dirty) {
-			instance.dirty = false
+		if (instance.freshness.type === 'dirty') {
+			instance.freshness = { type: 'clean', validatedAt: -1 }
 			switch (symbol.type) {
 				case 'primitive':
 					instance.value = fromInit(symbol.getter)
@@ -679,7 +684,7 @@ class Store {
 					const next = symbol.getter(read)
 					instance.value = next
 					if (!Object.is(next, previous)) this.advanceDerivedVersion(instance)
-					instance.validatedAt = this.epoch
+					instance.freshness = { type: 'clean', validatedAt: this.epoch }
 					if (instance.mountCount > 0) this.syncMountedDeps(instance)
 					return instance.value
 				}
@@ -708,14 +713,18 @@ class Store {
 	 * peeks can mount or revalidate the instance.
 	 */
 	private isFresh<S>(instance: Instance<S>) {
-		return instance.mountCount > 0 || instance.validatedAt === this.epoch
+		return (
+			instance.mountCount > 0 ||
+			(instance.freshness.type === 'clean' &&
+				instance.freshness.validatedAt === this.epoch)
+		)
 	}
 	private revalidateUnmounted<S>(instance: Instance<S>) {
-		if (instance.dirty || this.isFresh(instance)) return
+		if (instance.freshness.type === 'dirty' || this.isFresh(instance)) return
 		const current = this.depsAreCurrent(instance)
 		if (this.isFresh(instance)) return
-		if (current) instance.validatedAt = this.epoch
-		else instance.dirty = true
+		if (current) instance.freshness = { type: 'clean', validatedAt: this.epoch }
+		else instance.freshness = { type: 'dirty' }
 	}
 	private depsAreCurrent<S>(instance: Instance<S>) {
 		for (const [dep, version] of instance.depVersions) {
