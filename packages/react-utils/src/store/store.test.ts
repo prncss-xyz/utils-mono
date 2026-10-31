@@ -10,6 +10,7 @@ import {
 	hydrate,
 	primitiveAtom,
 	TRANSIENT,
+	type AtomFamily,
 	type AtomFamilyOptions,
 	type AtomSymbol,
 	type Read,
@@ -377,7 +378,9 @@ describe('Store', () => {
 	it('composes derived writes against pending values through nested getters', async () => {
 		const count = primitiveAtom(10)
 		const doubled = derivedAtom((read) => read(count) * 2)
-		const members = atomFamily((_key: string) => doubled)
+		const members = atomFamily((_key: string) =>
+			derivedAtom((read) => read(doubled)),
+		)
 		const update = derivedAtom(null, (read, write, amount: number) =>
 			write(count, read(members, 'count') / 2 + amount),
 		)
@@ -413,12 +416,7 @@ describe('Store', () => {
 	})
 
 	it('reads a one-argument atom family from a derived getter', () => {
-		const members = new Map<string, ReturnType<typeof primitiveAtom<string>>>()
-		const names = atomFamily((key: string) => {
-			const member = members.get(key) ?? primitiveAtom(key.toUpperCase())
-			members.set(key, member)
-			return member
-		})
+		const names = atomFamily((key: string) => primitiveAtom(key.toUpperCase()))
 		const selected = derivedAtom(
 			(read) => read(names, 'first'),
 			(_read, _write, _event: never) => {},
@@ -429,12 +427,10 @@ describe('Store', () => {
 	})
 
 	it('reads and writes atom families from a derived setter', async () => {
-		const source = primitiveAtom(3)
-		const target = primitiveAtom(0)
-		const sourceFamily = atomFamily((_key: string) => source)
-		const targetFamily = atomFamily((_key: string) => target)
+		const sourceFamily = atomFamily((_key: string) => primitiveAtom(3))
+		const targetFamily = atomFamily((_key: string) => primitiveAtom(0))
 		const selected = derivedAtom(
-			(read) => read(target),
+			(read) => read(targetFamily, 'target'),
 			(read, write, multiplier: number) =>
 				write(
 					targetFamily,
@@ -447,7 +443,7 @@ describe('Store', () => {
 		store.send(selected, 2)
 		await flushMicrotask()
 
-		expect(store.peek(target)).toBe(6)
+		expect(store.peek(targetFamily, 'target')).toBe(6)
 	})
 
 	it('keeps zero-argument derived reads unchanged', () => {
@@ -462,10 +458,8 @@ describe('Store', () => {
 	})
 
 	it('tracks dependencies on the resolved family member', async () => {
-		const first = primitiveAtom(1)
-		const second = primitiveAtom(10)
 		const numbers = atomFamily((key: string) =>
-			key === 'first' ? first : second,
+			primitiveAtom(key === 'first' ? 1 : 10),
 		)
 		const selected = derivedAtom(
 			(read) => read(numbers, 'first'),
@@ -477,12 +471,12 @@ describe('Store', () => {
 		store.subscribe(selected, subscriber)
 		expect(store.peek(selected)).toBe(1)
 
-		store.send(second, 11)
+		store.send(numbers, 'second', 11)
 		await flushMicrotask()
 		expect(subscriber).not.toHaveBeenCalled()
 		expect(store.peek(selected)).toBe(1)
 
-		store.send(first, 2)
+		store.send(numbers, 'first', 2)
 		await flushMicrotask()
 		expect(subscriber).toHaveBeenCalledOnce()
 		expect(store.peek(selected)).toBe(2)
@@ -1667,6 +1661,62 @@ describe('Store', () => {
 		).toThrow('atomFamily accepts either hash or eq, not both')
 	})
 
+	it.each<
+		[
+			string,
+			{ TTL: typeof TRANSIENT } | undefined,
+			string,
+			(
+				store: ReturnType<typeof createStore>,
+				family: AtomFamily<number, string, [SetStateWithReset<number>]>,
+				shared: ReturnType<typeof primitiveAtom<number>>,
+			) => void | Promise<void>,
+		]
+	>([
+		[
+			'a create factory that returns the same symbol for different keys',
+			undefined,
+			'second',
+			(store, family) => {
+				expect(store.peek(family, 'first')).toBe(0)
+			},
+		],
+		[
+			'a create factory that returns an already used symbol after eviction',
+			undefined,
+			'first',
+			async (store, family) => {
+				expect(store.peek(family, 'first')).toBe(0)
+				await flushMicrotask()
+			},
+		],
+		[
+			'a transient create factory that returns an already used symbol',
+			{ TTL: TRANSIENT },
+			'first',
+			(store, family) => {
+				expect(store.peek(family, 'first')).toBe(0)
+			},
+		],
+		[
+			'a create factory that returns a symbol already used directly',
+			undefined,
+			'first',
+			(store, _family, shared) => {
+				store.peek(shared)
+			},
+		],
+	])('rejects %s', async (_label, options, key, step) => {
+		const shared = primitiveAtom(0)
+		const family = atomFamily((_key: string) => shared, options)
+		const store = createStore()
+
+		await step(store, family, shared)
+		expect(() => store.peek(family, key)).toThrow(
+			'atomFamily create must return a fresh symbol on every call',
+		)
+	})
+
 	it('caches resolved atom handles per store', () => {
 		const atom = primitiveAtom(0)
 		const store = createStore()
@@ -2497,7 +2547,11 @@ describe('command family eviction', () => {
 	it('evicts command members while retaining the primitive family entries they write', async () => {
 		const values = atomFamily((_key: string) => primitiveAtom(0))
 		const commands = createCommands<{ save: (value: number) => void }>()
-		const create = vi.fn((_key: string) => commands.cmd.save)
+		const create = vi.fn((_key: string) =>
+			derivedAtom(null, (_read, write, value: number) =>
+				write(commands.cmd.save, value),
+			),
+		)
 		const family = atomFamily(create)
 		const store = createStore()
 		store.send(commands.dependencyAtom, {

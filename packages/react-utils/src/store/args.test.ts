@@ -65,22 +65,27 @@ describe('setter argument tuples', () => {
 
 	it('preserves omitted optional arguments, explicit undefined, and rest arguments', () => {
 		const calls: unknown[][] = []
-		const optional = derivedAtom(
-			null,
-			(_read, _write, ...args: [value?: number]) => {
-				calls.push(args)
-			},
-		)
-		const zero = derivedAtom(null, (_read, _write, ...args: []) => {
+		const optionalSetter = (
+			_read: Read,
+			_write: Write,
+			...args: [value?: number]
+		) => {
 			calls.push(args)
-		})
+		}
+		const zeroSetter = (_read: Read, _write: Write, ...args: []) => {
+			calls.push(args)
+		}
+		const optional = derivedAtom(null, optionalSetter)
+		const zero = derivedAtom(null, zeroSetter)
 		const rest = derivedAtom(
 			null,
 			(_read, _write, label: string, ...values: number[]) => {
 				calls.push([label, ...values])
 			},
 		)
-		const family = atomFamily((_key: undefined) => optional)
+		const family = atomFamily((_key: undefined) =>
+			derivedAtom(null, optionalSetter),
+		)
 		const store = createStore()
 		store.send(zero)
 		store.resolve(zero).send()
@@ -110,20 +115,25 @@ describe('setter argument tuples', () => {
 
 	it('hydrates raw and helper entries with zero, multiple, and optional arguments', () => {
 		const calls: unknown[][] = []
-		const zero = derivedAtom(null, (_read, _write, ...args: []) => {
+		const zeroSetter = (_read: Read, _write: Write, ...args: []) => {
 			calls.push(args)
-		})
+		}
+		const zero = derivedAtom(null, zeroSetter)
 		const optional = derivedAtom(null, (_read, _write, ...args: [number?]) => {
 			calls.push(args)
 		})
-		const zeroFamily = atomFamily((_key: undefined) => zero)
-		const count = primitiveAtom(0)
-		const update = derivedAtom(
-			null,
-			(read, write, amount: number, multiplier: number) =>
-				write(count, read(count) + amount * multiplier),
+		const zeroFamily = atomFamily((_key: undefined) =>
+			derivedAtom(null, zeroSetter),
 		)
-		const family = atomFamily((_key: string) => update)
+		const count = primitiveAtom(0)
+		const updateSetter = (
+			read: Read,
+			write: Write,
+			amount: number,
+			multiplier: number,
+		) => write(count, read(count) + amount * multiplier)
+		const update = derivedAtom(null, updateSetter)
+		const family = atomFamily((_key: string) => derivedAtom(null, updateSetter))
 		const entries = [
 			hydrate(zero),
 			hydrate(zeroFamily, undefined),
@@ -192,10 +202,14 @@ describe('setter argument tuples', () => {
 
 	it('infers tuple types and rejects invalid calls across the public API', () => {
 		const count = primitiveAtom(0)
-		const update = derivedAtom(
-			(read) => read(count),
-			(_read, _write, _n: number, _label: string) => {},
-		)
+		const updateGetter = (read: Read) => read(count)
+		const updateSetter = (
+			_read: Read,
+			_write: Write,
+			_n: number,
+			_label: string,
+		) => {}
+		const update = derivedAtom(updateGetter, updateSetter)
 		const explicit = derivedAtom<number, [n: number]>(
 			() => 0,
 			(_read, _write, _n) => {},
@@ -205,10 +219,15 @@ describe('setter argument tuples', () => {
 		const writeOnly = derivedAtom(null, (_read, _write, _n: number) => {})
 		const readOnly = derivedAtom(() => 0)
 		const focused = focusAtom(readOnly, { getter: (n) => String(n) })
-		const zero = derivedAtom(null, () => {})
-		const family = atomFamily((_key: string) => update)
-		const zeroFamily = atomFamily((_key: undefined) => zero)
-		const readOnlyFamily = atomFamily((_key: string) => readOnly)
+		const zeroSetter = () => {}
+		const zero = derivedAtom(null, zeroSetter)
+		const family = atomFamily((_key: string) =>
+			derivedAtom(updateGetter, updateSetter),
+		)
+		const zeroFamily = atomFamily((_key: undefined) =>
+			derivedAtom(null, zeroSetter),
+		)
+		const readOnlyFamily = atomFamily((_key: string) => derivedAtom(() => 0))
 		const store = createStore()
 		expectTypeOf(update).toEqualTypeOf<AtomSymbol<number, [number, string]>>()
 		expectTypeOf(explicit).toEqualTypeOf<AtomSymbol<number, [number]>>()

@@ -52,8 +52,8 @@ type Freshness = { type: 'dirty' } | { type: 'clean'; validatedAt: number }
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<any, any>
-	familyEntries: FamilyEntry[]
-	familyRemovalTimeouts: Map<ReturnType<typeof setTimeout>, FamilyEntry>
+	familyEntry: FamilyEntry | undefined
+	familyRemovalTimeout: ReturnType<typeof setTimeout> | undefined
 	freshness: Freshness
 	value: S
 	effectLifecycle: EffectLifecycle<S> | undefined
@@ -309,7 +309,7 @@ class Store {
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
-			if (symbol.TTL < 0) return this.getInstance(symbol.create(key!))
+			if (symbol.TTL < 0) return this.createFreshInstance(symbol, key!)
 			const { lookup } = symbol
 			switch (lookup.type) {
 				case 'hash': {
@@ -370,10 +370,25 @@ class Store {
 		key: Key,
 		register: (instance: Instance<S>) => FamilySlot,
 	): Instance<S> {
-		const instance = this.getInstance(symbol.create(key))
-		instance.familyEntries.push({ ...register(instance), TTL: symbol.TTL })
-		if (symbol.TTL < Infinity)
+		const instance = this.createFreshInstance(symbol, key)
+		const slot = register(instance)
+		if (symbol.TTL < Infinity) {
+			instance.familyEntry = { ...slot, TTL: symbol.TTL }
 			this.getTasks().pendingFamilyEvictions.add(instance)
+		}
+		return instance
+	}
+	private createFreshInstance<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+	): Instance<S> {
+		const created = symbol.create(key)
+		isoAssert(
+			!this.contents.has(created),
+			'atomFamily create must return a fresh symbol on every call',
+		)
+		const instance = this.createInstance(created)
+		this.contents.set(created, instance)
 		return instance
 	}
 	private createInstance<S, Args extends unknown[]>(
@@ -382,8 +397,8 @@ class Store {
 		return {
 			handle: undefined,
 			symbol,
-			familyEntries: [],
-			familyRemovalTimeouts: new Map(),
+			familyEntry: undefined,
+			familyRemovalTimeout: undefined,
 			freshness:
 				symbol.type === 'derived'
 					? { type: 'dirty' }
@@ -445,11 +460,10 @@ class Store {
 	private cancelEviction<S>(instance: Instance<S>) {
 		this.tasks?.pendingFamilyEvictions.delete(instance)
 		this.flushingFamilyEvictions?.delete(instance)
-		for (const [timeout, familyEntry] of instance.familyRemovalTimeouts) {
-			clearTimeout(timeout)
-			instance.familyEntries.push(familyEntry)
+		if (instance.familyRemovalTimeout !== undefined) {
+			clearTimeout(instance.familyRemovalTimeout)
+			instance.familyRemovalTimeout = undefined
 		}
-		instance.familyRemovalTimeouts.clear()
 	}
 	/**
 	 * `peekInstance` must run while the instance is still unmounted, so that a
@@ -492,7 +506,7 @@ class Store {
 		instance.effectLifecycle = undefined
 		if (effectLifecycle) this.cleanupEffect(effectLifecycle, mountLifecycle)
 		else mountLifecycle?.cleanup?.()
-		if (instance.familyEntries.length > 0)
+		if (instance.familyEntry)
 			this.getTasks().pendingFamilyEvictions.add(instance)
 		for (const dep of mountedDeps) this.release(dep)
 	}
@@ -801,33 +815,35 @@ class Store {
 				this.runEffect(instance, instance.symbol.effect, next)
 		for (const instance of pendingFamilyEvictions) {
 			if (instance.mountCount > 0) continue
-			for (const familyEntry of instance.familyEntries) {
-				const { TTL } = familyEntry
-				if (TTL === Infinity) continue
-				if (TTL === 0) {
-					this.evict(instance, familyEntry)
-					continue
-				}
-				const timeout = setTimeout(() => {
-					instance.familyRemovalTimeouts.delete(timeout)
-					if (instance.mountCount === 0) this.evict(instance, familyEntry)
-				}, TTL)
-				instance.familyRemovalTimeouts.set(timeout, familyEntry)
+			const { familyEntry } = instance
+			isoAssert(familyEntry)
+			const { TTL } = familyEntry
+			if (TTL === 0) {
+				this.evict(instance)
+				continue
 			}
-			instance.familyEntries = []
+			isoAssert(instance.familyRemovalTimeout === undefined)
+			instance.familyRemovalTimeout = setTimeout(() => {
+				instance.familyRemovalTimeout = undefined
+				isoAssert(instance.mountCount === 0)
+				this.evict(instance)
+			}, TTL)
 		}
 		this.flushingFamilyEvictions = undefined
 	}
-	private evict<S>(instance: Instance<S>, entry: FamilyEntry) {
+	private evict<S>(instance: Instance<S>) {
+		const entry = instance.familyEntry
+		isoAssert(entry)
+		instance.familyEntry = undefined
 		switch (entry.type) {
 			case 'hash': {
-				if (entry.map.get(entry.hashedKey) !== instance) return
+				isoAssert(entry.map.get(entry.hashedKey) === instance)
 				entry.map.delete(entry.hashedKey)
 				break
 			}
 			case 'eq': {
 				const index = entry.pairs.findIndex(([, value]) => value === instance)
-				if (index === -1) return
+				isoAssert(index !== -1)
 				entry.pairs.splice(index, 1)
 				break
 			}
