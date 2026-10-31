@@ -17,6 +17,35 @@ import {
 
 const flushMicrotask = () => Promise.resolve()
 
+const internalInstance = (store: unknown, symbol: unknown) =>
+	(store as any).contents.get(symbol)
+
+const mountedSubCount = (store: unknown, symbol: unknown) =>
+	internalInstance(store, symbol).mountedSubs.size as number
+
+const mountCount = (store: unknown, symbol: unknown) =>
+	internalInstance(store, symbol).mountCount as number
+
+const expectNoStrongReferences = (
+	store: unknown,
+	symbol: unknown,
+	dependants: Set<object>,
+) => {
+	const source = internalInstance(store, symbol) as object
+	const holds = (value: unknown) => dependants.has(value as object)
+	for (const value of Object.values(source)) {
+		expect(holds(value)).toBe(false)
+		if (value instanceof Set || Array.isArray(value)) {
+			for (const item of value) expect(holds(item)).toBe(false)
+		} else if (value instanceof Map) {
+			for (const [entryKey, entryValue] of value) {
+				expect(holds(entryKey)).toBe(false)
+				expect(holds(entryValue)).toBe(false)
+			}
+		}
+	}
+}
+
 const keptHandle = (TTL = 0) => {
 	const create = vi.fn((key: string) => primitiveAtom(key))
 	const names = atomFamily(create, { TTL })
@@ -1098,17 +1127,58 @@ describe('Store', () => {
 		const store = createStore()
 		const unsubscribe = store.subscribe(consumer, () => {})
 		let unsubscribeAgain = () => {}
+		const notifyAgain = vi.fn()
 		remount = () => {
 			remount = () => {}
-			unsubscribeAgain = store.subscribe(consumer, () => {})
+			unsubscribeAgain = store.subscribe(consumer, notifyAgain)
 		}
 		await flushMicrotask()
 		unsubscribe()
 		await flushMicrotask()
 		expect(sourceEffect).toHaveBeenCalledOnce()
-		unsubscribeAgain()
-		expect(sourceEffect).toHaveBeenCalledOnce()
+		store.send(source, 7)
+		await flushMicrotask()
+		expect(notifyAgain).toHaveBeenCalledOnce()
+		expect(store.peek(consumer)).toBe(7)
+		expect(sourceEffect).toHaveBeenCalledTimes(2)
 		expect(cleanup).toHaveBeenCalledOnce()
+		unsubscribeAgain()
+		expect(sourceEffect).toHaveBeenCalledTimes(2)
+		expect(cleanup).toHaveBeenCalledTimes(2)
+	})
+
+	it('counts a nested subscribe made while an unmounted instance is being retained', async () => {
+		const flag = primitiveAtom(true)
+		const nestedSubscribe = vi.fn()
+		const evaluate = vi.fn()
+		const inner = primitiveAtom(5, {
+			onMount: () => () => {
+				store.subscribe(derived, () => {})
+				nestedSubscribe()
+			},
+		})
+		const middle = derivedAtom((read) => {
+			evaluate()
+			return read(flag) ? read(inner) : 0
+		})
+		const derived = derivedAtom((read) => {
+			evaluate()
+			return read(middle) + 1
+		})
+		const store = createStore()
+		store.peek(derived)
+		let subscribed = false
+		store.subscribe(middle, () => {
+			if (subscribed) return
+			subscribed = true
+			store.subscribe(derived, () => {})
+		})
+		await flushMicrotask()
+		store.send(flag, false)
+		await flushMicrotask()
+		expect(nestedSubscribe).toHaveBeenCalledOnce()
+		expect(mountCount(store, derived)).toBe(2)
+		expect(evaluate).toHaveBeenCalledTimes(4)
 	})
 
 	it('releases dependency references after several conditional switches', async () => {
@@ -1391,7 +1461,7 @@ describe('Store', () => {
 		unsubscribe()
 	})
 
-	it('detaches an evicted derived member from its dependencies', async () => {
+	it('does not link an unmounted evicted member to its dependencies', async () => {
 		const base = primitiveAtom(1)
 		const getter = vi.fn((read: Read) => read(base) * 2)
 		let member: AtomSymbol<number, never> | undefined
@@ -1400,14 +1470,11 @@ describe('Store', () => {
 			return member
 		})
 		const store = createStore()
-		const subsOfBase = () =>
-			(store as any).contents.get(base).subs as Set<unknown>
 
 		store.subscribe(doubles, 'first', () => {})()
-		expect(subsOfBase().size).toBe(1)
 		await flushMicrotask()
 
-		expect(subsOfBase().size).toBe(0)
+		expect(mountedSubCount(store, base)).toBe(0)
 		expect(getter).toHaveBeenCalledOnce()
 		store.send(base, 5)
 		await flushMicrotask()
@@ -2034,5 +2101,164 @@ describe('command family eviction', () => {
 		expect(store.peek(values, 'a')).toBe(7)
 		store.resolve(family, 'a')
 		expect(create).toHaveBeenCalledTimes(2)
+	})
+})
+
+describe('unmounted derived caches', () => {
+	const transientDerived = (
+		source: AtomSymbol<number, [SetStateWithReset<number>]>,
+		created: AtomSymbol<number, never>[],
+	) =>
+		atomFamily(
+			(key: number) => {
+				const symbol = derivedAtom((read) => read(source) + key)
+				created.push(symbol)
+				return symbol
+			},
+			{ TTL: TRANSIENT },
+		)
+
+	type Access = (
+		store: ReturnType<typeof createStore>,
+		family: ReturnType<typeof transientDerived>,
+		key: number,
+	) => number
+
+	it.each<[string, Access]>([
+		[
+			'subscribe',
+			(store, family, key) => {
+				const handle = store.resolve(family, key)
+				const value = handle.peek()
+				handle.subscribe(() => {})()
+				return value
+			},
+		],
+		['resolve peek', (store, family, key) => store.resolve(family, key).peek()],
+		['family peek', (store, family, key) => store.peek(family, key)],
+	])('detaches transient dependants after %s churn', async (_name, access) => {
+		const source = primitiveAtom(1)
+		const created: AtomSymbol<number, never>[] = []
+		const family = transientDerived(source, created)
+		const store = createStore()
+		for (let key = 0; key < 100; key++)
+			expect(access(store, family, key)).toBe(1 + key)
+		await flushMicrotask()
+		const dependants = new Set<object>(
+			created.map((symbol) => internalInstance(store, symbol)),
+		)
+		expect(dependants.size).toBe(100)
+		for (const dependant of dependants) expect(dependant).toBeDefined()
+		expect(mountedSubCount(store, source)).toBe(0)
+		expectNoStrongReferences(store, source, dependants)
+	})
+
+	it.each([false, true])(
+		'does not retain discarded ordinary derivations (subscribe: %s)',
+		async (subscribe) => {
+			const source = primitiveAtom(1)
+			const store = createStore()
+			const dependants = new Set<object>()
+			for (let key = 0; key < 100; key++) {
+				const derived = derivedAtom((read) => read(source) + key)
+				expect(store.peek(derived)).toBe(1 + key)
+				dependants.add(internalInstance(store, derived))
+				if (subscribe) store.subscribe(derived, () => {})()
+			}
+			await flushMicrotask()
+			expect(dependants.size).toBe(100)
+			expect(mountedSubCount(store, source)).toBe(0)
+			expectNoStrongReferences(store, source, dependants)
+		},
+	)
+
+	it('keeps dependant links only while mounted', async () => {
+		const source = primitiveAtom(1)
+		const derived = derivedAtom((read) => read(source) * 2)
+		const store = createStore()
+		const unsubscribe = store.subscribe(derived, () => {})
+		await flushMicrotask()
+		expect(mountedSubCount(store, source)).toBe(1)
+		unsubscribe()
+		expect(mountedSubCount(store, source)).toBe(0)
+	})
+
+	it('returns fresh values from a retained unmounted handle after its source changes', async () => {
+		const source = primitiveAtom(1)
+		const getter = vi.fn((read: Read) => read(source) * 2)
+		const family = atomFamily(() => derivedAtom(getter), { TTL: TRANSIENT })
+		const store = createStore()
+		const handle = store.resolve(family, 'a')
+		expect(handle.peek()).toBe(2)
+		expect(handle.peek()).toBe(2)
+		expect(getter).toHaveBeenCalledTimes(1)
+		store.send(source, 5)
+		await flushMicrotask()
+		expect(handle.peek()).toBe(10)
+		expect(getter).toHaveBeenCalledTimes(2)
+	})
+
+	it('refreshes a stale unmounted cache when it is subscribed again', async () => {
+		const source = primitiveAtom(1)
+		const derived = derivedAtom((read) => read(source) * 2)
+		const store = createStore()
+		const notify = vi.fn()
+		store.subscribe(derived, () => {})()
+		store.send(source, 4)
+		await flushMicrotask()
+		store.subscribe(derived, notify)
+		await flushMicrotask()
+		expect(store.peek(derived)).toBe(8)
+		store.send(source, 5)
+		await flushMicrotask()
+		expect(notify).toHaveBeenCalledTimes(1)
+		expect(store.peek(derived)).toBe(10)
+	})
+
+	it('validates each instance of a layered diamond at most once per change', async () => {
+		const leaf = primitiveAtom(1)
+		const depth = 20
+		const width = 2
+		const evaluate = vi.fn()
+		let layer: AtomSymbol<number, never>[] = [leaf as AtomSymbol<number, never>]
+		for (let level = 0; level < depth; level++) {
+			const previous = layer
+			layer = Array.from({ length: width }, () =>
+				derivedAtom((read) => {
+					evaluate()
+					return previous.reduce((sum, atom) => sum + read(atom), 0)
+				}),
+			)
+		}
+		const top = derivedAtom((read) =>
+			layer.reduce((sum, atom) => sum + read(atom), 0),
+		)
+		const store = createStore()
+		const initial = store.peek(top)
+		const derivedCount = depth * width
+		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
+		const depsAreCurrent = vi.spyOn(store as any, 'depsAreCurrent')
+		expect(store.peek(top)).toBe(initial)
+		expect(store.peek(top)).toBe(initial)
+		expect(depsAreCurrent).not.toHaveBeenCalled()
+		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
+		store.send(leaf, 2)
+		await flushMicrotask()
+		expect(store.peek(top)).toBe(2 * initial)
+		expect(evaluate).toHaveBeenCalledTimes(2 * derivedCount)
+		expect(depsAreCurrent.mock.calls.length).toBeLessThanOrEqual(
+			derivedCount + 1,
+		)
+	})
+
+	it('recomputes unmounted dependants of an evicted family member', async () => {
+		const members = atomFamily((_key: string) => primitiveAtom(0))
+		const derived = derivedAtom((read) => read(members, 'a'))
+		const store = createStore()
+		expect(store.peek(derived)).toBe(0)
+		await flushMicrotask()
+		store.send(members, 'a', 3)
+		await flushMicrotask()
+		expect(store.peek(derived)).toBe(3)
 	})
 })

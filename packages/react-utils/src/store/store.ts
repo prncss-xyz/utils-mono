@@ -45,8 +45,10 @@ type Instance<S> = {
 	value: S
 	effectLifecycle: EffectLifecycle<S> | undefined
 	mountLifecycle: MountLifecycle | undefined
-	deps: Set<Instance<any>>
-	subs: Set<Instance<any>>
+	version: number
+	validatedAt: number
+	depVersions: Map<Instance<any>, number>
+	mountedSubs: Set<Instance<any>>
 	subscriptions: Map<() => void, Registration>
 	mountCount: number
 	mountedDeps: Set<Instance<any>>
@@ -253,6 +255,7 @@ type Tasks = {
 
 class Store {
 	private contents = new WeakMap<any, any>()
+	private epoch = 0
 	private tasks: Tasks | undefined = undefined
 	private mountWrites: Map<Instance<any>, any> | undefined
 	private flushingMounts: Set<Instance<any>> | undefined
@@ -375,8 +378,10 @@ class Store {
 					: (undefined as any),
 			effectLifecycle: undefined,
 			mountLifecycle: undefined,
-			deps: new Set(),
-			subs: new Set(),
+			version: 0,
+			validatedAt: -1,
+			depVersions: new Map(),
+			mountedSubs: new Set(),
 			subscriptions: new Map(),
 			mountCount: 0,
 			mountedDeps: new Set(),
@@ -402,7 +407,7 @@ class Store {
 			this.enqueueReconcile(instance)
 			this.enqueueEffect(instance)
 		}
-		for (const sub of instance.subs) this.invalidate(sub, affected)
+		for (const sub of instance.mountedSubs) this.invalidate(sub, affected)
 	}
 	/**
 	 * Delivers to a snapshot of subscription registrations. A registration
@@ -429,10 +434,17 @@ class Store {
 		}
 		instance.familyRemovalTimeouts.clear()
 	}
+	/**
+	 * `peekInstance` must run while the instance is still unmounted, so that a
+	 * stale unmounted cache is revalidated before it starts receiving updates.
+	 * A nested retain during that peek is counted by the post-increment.
+	 */
 	private retain<S>(instance: Instance<S>) {
+		if (instance.mountCount === 0) {
+			this.cancelEviction(instance)
+			this.peekInstance(instance)
+		}
 		if (instance.mountCount++ > 0) return
-		this.cancelEviction(instance)
-		this.peekInstance(instance)
 		this.syncMountedDeps(instance)
 		if (instance.mountCount === 0) return
 		;(this.flushingMounts ?? this.getTasks().mounts).add(instance)
@@ -453,9 +465,7 @@ class Store {
 	}
 	private release<S>(instance: Instance<S>) {
 		if (--instance.mountCount > 0) return
-		// Detach ownership before user callbacks can change dependencies or remount.
-		const mountedDeps = instance.mountedDeps
-		instance.mountedDeps = new Set()
+		const mountedDeps = this.detachMountedDeps(instance)
 		const mountLifecycle = instance.mountLifecycle
 		instance.mountLifecycle = undefined
 		const effectLifecycle = instance.effectLifecycle
@@ -467,18 +477,37 @@ class Store {
 		for (const dep of mountedDeps) this.release(dep)
 	}
 	private syncMountedDeps<S>(instance: Instance<S>) {
-		for (const dep of instance.deps) {
+		for (const dep of instance.depVersions.keys()) {
 			if (instance.mountCount === 0) return
-			if (instance.mountedDeps.has(dep)) continue
-			instance.mountedDeps.add(dep)
-			this.retain(dep)
+			this.link(instance, dep)
 		}
 		// Releasing a dependency can run user cleanup that changes this graph.
 		for (const dep of Array.from(instance.mountedDeps)) {
 			if (instance.mountCount === 0) return
-			if (instance.deps.has(dep)) continue
-			if (instance.mountedDeps.delete(dep)) this.release(dep)
+			if (instance.depVersions.has(dep)) continue
+			this.unlink(instance, dep)
 		}
+	}
+	/**
+	 * Swaps out the mounted dependency set and clears the reverse links. It
+	 * must run before any user callback can change dependencies or remount.
+	 */
+	private detachMountedDeps<S>(instance: Instance<S>) {
+		const mountedDeps = instance.mountedDeps
+		instance.mountedDeps = new Set()
+		for (const dep of mountedDeps) dep.mountedSubs.delete(instance)
+		return mountedDeps
+	}
+	private link<S>(instance: Instance<S>, dep: Instance<any>) {
+		if (instance.mountedDeps.has(dep)) return
+		instance.mountedDeps.add(dep)
+		dep.mountedSubs.add(instance)
+		this.retain(dep)
+	}
+	private unlink<S>(instance: Instance<S>, dep: Instance<any>) {
+		if (!instance.mountedDeps.delete(dep)) return
+		dep.mountedSubs.delete(instance)
+		this.release(dep)
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
@@ -521,6 +550,7 @@ class Store {
 				for (const [instance, next] of updates)
 					if (!Object.is(next, instance.value)) {
 						instance.value = next
+						this.publishChange(instance)
 						changed.push(instance)
 					}
 				this.notify(changed)
@@ -532,7 +562,7 @@ class Store {
 				return
 			}
 			this.peekInstance(instance)
-			for (const dep of instance.deps) mount(dep)
+			for (const dep of instance.depVersions.keys()) mount(dep)
 			mounts.delete(instance)
 			this.mountWrites = mountWrites
 			this.mount(instance)
@@ -542,7 +572,7 @@ class Store {
 		}
 		const reconcile = (instance: Instance<any>) => {
 			if (!reconciles.delete(instance)) return
-			for (const sub of Array.from(instance.subs)) reconcile(sub)
+			for (const sub of Array.from(instance.mountedSubs)) reconcile(sub)
 			if (instance.mountCount > 0) this.peekInstance(instance)
 		}
 		applyUpdates(primitives)
@@ -559,7 +589,7 @@ class Store {
 			if (visited.has(instance) || instance.mountCount === 0) return
 			visited.add(instance)
 			const next = this.peekInstance(instance)
-			for (const dep of instance.deps) collect(dep)
+			for (const dep of instance.depVersions.keys()) collect(dep)
 			if (
 				effects.has(instance) &&
 				(!instance.effectLifecycle ||
@@ -617,14 +647,17 @@ class Store {
 			default:
 				return exhaustive(entry)
 		}
-		this.notify(instance.subs)
-		instance.subs.clear()
-		for (const dep of instance.deps) dep.subs.delete(instance)
-		instance.deps.clear()
+		isoAssert(
+			instance.mountedSubs.size === 0,
+			'evicting an instance with dependants',
+		)
+		this.publishChange(instance)
+		instance.depVersions.clear()
 		if (instance.symbol.type === 'derived') instance.dirty = true
 	}
 	private peekInstance<S>(instance: Instance<S>) {
 		const { symbol } = instance
+		if (symbol.type === 'derived') this.revalidateUnmounted(instance)
 		if (instance.dirty) {
 			instance.dirty = false
 			switch (symbol.type) {
@@ -632,20 +665,21 @@ class Store {
 					instance.value = fromInit(symbol.getter)
 					return instance.value
 				case 'derived': {
-					const previousDeps = instance.deps
-					instance.deps = new Set()
+					instance.depVersions = new Map()
 					const read = (<T, Key, Args extends unknown[]>(
 						target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
 						key?: Key,
 					) => {
 						const dep = this.getInstance(target, key)
-						instance.deps.add(dep)
-						dep.subs.add(instance)
-						return this.peekInstance(dep)
+						const value = this.peekInstance(dep)
+						instance.depVersions.set(dep, dep.version)
+						return value
 					}) as Read
-					instance.value = symbol.getter(read)
-					for (const dep of previousDeps)
-						if (!instance.deps.has(dep)) dep.subs.delete(instance)
+					const previous = instance.value
+					const next = symbol.getter(read)
+					instance.value = next
+					if (!Object.is(next, previous)) this.advanceDerivedVersion(instance)
+					instance.validatedAt = this.epoch
 					if (instance.mountCount > 0) this.syncMountedDeps(instance)
 					return instance.value
 				}
@@ -654,6 +688,42 @@ class Store {
 			}
 		}
 		return instance.value
+	}
+	/**
+	 * Publishes a change of this instance's value: bumps its version and
+	 * advances `epoch` so unmounted dependants re-check their dependencies.
+	 * Commits and evictions use it; derived recomputes use
+	 * `advanceDerivedVersion`, which never advances `epoch`.
+	 */
+	private publishChange<S>(instance: Instance<S>) {
+		instance.version++
+		this.epoch++
+	}
+	private advanceDerivedVersion<S>(instance: Instance<S>) {
+		instance.version++
+	}
+	/**
+	 * Whether the instance is mounted or already validated at the current
+	 * epoch. It must be re-checked after `depsAreCurrent`, because nested
+	 * peeks can mount or revalidate the instance.
+	 */
+	private isFresh<S>(instance: Instance<S>) {
+		return instance.mountCount > 0 || instance.validatedAt === this.epoch
+	}
+	private revalidateUnmounted<S>(instance: Instance<S>) {
+		if (instance.dirty || this.isFresh(instance)) return
+		const current = this.depsAreCurrent(instance)
+		if (this.isFresh(instance)) return
+		if (current) instance.validatedAt = this.epoch
+		else instance.dirty = true
+	}
+	private depsAreCurrent<S>(instance: Instance<S>) {
+		for (const [dep, version] of instance.depVersions) {
+			if (dep.version !== version) return false
+			this.peekInstance(dep)
+			if (dep.version !== version) return false
+		}
+		return true
 	}
 	peek<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
