@@ -863,33 +863,178 @@ describe('Store', () => {
 		expect(cleanup).toHaveBeenCalledOnce()
 	})
 
-	it('mounts new conditional dependencies and releases old ones', async () => {
-		const firstCleanup = vi.fn()
-		const firstEffect = vi.fn(() => firstCleanup)
-		const secondCleanup = vi.fn()
-		const secondEffect = vi.fn(() => secondCleanup)
-		const first = primitiveAtom(1, { effect: firstEffect })
-		const second = primitiveAtom(2, { effect: secondEffect })
-		const selectFirst = primitiveAtom(true)
-		const selected = derivedAtom(
-			(read) => (read(selectFirst) ? read(first) : read(second)),
-			() => {},
-		)
-		const store = createStore()
-		const unsubscribe = store.subscribe(selected, () => {})
-		await flushMicrotask()
-		expect(firstEffect).toHaveBeenCalledOnce()
-		expect(secondEffect).not.toHaveBeenCalled()
-		store.send(selectFirst, false)
-		await flushMicrotask()
-		store.peek(selected)
-		await flushMicrotask()
-		expect(firstEffect).toHaveBeenCalledOnce()
-		expect(firstCleanup).toHaveBeenCalledOnce()
-		expect(secondEffect).toHaveBeenCalledOnce()
-		unsubscribe()
-		expect(secondEffect).toHaveBeenCalledOnce()
-		expect(secondCleanup).toHaveBeenCalledOnce()
+	describe('mounted dependency reconciliation', () => {
+		const setup = () => {
+			const firstCleanup = vi.fn()
+			const secondCleanup = vi.fn()
+			const firstUnmount = vi.fn()
+			const secondUnmount = vi.fn()
+			const firstEffect = vi.fn(() => firstCleanup)
+			const secondEffect = vi.fn(() => secondCleanup)
+			const firstMount = vi.fn(() => firstUnmount)
+			const secondMount = vi.fn(() => secondUnmount)
+			const first = primitiveAtom(1, {
+				effect: firstEffect,
+				onMount: firstMount,
+			})
+			const second = primitiveAtom(2, {
+				effect: secondEffect,
+				onMount: secondMount,
+			})
+			const selectFirst = primitiveAtom(true)
+			const select = (read: Read) =>
+				read(selectFirst) ? read(first) : read(second)
+			const mocks = {
+				firstEffect,
+				firstMount,
+				firstCleanup,
+				firstUnmount,
+				secondEffect,
+				secondMount,
+				secondCleanup,
+				secondUnmount,
+			}
+			const initial: Record<keyof typeof mocks, number> = {
+				firstEffect: 1,
+				firstMount: 1,
+				firstCleanup: 0,
+				firstUnmount: 0,
+				secondEffect: 0,
+				secondMount: 0,
+				secondCleanup: 0,
+				secondUnmount: 0,
+			}
+			const swapped = {
+				...initial,
+				firstCleanup: 1,
+				firstUnmount: 1,
+				secondEffect: 1,
+				secondMount: 1,
+			}
+			const released = { ...swapped, secondCleanup: 1, secondUnmount: 1 }
+			const phases = { initial, swapped, released }
+			const expectPhase = (phase: keyof typeof phases) => {
+				for (const name of Object.keys(mocks) as (keyof typeof mocks)[])
+					expect(mocks[name], name).toHaveBeenCalledTimes(phases[phase][name])
+			}
+			return { selectFirst, select, expectPhase }
+		}
+
+		it('swaps resources for a conditional consumer with an effect', async () => {
+			const { selectFirst, select, expectPhase } = setup()
+			const effect = vi.fn()
+			const consumer = derivedAtom(select, () => {}, { effect })
+			const store = createStore()
+			const unsubscribe = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			expectPhase('initial')
+			store.send(selectFirst, false)
+			await flushMicrotask()
+			expectPhase('swapped')
+			expect(effect.mock.calls.map(([value]) => value)).toEqual([1, 2])
+			unsubscribe()
+			expectPhase('released')
+		})
+
+		it('swaps resources for subscribers that never peek', async () => {
+			const { selectFirst, select, expectPhase } = setup()
+			const consumer = derivedAtom(select, () => {})
+			const store = createStore()
+			const left = vi.fn()
+			const right = vi.fn()
+			const unsubscribeLeft = store.subscribe(consumer, left)
+			const unsubscribeRight = store.subscribe(consumer, right)
+			await flushMicrotask()
+			expectPhase('initial')
+			store.send(selectFirst, false)
+			await flushMicrotask()
+			expect(left).toHaveBeenCalledOnce()
+			expect(right).toHaveBeenCalledOnce()
+			expectPhase('swapped')
+			unsubscribeLeft()
+			unsubscribeRight()
+			expectPhase('released')
+		})
+
+		it('swaps resources through nested consumers without effects', async () => {
+			const { selectFirst, select, expectPhase } = setup()
+			const inner = derivedAtom(select, () => {})
+			const outer = derivedAtom(
+				(read) => read(inner) * 10,
+				() => {},
+			)
+			const store = createStore()
+			const subscriber = vi.fn()
+			const unsubscribe = store.subscribe(outer, subscriber)
+			await flushMicrotask()
+			expectPhase('initial')
+			store.send(selectFirst, false)
+			await flushMicrotask()
+			expect(subscriber).toHaveBeenCalledOnce()
+			expectPhase('swapped')
+			unsubscribe()
+			expectPhase('released')
+		})
+
+		it('keeps reconciling when a later mount write switches a mounted consumer', async () => {
+			const { selectFirst, select, expectPhase } = setup()
+			const consumer = derivedAtom(select, () => {})
+			const trigger = primitiveAtom(0, {
+				onMount: (_peek, send) => {
+					send(selectFirst, false)
+				},
+			})
+			const store = createStore()
+			const unsubscribe = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			expectPhase('initial')
+			const unsubscribeTrigger = store.subscribe(trigger, () => {})
+			await flushMicrotask()
+			expectPhase('swapped')
+			unsubscribeTrigger()
+			unsubscribe()
+			expectPhase('released')
+		})
+
+		it('re-runs consumers before guarded dependencies', async () => {
+			const items = primitiveAtom([{ name: 'a' }])
+			const index = primitiveAtom(0)
+			const valid = primitiveAtom(true)
+			const releaseDetail = vi.fn()
+			const detailGetter = vi.fn((read: Read) => read(items)[read(index)]?.name)
+			const detail = derivedAtom(detailGetter, () => {}, {
+				effect: () => releaseDetail,
+			})
+			const outer = derivedAtom(
+				(read) => (read(valid) ? read(detail) : null),
+				() => {},
+			)
+			const store = createStore()
+			const unsubscribe = store.subscribe(outer, () => {})
+			await flushMicrotask()
+			expect(detailGetter).toHaveBeenCalledOnce()
+			store.send(index, 3)
+			store.send(valid, false)
+			await flushMicrotask()
+			expect(detailGetter).toHaveBeenCalledOnce()
+			expect(releaseDetail).toHaveBeenCalledOnce()
+			expect(store.peek(outer)).toBeNull()
+			unsubscribe()
+		})
+
+		it('reconciles mounted derivations only, keeping unmounted ones lazy', async () => {
+			const base = primitiveAtom(1)
+			const getter = vi.fn((read: Read) => read(base) * 2)
+			const lazy = derivedAtom(getter, () => {})
+			const store = createStore()
+			expect(store.peek(lazy)).toBe(2)
+			expect(getter).toHaveBeenCalledOnce()
+			store.send(base, 2)
+			await flushMicrotask()
+			expect(getter).toHaveBeenCalledOnce()
+			expect(store.peek(lazy)).toBe(4)
+			expect(getter).toHaveBeenCalledTimes(2)
+		})
 	})
 
 	it('does not release references twice or release a later subscription', async () => {

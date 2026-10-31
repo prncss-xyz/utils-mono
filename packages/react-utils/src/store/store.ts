@@ -247,6 +247,7 @@ type Tasks = {
 	mounts: Set<Instance<any>>
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
+	reconciles: Set<Instance<any>>
 	pendingFamilyEvictions: Set<Instance<any>>
 }
 
@@ -256,6 +257,7 @@ class Store {
 	private mountWrites: Map<Instance<any>, any> | undefined
 	private flushingMounts: Set<Instance<any>> | undefined
 	private flushingEffects: Set<Instance<any>> | undefined
+	private flushingReconciles: Set<Instance<any>> | undefined
 	private flushingFamilyEvictions: Set<Instance<any>> | undefined
 	private hydrating = true
 	constructor(hydrate: Hydrate = []) {
@@ -280,6 +282,7 @@ class Store {
 			mounts: new Set(),
 			primitives: new Map(),
 			effects: new Set(),
+			reconciles: new Set(),
 			pendingFamilyEvictions: new Set(),
 		}
 		if (!this.hydrating) queueMicrotask(this.flush.bind(this))
@@ -387,11 +390,18 @@ class Store {
 		}
 		this.getTasks().effects.add(instance)
 	}
+	private enqueueReconcile<S>(instance: Instance<S>) {
+		if (instance.symbol.type !== 'derived') return
+		;(this.flushingReconciles ?? this.getTasks().reconciles).add(instance)
+	}
 	private invalidate<S>(instance: Instance<S>, affected: Set<Instance<any>>) {
 		if (affected.has(instance)) return
 		affected.add(instance)
 		if (instance.symbol.type === 'derived') instance.dirty = true
-		if (instance.mountCount > 0) this.enqueueEffect(instance)
+		if (instance.mountCount > 0) {
+			this.enqueueReconcile(instance)
+			this.enqueueEffect(instance)
+		}
 		for (const sub of instance.subs) this.invalidate(sub, affected)
 	}
 	/**
@@ -495,11 +505,13 @@ class Store {
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
-		const { mounts, primitives, effects, pendingFamilyEvictions } = this.tasks
+		const { mounts, primitives, effects, reconciles, pendingFamilyEvictions } =
+			this.tasks
 		const mountWrites = new Map<Instance<any>, any>()
 		this.tasks = undefined
 		this.flushingMounts = mounts
 		this.flushingEffects = effects
+		this.flushingReconciles = reconciles
 		this.flushingFamilyEvictions = pendingFamilyEvictions
 		const applyUpdates = (pending: Map<Instance<any>, any>) => {
 			while (pending.size > 0) {
@@ -528,14 +540,19 @@ class Store {
 			// Mount writes must settle before consumers mount or effects run.
 			applyUpdates(mountWrites)
 		}
+		const reconcile = (instance: Instance<any>) => {
+			if (!reconciles.delete(instance)) return
+			for (const sub of Array.from(instance.subs)) reconcile(sub)
+			if (instance.mountCount > 0) this.peekInstance(instance)
+		}
 		applyUpdates(primitives)
 		do {
 			applyUpdates(mountWrites)
-			for (const instance of effects)
-				if (instance.mountCount > 0) this.peekInstance(instance)
+			for (const instance of reconciles) reconcile(instance)
 			for (const instance of mounts) mount(instance)
-		} while (mountWrites.size > 0 || mounts.size > 0)
+		} while (mountWrites.size > 0 || mounts.size > 0 || reconciles.size > 0)
 		this.flushingMounts = undefined
+		this.flushingReconciles = undefined
 		const visited = new Set<Instance<any>>()
 		const transitions: { instance: Instance<any>; next: any }[] = []
 		const collect = (instance: Instance<any>) => {
