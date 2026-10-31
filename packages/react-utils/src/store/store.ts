@@ -25,6 +25,9 @@ type FamilySlot =
 
 type FamilyEntry = FamilySlot & { TTL: number }
 
+type MountLifecycle = { cleanup?: () => void }
+type EffectLifecycle<S> = MountLifecycle & { readonly value: S }
+
 type Registration = object
 
 type Delivery = {
@@ -40,10 +43,8 @@ type Instance<S> = {
 	familyRemovalTimeouts: Map<ReturnType<typeof setTimeout>, FamilyEntry>
 	dirty: boolean
 	value: S
-	effectValue: S | undefined
-	effectActive: boolean
-	effectCleanup: (() => void) | undefined
-	mountLifecycle: { cleanup?: () => void } | undefined
+	effectLifecycle: EffectLifecycle<S> | undefined
+	mountLifecycle: MountLifecycle | undefined
 	deps: Set<Instance<any>>
 	subs: Set<Instance<any>>
 	subscriptions: Map<() => void, Registration>
@@ -369,9 +370,7 @@ class Store {
 				symbol.type === 'primitive'
 					? fromInit(symbol.getter)
 					: (undefined as any),
-			effectValue: undefined,
-			effectActive: false,
-			effectCleanup: undefined,
+			effectLifecycle: undefined,
 			mountLifecycle: undefined,
 			deps: new Set(),
 			subs: new Set(),
@@ -431,7 +430,7 @@ class Store {
 	}
 	private mount<S>(instance: Instance<S>) {
 		if (instance.mountCount === 0 || instance.mountLifecycle) return
-		const lifecycle: { cleanup?: () => void } = {}
+		const lifecycle: MountLifecycle = {}
 		instance.mountLifecycle = lifecycle
 		const cleanup = instance.symbol.onMount?.(
 			this.peek.bind(this),
@@ -447,14 +446,12 @@ class Store {
 		// Detach ownership before user callbacks can change dependencies or remount.
 		const mountedDeps = instance.mountedDeps
 		instance.mountedDeps = new Set()
-		const lifecycle = instance.mountLifecycle
+		const mountLifecycle = instance.mountLifecycle
 		instance.mountLifecycle = undefined
-		const cleanup = instance.effectCleanup
-		instance.effectCleanup = undefined
-		instance.effectValue = undefined
-		instance.effectActive = false
-		cleanup?.()
-		lifecycle?.cleanup?.()
+		const effectLifecycle = instance.effectLifecycle
+		instance.effectLifecycle = undefined
+		effectLifecycle?.cleanup?.()
+		mountLifecycle?.cleanup?.()
 		if (instance.familyEntries.length > 0)
 			this.getTasks().pendingFamilyEvictions.add(instance)
 		for (const dep of mountedDeps) this.release(dep)
@@ -478,15 +475,23 @@ class Store {
 		effect: Effect<S> | undefined,
 		next: S,
 	) {
-		const last = instance.effectValue
-		instance.effectValue = next
-		instance.effectActive = true
-		const cleanup = instance.effectCleanup
-		instance.effectCleanup = undefined
-		cleanup?.()
-		instance.effectCleanup =
-			effect?.(next, last, this.peek.bind(this), this.send.bind(this)) ||
-			undefined
+		const previous = instance.effectLifecycle
+		const last = previous?.value
+		const previousCleanup = previous?.cleanup
+		if (previous) previous.cleanup = undefined
+		previousCleanup?.()
+		const lifecycle: EffectLifecycle<S> = { value: next }
+		instance.effectLifecycle = lifecycle
+		const cleanup = effect?.(
+			next,
+			last,
+			this.peek.bind(this),
+			this.send.bind(this),
+		)
+		if (cleanup) {
+			if (instance.effectLifecycle === lifecycle) lifecycle.cleanup = cleanup
+			else cleanup()
+		}
 	}
 	private flush() {
 		isoAssert(this.tasks, 'unexpected call to flush')
@@ -540,7 +545,8 @@ class Store {
 			for (const dep of instance.deps) collect(dep)
 			if (
 				effects.has(instance) &&
-				(!instance.effectActive || !Object.is(next, instance.effectValue))
+				(!instance.effectLifecycle ||
+					!Object.is(next, instance.effectLifecycle.value))
 			)
 				transitions.push({ instance, next })
 		}
@@ -550,8 +556,9 @@ class Store {
 		for (let index = transitions.length - 1; index >= 0; index--) {
 			const { instance } = transitions[index]!
 			if (instance.mountCount === 0) continue
-			const cleanup = instance.effectCleanup
-			instance.effectCleanup = undefined
+			const lifecycle = instance.effectLifecycle
+			const cleanup = lifecycle?.cleanup
+			if (lifecycle) lifecycle.cleanup = undefined
 			cleanup?.()
 		}
 		// Recreate dependency resources before their consumers run.

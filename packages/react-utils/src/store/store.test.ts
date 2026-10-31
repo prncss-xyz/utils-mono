@@ -1,4 +1,4 @@
-import { afterEach, assert, describe, expect, it, vi } from 'vitest'
+import { afterEach, assert, describe, expect, it, type Mock, vi } from 'vitest'
 
 import { RESET, type SetStateWithReset } from '../functions'
 import { shallowEqual } from '../shallow-equal'
@@ -784,6 +784,58 @@ describe('Store', () => {
 			'right:cleanup',
 			'source:cleanup',
 		])
+	})
+
+	it.each(['source', 'consumer'] as const)(
+		'disposes the cleanup of an effect whose setup releases the %s',
+		async (target) => {
+			let release = () => {}
+			const cleanup = vi.fn()
+			const effect = vi.fn(() => {
+				release()
+				return cleanup
+			})
+			const source = primitiveAtom(0, { effect })
+			const consumer = derivedAtom<number>((read) => read(source))
+			const store = createStore()
+			release =
+				target === 'consumer'
+					? store.subscribe(consumer, () => {})
+					: store.subscribe(source, () => {})
+			await flushMicrotask()
+			expect(effect).toHaveBeenCalledOnce()
+			expect(cleanup).toHaveBeenCalledOnce()
+		},
+	)
+
+	it('disposes an old run and keeps the newer run cleanup when setup releases and remounts', async () => {
+		const store = createStore()
+		const cleanups: Mock<() => void>[] = []
+		let release = () => {}
+		let reenter = true
+		const atom = primitiveAtom(0, {
+			effect: () => {
+				if (reenter) {
+					reenter = false
+					release()
+					release = store.subscribe(atom, () => {})
+				}
+				const cleanup = vi.fn()
+				cleanups.push(cleanup)
+				return cleanup
+			},
+		})
+		release = store.subscribe(atom, () => {})
+		await flushMicrotask()
+		expect(cleanups).toHaveLength(1)
+		expect(cleanups[0]).toHaveBeenCalledOnce()
+		await flushMicrotask()
+		expect(cleanups).toHaveLength(2)
+		expect(cleanups[0]).toHaveBeenCalledOnce()
+		expect(cleanups[1]).not.toHaveBeenCalled()
+		release()
+		expect(cleanups[0]).toHaveBeenCalledOnce()
+		expect(cleanups[1]).toHaveBeenCalledOnce()
 	})
 
 	it('keeps shared dependencies mounted until their last consumer releases them', async () => {
