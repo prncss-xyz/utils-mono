@@ -34,6 +34,7 @@
 		"@vitejs/plugin-react": "catalog:",
 		"@vitest/browser-playwright": "catalog:",
 		"bumpp": "^11.1.0",
+		"fast-check": "catalog:",
 		"oxc-transform-react": "catalog:",
 		"react": "catalog:",
 		"react-dom": "catalog:",
