@@ -9,6 +9,8 @@ import {
 	type SetStateWithReset,
 } from '../functions'
 
+// NOTE: we are currently not handling the possibility that a user-supplied method (such as a getter or unmount) throws an exception. This is deliberately left for later.
+
 export const TRANSIENT = -1
 
 type FamilyStorage<Key> =
