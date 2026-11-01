@@ -57,7 +57,10 @@ type Delivery = {
 	registration: Registration
 }
 
-type Freshness = { type: 'dirty' } | { type: 'clean'; validatedAt: number }
+type Freshness =
+	| { type: 'dirty' }
+	| { type: 'evaluating' }
+	| { type: 'clean'; validatedAt: number }
 
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
@@ -231,6 +234,7 @@ export function derivedAtom<S = never>(
 }
 
 function familyRetention(TTL: number): FamilyRetention {
+	isoAssert(!Number.isNaN(TTL), 'atomFamily TTL must not be NaN')
 	if (TTL < 0) return { type: 'transient' }
 	if (TTL === 0) return { type: 'immediate' }
 	if (TTL < Infinity) return { type: 'timed', ms: TTL }
@@ -240,6 +244,8 @@ function familyRetention(TTL: number): FamilyRetention {
 /**
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.
+ * Negative TTL values are transient; positive finite values expire after that
+ * many milliseconds, and Infinity retains entries indefinitely. NaN is invalid.
  * TTL 0 evicts unwritten, unmounted entries in the next microtask. A first render
  * can peek before eviction and subscribe afterward; its re-resolving handle reaches
  * a new entry, costing one recreation and possibly an extra render for lazy primitives.
@@ -296,6 +302,7 @@ class Store {
 		AtomFamily<any, any, any>,
 		FamilyStorage<any, any>
 	>()
+	private pendingEvaluations = new Set<Instance<any>>()
 	private epoch = 0
 	private tasks: Tasks | undefined = undefined
 	private mountWrites: Map<Instance<any>, any> | undefined
@@ -915,11 +922,15 @@ class Store {
 			instance.freshness = { type: 'dirty' }
 	}
 	private peekInstance<S>(instance: Instance<S>) {
+		isoAssert(
+			instance.freshness.type !== 'evaluating',
+			'cyclic atom dependency',
+		)
 		const { symbol } = instance
 		if (symbol.type === 'derived') this.revalidateUnmounted(instance)
 		if (instance.freshness.type === 'dirty') {
 			isoAssert(symbol.type === 'derived')
-			instance.freshness = { type: 'clean', validatedAt: -1 }
+			instance.freshness = { type: 'evaluating' }
 			instance.depVersions = new Map()
 			const read = (<T, Key, Args extends unknown[]>(
 				target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
@@ -1004,7 +1015,11 @@ class Store {
 			return pending.has(instance)
 				? pending.get(instance)
 				: this.peekInstance(instance)
-		return instance.symbol.getter(this.readPending)
+		isoAssert(!this.pendingEvaluations.has(instance), 'cyclic atom dependency')
+		this.pendingEvaluations.add(instance)
+		const value = instance.symbol.getter(this.readPending)
+		this.pendingEvaluations.delete(instance)
+		return value
 	}
 	private sendInstance<S>(instance: Instance<S>, args: readonly unknown[]) {
 		const { symbol } = instance
