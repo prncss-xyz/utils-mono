@@ -724,12 +724,10 @@ class Store {
 	}
 	private runEffect<S>(
 		instance: Instance<S>,
-		effect: Effect<S> | undefined,
+		effect: Effect<S>,
 		next: S,
+		last: S | undefined,
 	) {
-		const previous = instance.effectLifecycle
-		const last = previous?.value
-		if (previous) this.cleanupEffect(previous)
 		const lifecycle: EffectLifecycle<S> = {
 			value: next,
 			instance,
@@ -749,7 +747,7 @@ class Store {
 		}
 		for (const dep of instance.mountedDeps) collect(dep)
 		instance.effectLifecycle = lifecycle
-		const cleanup = effect?.(
+		const cleanup = effect(
 			next,
 			last,
 			this.peek.bind(this),
@@ -812,7 +810,13 @@ class Store {
 		this.flushingMounts = undefined
 		this.flushingReconciles = undefined
 		const visited = new Set<Instance<any>>()
-		const transitions: { instance: Instance<any>; next: any }[] = []
+		const transitions: {
+			instance: Instance<any>
+			effect: Effect<any>
+			next: any
+			previous: EffectLifecycle<any> | undefined
+			mountLifecycle: MountLifecycle | undefined
+		}[] = []
 		const collect = (instance: Instance<any>) => {
 			if (visited.has(instance) || instance.mountCount === 0) return
 			visited.add(instance)
@@ -822,8 +826,17 @@ class Store {
 				effects.has(instance) &&
 				(!instance.effectLifecycle ||
 					!Object.is(next, instance.effectLifecycle.value))
-			)
-				transitions.push({ instance, next })
+			) {
+				const effect = instance.symbol.effect
+				isoAssert(effect)
+				transitions.push({
+					instance,
+					effect,
+					next,
+					previous: instance.effectLifecycle,
+					mountLifecycle: instance.mountLifecycle,
+				})
+			}
 		}
 		for (const instance of effects) collect(instance)
 		this.flushingEffects = undefined
@@ -838,9 +851,19 @@ class Store {
 			if (lifecycle) this.cleanupEffect(lifecycle)
 		}
 		// Recreate dependency resources before their consumers run.
-		for (const { instance, next } of transitions)
-			if (instance.mountCount > 0)
-				this.runEffect(instance, instance.symbol.effect, next)
+		for (const {
+			instance,
+			effect,
+			next,
+			previous,
+			mountLifecycle,
+		} of transitions)
+			if (
+				instance.mountCount > 0 &&
+				instance.mountLifecycle === mountLifecycle &&
+				instance.effectLifecycle === previous
+			)
+				this.runEffect(instance, effect, next, previous?.value)
 		for (const instance of pendingFamilyEvictions) {
 			if (instance.mountCount > 0) continue
 			const { familyEntry } = instance

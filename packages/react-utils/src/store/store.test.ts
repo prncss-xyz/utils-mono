@@ -2043,6 +2043,98 @@ describe('Store', () => {
 		expect(events).toEqual(['cleanup:consumer:0', 'cleanup:source:0'])
 	})
 
+	it.each(['cleanup', 'dependency setup'] as const)(
+		'waits for a remounted consumer before setup when %s changes its lifecycle',
+		async (phase) => {
+			const events: string[] = []
+			const store = createStore()
+			let unsubscribe = () => {}
+			let remounted = false
+			const remount = () => {
+				if (remounted) return
+				remounted = true
+				unsubscribe()
+				unsubscribe = store.subscribe(consumer, () => {})
+			}
+			const source = primitiveAtom(0, {
+				effect: (next) => {
+					if (next === 1 && phase === 'dependency setup') remount()
+				},
+			})
+			const consumer = derivedAtom((read) => read(source), undefined, {
+				onMount: () => {
+					events.push('mount')
+					return () => events.push('unmount')
+				},
+				effect: (next, last) => {
+					events.push(`setup:${last}->${next}`)
+					return () => {
+						events.push(`cleanup:${next}`)
+						if (phase === 'cleanup') remount()
+					}
+				},
+			})
+			const unsubscribeSource = store.subscribe(source, () => {})
+			unsubscribe = store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			events.length = 0
+
+			store.send(source, 1)
+			await flushMicrotask()
+			await flushMicrotask()
+
+			expect(events).toEqual([
+				'cleanup:0',
+				'unmount',
+				'mount',
+				'setup:undefined->1',
+			])
+			events.length = 0
+			unsubscribe()
+			unsubscribeSource()
+			expect(events).toEqual(['cleanup:1', 'unmount'])
+		},
+	)
+
+	it('defers initial setup if a dependency effect remounts its consumer', async () => {
+		const events: string[] = []
+		const store = createStore()
+		let unsubscribe = () => {}
+		const source = primitiveAtom(0, {
+			effect: () => {
+				unsubscribe()
+				unsubscribe = store.subscribe(consumer, () => {})
+			},
+		})
+		const consumer = derivedAtom((read) => read(source), undefined, {
+			onMount: () => {
+				events.push('mount')
+				return () => events.push('unmount')
+			},
+			effect: () => {
+				events.push('setup')
+				return () => events.push('cleanup')
+			},
+		})
+		const unsubscribeSource = store.subscribe(source, () => {})
+		unsubscribe = store.subscribe(consumer, () => {})
+
+		await flushMicrotask()
+		await flushMicrotask()
+
+		expect(events).toEqual(['mount', 'unmount', 'mount', 'setup'])
+		unsubscribe()
+		unsubscribeSource()
+		expect(events).toEqual([
+			'mount',
+			'unmount',
+			'mount',
+			'setup',
+			'cleanup',
+			'unmount',
+		])
+	})
+
 	it('runs the previous cleanup before rerunning an effect', async () => {
 		const events: string[] = []
 		const count = primitiveAtom(0, {
