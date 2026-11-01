@@ -298,17 +298,14 @@ class Store {
 	private flushingReconciles: Set<Instance<any>> | undefined
 	private flushingFamilyEvictions: Set<Instance<any>> | undefined
 	private hydrating = true
+	private read: Read = this.peek.bind(this)
+	private write: Write = this.send.bind(this)
 	constructor(hydrate: Hydrate = []) {
 		for (const entry of hydrate) {
 			const [symbol, ...rest] = entry
-			const key = symbol.type === 'family' ? rest[0] : undefined
-			const args = symbol.type === 'family' ? rest.slice(1) : rest
-			this.sendInstance(
-				this.getInstance(
-					symbol as AtomSymbol<any, any> | AtomFamily<any, any, any>,
-					key,
-				),
-				args,
+			this.dispatch(
+				symbol as AtomSymbol<any, any> | AtomFamily<any, any, any>,
+				rest,
 			)
 		}
 		if (this.tasks) this.flush()
@@ -517,10 +514,7 @@ class Store {
 		if (instance.mountCount === 0 || instance.mountLifecycle) return
 		const lifecycle: MountLifecycle = {}
 		instance.mountLifecycle = lifecycle
-		const cleanup = instance.symbol.onMount?.(
-			this.peek.bind(this),
-			this.send.bind(this),
-		)
+		const cleanup = instance.symbol.onMount?.(this.read, this.write)
 		if (cleanup) {
 			if (instance.mountLifecycle === lifecycle) lifecycle.cleanup = cleanup
 			else cleanup()
@@ -751,12 +745,7 @@ class Store {
 		}
 		for (const dep of instance.mountedDeps) collect(dep)
 		instance.effectLifecycle = lifecycle
-		const cleanup = effect(
-			next,
-			last,
-			this.peek.bind(this),
-			this.send.bind(this),
-		)
+		const cleanup = effect(next, last, this.read, this.write)
 		if (cleanup) {
 			if (instance.effectLifecycle === lifecycle) lifecycle.cleanup = cleanup
 			else cleanup()
@@ -1028,7 +1017,7 @@ class Store {
 				return
 			}
 			case 'derived': {
-				symbol.setter(this.readPending, this.send.bind(this), ...args)
+				symbol.setter(this.readPending, this.write, ...args)
 				return
 			}
 			default:
@@ -1048,6 +1037,12 @@ class Store {
 		symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
 		...rest: unknown[]
 	): void {
+		this.dispatch(symbol, rest)
+	}
+	private dispatch(
+		symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
+		rest: readonly unknown[],
+	) {
 		const key = symbol.type === 'family' ? rest[0] : undefined
 		const args = symbol.type === 'family' ? rest.slice(1) : rest
 		this.sendInstance(this.getInstance(symbol, key), args)
