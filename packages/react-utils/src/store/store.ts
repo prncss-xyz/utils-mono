@@ -23,7 +23,18 @@ type FamilySlot =
 	  })
 	| Extract<FamilyStorage<unknown>, { type: 'eq' }>
 
-type FamilyEntry = FamilySlot & { TTL: number }
+type FamilyRetention =
+	| { type: 'transient' }
+	| { type: 'immediate' }
+	| { type: 'timed'; ms: number }
+	| { type: 'permanent' }
+
+type EvictableRetention = Extract<
+	FamilyRetention,
+	{ type: 'immediate' | 'timed' }
+>
+
+type FamilyEntry = FamilySlot & { retention: EvictableRetention }
 
 type MountLifecycle = { cleanup?: () => void }
 type EffectLifecycle<S> = MountLifecycle & {
@@ -90,7 +101,7 @@ export type AtomSymbol<S, Args extends unknown[]> =
 export type AtomFamily<S, Key, Args extends unknown[]> = {
 	type: 'family'
 	create: (key: Key) => AtomSymbol<S, Args>
-	TTL: number
+	retention: FamilyRetention
 	lookup: FamilyLookup<Key>
 }
 
@@ -213,6 +224,13 @@ export function derivedAtom<S = never>(
 	}
 }
 
+function familyRetention(TTL: number): FamilyRetention {
+	if (TTL < 0) return { type: 'transient' }
+	if (TTL === 0) return { type: 'immediate' }
+	if (TTL < Infinity) return { type: 'timed', ms: TTL }
+	return { type: 'permanent' }
+}
+
 /**
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.
@@ -235,7 +253,7 @@ export function atomFamily<S, K, Args extends unknown[]>(
 	return {
 		type: 'family' as const,
 		create,
-		TTL: opts?.TTL ?? 0,
+		retention: familyRetention(opts?.TTL ?? 0),
 		lookup: opts?.eq
 			? { type: 'eq', eq: opts.eq }
 			: { type: 'hash', hash: opts?.hash ?? id },
@@ -309,7 +327,8 @@ class Store {
 		key?: Key,
 	): Instance<S> {
 		if (symbol.type === 'family') {
-			if (symbol.TTL < 0) return this.createFreshInstance(symbol, key!)
+			if (symbol.retention.type === 'transient')
+				return this.createFreshInstance(symbol, key!)
 			const { lookup } = symbol
 			switch (lookup.type) {
 				case 'hash': {
@@ -372,9 +391,18 @@ class Store {
 	): Instance<S> {
 		const instance = this.createFreshInstance(symbol, key)
 		const slot = register(instance)
-		if (symbol.TTL < Infinity) {
-			instance.familyEntry = { ...slot, TTL: symbol.TTL }
-			this.getTasks().pendingFamilyEvictions.add(instance)
+		const { retention } = symbol
+		isoAssert(retention.type !== 'transient')
+		switch (retention.type) {
+			case 'immediate':
+			case 'timed':
+				instance.familyEntry = { ...slot, retention }
+				this.getTasks().pendingFamilyEvictions.add(instance)
+				break
+			case 'permanent':
+				break
+			default:
+				return exhaustive(retention)
 		}
 		return instance
 	}
@@ -817,17 +845,22 @@ class Store {
 			if (instance.mountCount > 0) continue
 			const { familyEntry } = instance
 			isoAssert(familyEntry)
-			const { TTL } = familyEntry
-			if (TTL === 0) {
-				this.evict(instance)
-				continue
+			const { retention } = familyEntry
+			switch (retention.type) {
+				case 'immediate':
+					this.evict(instance)
+					break
+				case 'timed':
+					isoAssert(instance.familyRemovalTimeout === undefined)
+					instance.familyRemovalTimeout = setTimeout(() => {
+						instance.familyRemovalTimeout = undefined
+						isoAssert(instance.mountCount === 0)
+						this.evict(instance)
+					}, retention.ms)
+					break
+				default:
+					exhaustive(retention)
 			}
-			isoAssert(instance.familyRemovalTimeout === undefined)
-			instance.familyRemovalTimeout = setTimeout(() => {
-				instance.familyRemovalTimeout = undefined
-				isoAssert(instance.mountCount === 0)
-				this.evict(instance)
-			}, TTL)
 		}
 		this.flushingFamilyEvictions = undefined
 	}
@@ -1024,7 +1057,7 @@ class Store {
 	): ResolvedAtom<S, Args> {
 		const instance = this.getInstance(symbol, key)
 		if (instance.handle) return instance.handle
-		if (symbol.type !== 'family' || symbol.TTL < 0) {
+		if (symbol.type !== 'family' || symbol.retention.type === 'transient') {
 			return (instance.handle = {
 				peek: () => this.peekInstance(instance),
 				send: (...args) => this.sendInstance(instance, args),
