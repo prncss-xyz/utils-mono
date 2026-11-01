@@ -5,7 +5,6 @@ import {
 	isFunction,
 	isoAssert,
 	isReset,
-	noop,
 	type SetStateWithReset,
 } from '../functions'
 
@@ -50,7 +49,7 @@ type DeferredRelease = {
 	owners: Set<EffectLifecycle<any>>
 }
 
-type Registration = object
+type Registration = { references: number }
 
 type Delivery = {
 	instance: Instance<any>
@@ -174,6 +173,13 @@ export type OnMount = (get: Read, set: Write) => void | (() => void)
 export type ResolvedAtom<S, Args extends unknown[]> = {
 	peek: () => S
 	send: (...args: Args) => void
+	/**
+	 * Each call owns a reference and returns an independently idempotent disposer.
+	 * Each distinct active callback runs once per update, even with multiple references.
+	 * The final release removes the callback and releases its subscription ownership.
+	 * Delivery uses a snapshot: new callbacks wait for a later update, and a callback
+	 * removed before its turn is skipped, even if it is registered again.
+	 */
 	subscribe: (notify: () => void) => () => void
 }
 
@@ -1048,13 +1054,18 @@ class Store {
 		this.sendInstance(this.getInstance(symbol, key), args)
 	}
 	private subscribeInstance<S>(instance: Instance<S>, notify: () => void) {
-		if (instance.subscriptions.has(notify)) return noop
-		const registration = {}
-		instance.subscriptions.set(notify, registration)
+		let registration = instance.subscriptions.get(notify)
+		if (!registration) {
+			registration = { references: 0 }
+			instance.subscriptions.set(notify, registration)
+		}
+		registration.references++
 		this.retain(instance)
+		let active = true
 		return () => {
-			if (instance.subscriptions.get(notify) !== registration) return
-			instance.subscriptions.delete(notify)
+			if (!active) return
+			active = false
+			if (--registration.references === 0) instance.subscriptions.delete(notify)
 			this.release(instance)
 		}
 	}
@@ -1085,6 +1096,13 @@ class Store {
 				this.subscribeInstance(this.getInstance(symbol, key), notify),
 		})
 	}
+	/**
+	 * Each call owns a reference and returns an independently idempotent disposer.
+	 * Distinct active callbacks run once per update; only the final reference removes
+	 * a callback and releases its subscription ownership. Delivery uses a snapshot:
+	 * new callbacks wait for a later update, and callbacks removed before their turn
+	 * are skipped even if re-registered. Resolved handles share this contract.
+	 */
 	subscribe<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
 		key: Key,
