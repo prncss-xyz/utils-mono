@@ -13,15 +13,15 @@ import {
 
 export const TRANSIENT = -1
 
-type FamilyStorage<Key> =
-	| { type: 'hash'; map: Map<unknown, Instance<any>> }
-	| { type: 'eq'; pairs: [Key, Instance<any>][] }
+type FamilyStorage<S, Key> =
+	| { type: 'hash'; map: Map<unknown, Instance<S>> }
+	| { type: 'eq'; pairs: [Key, Instance<S>][] }
 
 type FamilySlot =
-	| (Extract<FamilyStorage<unknown>, { type: 'hash' }> & {
+	| (Extract<FamilyStorage<any, unknown>, { type: 'hash' }> & {
 			hashedKey: unknown
 	  })
-	| Extract<FamilyStorage<unknown>, { type: 'eq' }>
+	| Extract<FamilyStorage<any, unknown>, { type: 'eq' }>
 
 type FamilyRetention =
 	| { type: 'transient' }
@@ -62,7 +62,7 @@ type Freshness = { type: 'dirty' } | { type: 'clean'; validatedAt: number }
 
 type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
-	symbol: AtomSymbol<any, any>
+	symbol: AtomSymbol<S, any>
 	familyEntry: FamilyEntry | undefined
 	familyRemovalTimeout: ReturnType<typeof setTimeout> | undefined
 	freshness: Freshness
@@ -285,7 +285,11 @@ type Tasks = {
 }
 
 class Store {
-	private contents = new WeakMap<any, any>()
+	private instances = new WeakMap<AtomSymbol<any, any>, Instance<any>>()
+	private families = new WeakMap<
+		AtomFamily<any, any, any>,
+		FamilyStorage<any, any>
+	>()
 	private epoch = 0
 	private tasks: Tasks | undefined = undefined
 	private mountWrites: Map<Instance<any>, any> | undefined
@@ -366,21 +370,21 @@ class Store {
 					return exhaustive(lookup)
 			}
 		}
-		let res = this.contents.get(symbol)
+		let res = this.instances.get(symbol) as Instance<S> | undefined
 		if (res === undefined) {
 			res = this.createInstance(symbol)
-			this.contents.set(symbol, res)
+			this.instances.set(symbol, res)
 		}
 		return res
 	}
-	private getFamilyStorage<Key>(
-		symbol: AtomFamily<any, Key, any>,
-		init: () => FamilyStorage<Key>,
-	): FamilyStorage<Key> {
-		let storage: FamilyStorage<Key> | undefined = this.contents.get(symbol)
+	private getFamilyStorage<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		init: () => FamilyStorage<S, Key>,
+	): FamilyStorage<S, Key> {
+		let storage = this.families.get(symbol) as FamilyStorage<S, Key> | undefined
 		if (storage === undefined) {
 			storage = init()
-			this.contents.set(symbol, storage)
+			this.families.set(symbol, storage)
 		}
 		return storage
 	}
@@ -412,11 +416,11 @@ class Store {
 	): Instance<S> {
 		const created = symbol.create(key)
 		isoAssert(
-			!this.contents.has(created),
+			!this.instances.has(created),
 			'atomFamily create must return a fresh symbol on every call',
 		)
 		const instance = this.createInstance(created)
-		this.contents.set(created, instance)
+		this.instances.set(created, instance)
 		return instance
 	}
 	private createInstance<S, Args extends unknown[]>(

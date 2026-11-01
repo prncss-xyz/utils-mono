@@ -19,7 +19,7 @@ import {
 const flushMicrotask = () => Promise.resolve()
 
 const internalInstance = (store: unknown, symbol: unknown) =>
-	(store as any).contents.get(symbol)
+	(store as any).instances.get(symbol)
 
 const mountedSubCount = (store: unknown, symbol: unknown) =>
 	internalInstance(store, symbol).mountedSubs.size as number
