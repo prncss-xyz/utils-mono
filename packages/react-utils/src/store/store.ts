@@ -896,33 +896,25 @@ class Store {
 		const { symbol } = instance
 		if (symbol.type === 'derived') this.revalidateUnmounted(instance)
 		if (instance.freshness.type === 'dirty') {
+			isoAssert(symbol.type === 'derived')
 			instance.freshness = { type: 'clean', validatedAt: -1 }
-			switch (symbol.type) {
-				case 'primitive':
-					instance.value = fromInit(symbol.getter)
-					return instance.value
-				case 'derived': {
-					instance.depVersions = new Map()
-					const read = (<T, Key, Args extends unknown[]>(
-						target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
-						key?: Key,
-					) => {
-						const dep = this.getInstance(target, key)
-						const value = this.peekInstance(dep)
-						instance.depVersions.set(dep, dep.version)
-						return value
-					}) as Read
-					const previous = instance.value
-					const next = symbol.getter(read)
-					instance.value = next
-					if (!Object.is(next, previous)) this.advanceDerivedVersion(instance)
-					instance.freshness = { type: 'clean', validatedAt: this.epoch }
-					if (instance.mountCount > 0) this.syncMountedDeps(instance)
-					return instance.value
-				}
-				default:
-					return exhaustive(symbol)
-			}
+			instance.depVersions = new Map()
+			const read = (<T, Key, Args extends unknown[]>(
+				target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
+				key?: Key,
+			) => {
+				const dep = this.getInstance(target, key)
+				const value = this.peekInstance(dep)
+				instance.depVersions.set(dep, dep.version)
+				return value
+			}) as Read
+			const previous = instance.value
+			const next = symbol.getter(read)
+			instance.value = next
+			if (!Object.is(next, previous)) this.advanceDerivedVersion(instance)
+			instance.freshness = { type: 'clean', validatedAt: this.epoch }
+			if (instance.mountCount > 0) this.syncMountedDeps(instance)
+			return instance.value
 		}
 		return instance.value
 	}
