@@ -23,6 +23,7 @@ import type {
 	EffectLifecycle,
 	FamilySlot,
 	FamilyStorage,
+	FlushPhase,
 	Instance,
 	MountLifecycle,
 	Tasks,
@@ -60,11 +61,13 @@ class Store {
 	private pendingEvaluations = new Set<Instance<any>>()
 	private epoch = 0
 	private tasks: Tasks | undefined = undefined
-	private mountWrites: Map<Instance<any>, any> | undefined
-	private flushingMounts: Set<Instance<any>> | undefined
-	private flushingEffects: Set<Instance<any>> | undefined
-	private flushingReconciles: Set<Instance<any>> | undefined
-	private flushingFamilyEvictions: Set<Instance<any>> | undefined
+	private phase: FlushPhase = {
+		mounts: undefined,
+		reconciles: undefined,
+		effects: undefined,
+		familyEvictions: undefined,
+		mountWrites: undefined,
+	}
 	private hydrating = true
 	private read: Read = this.peek.bind(this)
 	private write: Write = this.send.bind(this)
@@ -166,7 +169,7 @@ class Store {
 			case 'immediate':
 			case 'timed':
 				instance.familyEntry = { ...slot, retention }
-				this.getTasks().pendingFamilyEvictions.add(instance)
+				this.queueEviction(instance)
 				break
 			case 'permanent':
 				break
@@ -215,17 +218,27 @@ class Store {
 			deferredOwners: new Set(),
 		}
 	}
-	private enqueueEffect<S>(instance: Instance<S>) {
-		if (!instance.symbol.effect) return
-		if (this.flushingEffects) {
-			this.flushingEffects.add(instance)
-			return
-		}
-		this.getTasks().effects.add(instance)
+	private queueMount(instance: Instance<any>) {
+		;(this.phase.mounts ?? this.getTasks().mounts).add(instance)
 	}
-	private enqueueReconcile<S>(instance: Instance<S>) {
+	private queueEffect<S>(instance: Instance<S>) {
+		if (!instance.symbol.effect) return
+		;(this.phase.effects ?? this.getTasks().effects).add(instance)
+	}
+	private queueReconcile<S>(instance: Instance<S>) {
 		if (instance.symbol.type !== 'derived') return
-		;(this.flushingReconciles ?? this.getTasks().reconciles).add(instance)
+		;(this.phase.reconciles ?? this.getTasks().reconciles).add(instance)
+	}
+	private queueEviction(instance: Instance<any>) {
+		this.getTasks().pendingFamilyEvictions.add(instance)
+	}
+	private pendingWrites(write: true): Map<Instance<any>, any>
+	private pendingWrites(write?: false): Map<Instance<any>, any> | undefined
+	private pendingWrites(write = false) {
+		return (
+			this.phase.mountWrites ??
+			(write ? this.getTasks().primitives : this.tasks?.primitives)
+		)
 	}
 	private invalidate<S>(instance: Instance<S>, affected: Set<Instance<any>>) {
 		if (affected.has(instance)) return
@@ -233,8 +246,8 @@ class Store {
 		if (instance.symbol.type === 'derived')
 			instance.freshness = { type: 'dirty' }
 		if (instance.mountCount > 0) {
-			this.enqueueReconcile(instance)
-			this.enqueueEffect(instance)
+			this.queueReconcile(instance)
+			this.queueEffect(instance)
 		}
 		for (const sub of instance.mountedSubs) this.invalidate(sub, affected)
 	}
@@ -256,7 +269,7 @@ class Store {
 	}
 	private cancelEviction<S>(instance: Instance<S>) {
 		this.tasks?.pendingFamilyEvictions.delete(instance)
-		this.flushingFamilyEvictions?.delete(instance)
+		this.phase.familyEvictions?.delete(instance)
 		if (instance.familyRemovalTimeout !== undefined) {
 			clearTimeout(instance.familyRemovalTimeout)
 			instance.familyRemovalTimeout = undefined
@@ -275,8 +288,8 @@ class Store {
 		if (instance.mountCount++ > 0) return
 		this.syncMountedDeps(instance)
 		if (instance.mountCount === 0) return
-		;(this.flushingMounts ?? this.getTasks().mounts).add(instance)
-		this.enqueueEffect(instance)
+		this.queueMount(instance)
+		this.queueEffect(instance)
 	}
 	private mount<S>(instance: Instance<S>) {
 		if (instance.mountCount === 0 || instance.mountLifecycle) return
@@ -294,14 +307,8 @@ class Store {
 			return
 		}
 		const mountedDeps = this.detachMountedDeps(instance)
-		const mountLifecycle = instance.mountLifecycle
-		instance.mountLifecycle = undefined
-		const effectLifecycle = instance.effectLifecycle
-		instance.effectLifecycle = undefined
-		if (effectLifecycle) this.cleanupEffect(effectLifecycle, mountLifecycle)
-		else mountLifecycle?.cleanup?.()
-		if (instance.familyEntry)
-			this.getTasks().pendingFamilyEvictions.add(instance)
+		this.teardown(instance)
+		if (instance.familyEntry) this.queueEviction(instance)
 		for (const dep of mountedDeps) this.release(dep)
 	}
 	private syncMountedDeps<S>(instance: Instance<S>) {
@@ -362,17 +369,20 @@ class Store {
 		for (let index = order.length - 1; index >= 0; index--) {
 			const consumer = order[index]!
 			if (consumer.mountCount === 0 || !unownedComponent(consumer)) continue
-			const lifecycle = consumer.effectLifecycle
-			const mountLifecycle = consumer.mountLifecycle
-			consumer.effectLifecycle = undefined
-			consumer.mountLifecycle = undefined
-			if (lifecycle) this.cleanupEffect(lifecycle, mountLifecycle)
-			else mountLifecycle?.cleanup?.()
+			this.teardown(consumer)
 			if (consumer.mountCount > 0) {
-				;(this.flushingMounts ?? this.getTasks().mounts).add(consumer)
-				this.enqueueEffect(consumer)
+				this.queueMount(consumer)
+				this.queueEffect(consumer)
 			}
 		}
+	}
+	private teardown(instance: Instance<any>) {
+		const effectLifecycle = instance.effectLifecycle
+		const mountLifecycle = instance.mountLifecycle
+		instance.effectLifecycle = undefined
+		instance.mountLifecycle = undefined
+		if (effectLifecycle) this.cleanupEffect(effectLifecycle, mountLifecycle)
+		else mountLifecycle?.cleanup?.()
 	}
 	private cleanupEffect(
 		lifecycle: EffectLifecycle<any>,
@@ -435,10 +445,10 @@ class Store {
 			this.tasks
 		const mountWrites = new Map<Instance<any>, any>()
 		this.tasks = undefined
-		this.flushingMounts = mounts
-		this.flushingEffects = effects
-		this.flushingReconciles = reconciles
-		this.flushingFamilyEvictions = pendingFamilyEvictions
+		this.phase.mounts = mounts
+		this.phase.effects = effects
+		this.phase.reconciles = reconciles
+		this.phase.familyEvictions = pendingFamilyEvictions
 		this.settle(primitives, mounts, reconciles, mountWrites)
 		const transitions = this.collectTransitions(effects)
 		this.runCleanups(transitions)
@@ -472,9 +482,9 @@ class Store {
 		for (const dep of instance.depVersions.keys())
 			this.settleMount(dep, mounts, mountWrites)
 		mounts.delete(instance)
-		this.mountWrites = mountWrites
+		this.phase.mountWrites = mountWrites
 		this.mount(instance)
-		this.mountWrites = undefined
+		this.phase.mountWrites = undefined
 		// Mount writes must settle before consumers mount or effects run.
 		this.applyUpdates(mountWrites)
 	}
@@ -497,8 +507,8 @@ class Store {
 			for (const instance of mounts)
 				this.settleMount(instance, mounts, mountWrites)
 		} while (mountWrites.size > 0 || mounts.size > 0 || reconciles.size > 0)
-		this.flushingMounts = undefined
-		this.flushingReconciles = undefined
+		this.phase.mounts = undefined
+		this.phase.reconciles = undefined
 	}
 	private collectTransitions(effects: Set<Instance<any>>): Transition[] {
 		const visited = new Set<Instance<any>>()
@@ -525,7 +535,7 @@ class Store {
 			}
 		}
 		for (const instance of effects) collect(instance)
-		this.flushingEffects = undefined
+		this.phase.effects = undefined
 		return transitions
 	}
 	private runCleanups(transitions: Transition[]) {
@@ -578,7 +588,7 @@ class Store {
 					exhaustive(retention)
 			}
 		}
-		this.flushingFamilyEvictions = undefined
+		this.phase.familyEvictions = undefined
 	}
 	private evict<S>(instance: Instance<S>) {
 		const entry = instance.familyEntry
@@ -696,7 +706,7 @@ class Store {
 		key?: Key,
 	): S => {
 		const instance = this.getInstance(symbol, key)
-		const pending = this.mountWrites ?? this.tasks?.primitives
+		const pending = this.pendingWrites()
 		if (!pending?.size) return this.peekInstance(instance)
 		if (instance.symbol.type === 'primitive')
 			return pending.has(instance)
@@ -715,7 +725,7 @@ class Store {
 		switch (symbol.type) {
 			case 'primitive': {
 				const event = args[0]
-				const primitives = this.mountWrites ?? this.getTasks().primitives
+				const primitives = this.pendingWrites(true)
 				const next = isFunction(event)
 					? event(this.readPending(symbol))
 					: isReset(event)

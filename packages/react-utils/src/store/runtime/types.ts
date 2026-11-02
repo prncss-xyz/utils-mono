@@ -82,3 +82,11 @@ export type Transition = {
 	previous: EffectLifecycle<any> | undefined
 	mountLifecycle: MountLifecycle | undefined
 }
+
+export type FlushPhase = {
+	mounts: Set<Instance<any>> | undefined
+	reconciles: Set<Instance<any>> | undefined
+	effects: Set<Instance<any>> | undefined
+	familyEvictions: Set<Instance<any>> | undefined
+	mountWrites: Map<Instance<any>, any> | undefined
+}

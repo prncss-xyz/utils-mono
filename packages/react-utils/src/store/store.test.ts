@@ -2567,6 +2567,21 @@ describe('family eviction', () => {
 		release()
 	})
 
+	it('evicts entries released during a flush in the following flush', async () => {
+		const { create, names, store } = keptHandle()
+		const release = store.subscribe(names, 'first', () => {})
+		await flushMicrotask()
+		const trigger = primitiveAtom(0, { effect: release })
+		const releaseTrigger = store.subscribe(trigger, () => {})
+		await flushMicrotask()
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledOnce()
+		await flushMicrotask()
+		store.peek(names, 'first')
+		expect(create).toHaveBeenCalledTimes(2)
+		releaseTrigger()
+	})
+
 	it.each(['direct', 'effect', 'onMount', 'command'] as const)(
 		'keeps a released TTL-0 entry written by %s',
 		async (source) => {
