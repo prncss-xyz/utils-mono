@@ -46,15 +46,25 @@ export function release<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
+	let linked = false
 	for (const dep of instance.depVersions.keys()) {
 		if (instance.mountCount === 0) return
+		if (instance.mountedDeps.has(dep)) continue
 		link(state, instance, dep)
+		linked = true
 	}
-	// Releasing a dependency can run user cleanup that changes this graph.
+	if (!linked && instance.depVersions.size === instance.mountedDeps.size) return
+	for (const dep of instance.mountedDeps) {
+		if (instance.depVersions.has(dep)) continue
+		pruneMountedDeps(state, instance)
+		return
+	}
+}
+
+function pruneMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 	for (const dep of Array.from(instance.mountedDeps)) {
 		if (instance.mountCount === 0) return
-		if (instance.depVersions.has(dep)) continue
-		unlink(state, instance, dep)
+		if (!instance.depVersions.has(dep)) unlink(state, instance, dep)
 	}
 }
 
@@ -70,7 +80,7 @@ function detachMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function link<S>(state: StoreState, instance: Instance<S>, dep: Instance<any>) {
-	if (instance.mountedDeps.has(dep)) return
+	isoAssert(!instance.mountedDeps.has(dep))
 	instance.mountedDeps.add(dep)
 	dep.mountedSubs.add(instance)
 	retain(state, dep)
@@ -157,7 +167,10 @@ export function cleanupEffect(
 export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 	isoAssert(instance.freshness.type !== 'evaluating', 'cyclic atom dependency')
 	const { symbol } = instance
-	if (symbol.type === 'derived') revalidateUnmounted(state, instance)
+	if (symbol.type === 'derived' && instance.freshness.type !== 'dirty') {
+		if (isFresh(state, instance)) return instance.value
+		revalidateUnmounted(state, instance)
+	}
 	if (instance.freshness.type === 'dirty') {
 		isoAssert(symbol.type === 'derived')
 		instance.freshness = { type: 'evaluating' }

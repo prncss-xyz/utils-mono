@@ -104,9 +104,11 @@ export function flush(state: StoreState) {
 	state.phase.reconciles = reconciles
 	state.phase.familyEvictions = pendingFamilyEvictions
 	settle(state, primitives, mounts, reconciles, mountWrites)
-	const transitions = collectTransitions(state, effects)
-	runCleanups(state, transitions)
-	runTransitions(state, transitions)
+	if (effects.size > 0) {
+		const transitions = collectTransitions(state, effects)
+		runCleanups(state, transitions)
+		runTransitions(state, transitions)
+	} else state.phase.effects = undefined
 	scheduleEvictions(state, pendingFamilyEvictions)
 }
 

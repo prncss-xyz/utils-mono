@@ -8,52 +8,58 @@ export function getInstance<S, Key, Args extends unknown[]>(
 	symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 	key?: Key,
 ): Instance<S> {
-	if (symbol.type === 'family') {
-		if (symbol.retention.type === 'transient')
-			return createFreshInstance(state, symbol, key!)
-		const { lookup } = symbol
-		switch (lookup.type) {
-			case 'hash': {
-				const storage = getFamilyStorage(state, symbol, () => ({
-					type: 'hash',
-					map: new Map(),
-				}))
-				isoAssert(storage.type === 'hash')
-				const { map } = storage
-				const hashedKey = lookup.hash(key!)
-				return (
-					map.get(hashedKey) ??
-					createFamilyInstance(state, symbol, key!, (instance) => {
-						map.set(hashedKey, instance)
-						return { type: 'hash', map, hashedKey }
-					})
-				)
-			}
-			case 'eq': {
-				const storage = getFamilyStorage(state, symbol, () => ({
-					type: 'eq',
-					pairs: [],
-				}))
-				isoAssert(storage.type === 'eq')
-				const { pairs } = storage
-				return (
-					pairs.find(([k]) => lookup.eq(k, key!))?.[1] ??
-					createFamilyInstance(state, symbol, key!, (instance) => {
-						pairs.push([key!, instance])
-						return { type: 'eq', pairs }
-					})
-				)
-			}
-			default:
-				return exhaustive(lookup)
-		}
-	}
+	if (symbol.type === 'family') return getFamilyInstance(state, symbol, key!)
 	let res = state.instances.get(symbol) as Instance<S> | undefined
 	if (res === undefined) {
 		res = createInstance(state, symbol)
 		state.instances.set(symbol, res)
 	}
 	return res
+}
+
+function getFamilyInstance<S, Key, Args extends unknown[]>(
+	state: StoreState,
+	symbol: AtomFamily<S, Key, Args>,
+	key: Key,
+): Instance<S> {
+	if (symbol.retention.type === 'transient')
+		return createFreshInstance(state, symbol, key)
+	const { lookup } = symbol
+	switch (lookup.type) {
+		case 'hash': {
+			const storage = getFamilyStorage(state, symbol, () => ({
+				type: 'hash',
+				map: new Map(),
+			}))
+			isoAssert(storage.type === 'hash')
+			const { map } = storage
+			const hashedKey = lookup.hash(key)
+			return (
+				map.get(hashedKey) ??
+				createFamilyInstance(state, symbol, key, (instance) => {
+					map.set(hashedKey, instance)
+					return { type: 'hash', map, hashedKey }
+				})
+			)
+		}
+		case 'eq': {
+			const storage = getFamilyStorage(state, symbol, () => ({
+				type: 'eq',
+				pairs: [],
+			}))
+			isoAssert(storage.type === 'eq')
+			const { pairs } = storage
+			return (
+				pairs.find(([k]) => lookup.eq(k, key))?.[1] ??
+				createFamilyInstance(state, symbol, key, (instance) => {
+					pairs.push([key, instance])
+					return { type: 'eq', pairs }
+				})
+			)
+		}
+		default:
+			return exhaustive(lookup)
+	}
 }
 
 function getFamilyStorage<S, Key, Args extends unknown[]>(
