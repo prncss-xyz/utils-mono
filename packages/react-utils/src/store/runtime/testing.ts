@@ -1,7 +1,8 @@
 import { isoAssert } from '../../functions'
 import type { Hydrate, Store } from '../atoms'
 import type { createStore as publicCreateStore } from '../store'
-import { createRuntime, type StoreState } from './createRuntime'
+import { createRuntime } from './createRuntime'
+import type { StoreState } from './state'
 
 const states = new WeakMap<Store, StoreState>()
 

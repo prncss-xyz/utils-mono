@@ -166,6 +166,12 @@ const lintConfig: OxlintConfig = {
 		'react/no-unknown-property': 'error',
 		'react/void-dom-elements-no-children': 'error',
 	},
+	overrides: [
+		{
+			files: ['packages/react-utils/src/store/**'],
+			rules: { 'import/no-cycle': 'error' },
+		},
+	],
 	settings: {
 		react: {
 			version: '19.2.3',
