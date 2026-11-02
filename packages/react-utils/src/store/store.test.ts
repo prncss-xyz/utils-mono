@@ -3,6 +3,7 @@ import { afterEach, assert, describe, expect, it, type Mock, vi } from 'vitest'
 import { RESET, type SetStateWithReset } from '../functions'
 import { shallowEqual } from '../shallow-equal'
 import { createCommands } from './commandAtoms'
+import { consumerCount } from './runtime/graph'
 import { createStore, inspect } from './runtime/testing'
 import {
 	derivedAtom,
@@ -23,7 +24,7 @@ const internalInstance = (store: unknown, symbol: unknown) =>
 	inspect(store as Store).instances.get(symbol as AtomSymbol<any, any>)!
 
 const mountedSubCount = (store: unknown, symbol: unknown) =>
-	internalInstance(store, symbol).mountedSubs.size as number
+	consumerCount(internalInstance(store, symbol))
 
 const mountCount = (store: unknown, symbol: unknown) =>
 	internalInstance(store, symbol).mountCount as number

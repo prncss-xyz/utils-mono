@@ -2,6 +2,7 @@ import { exhaustive, isoAssert } from '../../functions'
 import { type Effect } from '../atoms'
 import { getCleanupOrder } from './cleanupOrder'
 import { peekInstance, cleanupEffect } from './engine'
+import { consumers, mountedDependencies, dependencies } from './graph'
 import { evict } from './registry'
 import {
 	type StoreState,
@@ -29,7 +30,7 @@ function invalidate<S>(
 		queueReconcile(state, instance)
 		queueEffect(state, instance)
 	}
-	for (const sub of instance.mountedSubs) invalidate(state, sub, affected)
+	for (const sub of consumers(instance)) invalidate(state, sub, affected)
 }
 
 /**
@@ -82,9 +83,9 @@ function runEffect<S>(
 			lifecycle.dependencies.add(dependency)
 			return
 		}
-		for (const dep of dependency.mountedDeps) collect(dep)
+		for (const dep of mountedDependencies(dependency)) collect(dep)
 	}
-	for (const dep of instance.mountedDeps) collect(dep)
+	for (const dep of mountedDependencies(instance)) collect(dep)
 	instance.effectLifecycle = lifecycle
 	const cleanup = effect(next, last, state.read, state.write)
 	if (cleanup) {
@@ -138,7 +139,7 @@ function settleMount(
 		return
 	}
 	peekInstance(state, instance)
-	for (const dep of instance.depVersions.keys())
+	for (const dep of dependencies(instance))
 		settleMount(state, dep, mounts, mountWrites)
 	mounts.delete(instance)
 	state.phase.mountWrites = mountWrites
@@ -154,7 +155,7 @@ function reconcile(
 	reconciles: Set<Instance<any>>,
 ) {
 	if (!reconciles.delete(instance)) return
-	for (const sub of Array.from(instance.mountedSubs))
+	for (const sub of Array.from(consumers(instance)))
 		reconcile(state, sub, reconciles)
 	if (instance.mountCount > 0) peekInstance(state, instance)
 }
@@ -187,7 +188,7 @@ function collectTransitions(
 		if (visited.has(instance) || instance.mountCount === 0) return
 		visited.add(instance)
 		const next = peekInstance(state, instance)
-		for (const dep of instance.depVersions.keys()) collect(dep)
+		for (const dep of dependencies(instance)) collect(dep)
 		if (
 			effects.has(instance) &&
 			(!instance.effectLifecycle ||

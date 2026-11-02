@@ -1,3 +1,10 @@
+import {
+	mountedDependencies,
+	consumers,
+	consumerCount,
+	deferredOwners,
+	deferredOwnerCount,
+} from './graph'
 import type { EffectLifecycle, Instance } from './types'
 
 export function getCleanupOrder(instances: Iterable<Instance<any>>) {
@@ -29,7 +36,7 @@ export function getCleanupOrder(instances: Iterable<Instance<any>>) {
 				else deps.add(dependencyLifecycle)
 				collect(dependencyLifecycle)
 			} else
-				for (const dep of dependency.mountedDeps)
+				for (const dep of mountedDependencies(dependency))
 					collectDependency(dep, deferred, visited)
 		}
 		for (const dependency of lifecycle.dependencies)
@@ -72,12 +79,12 @@ export function unownedComponent(instance: Instance<any>) {
 		component.add(current)
 		if (
 			current.mountCount >
-			current.mountedSubs.size + current.deferredOwners.size
+			consumerCount(current) + deferredOwnerCount(current)
 		)
 			return false
-		for (const consumer of current.mountedSubs)
+		for (const consumer of consumers(current))
 			if (!collect(consumer)) return false
-		for (const deferred of current.deferredOwners)
+		for (const deferred of deferredOwners(current))
 			for (const owner of deferred.owners)
 				if (
 					owner.cleaning ||

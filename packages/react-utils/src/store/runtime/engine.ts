@@ -1,6 +1,24 @@
 import { isoAssert } from '../../functions'
 import { type AtomFamily, type AtomSymbol, type Read } from '../atoms'
 import { getCleanupOrder, unownedComponent } from './cleanupOrder'
+import {
+	dependencies,
+	dependencyVersions,
+	hasDependency,
+	dependencyCount,
+	consumers,
+	mountedDependencies,
+	hasMountedDependency,
+	mountedDependencyCount,
+	deferredOwners,
+	resetDependencies,
+	recordDependency,
+	addMountedEdge,
+	removeMountedEdge,
+	detachMountedEdges,
+	addDeferredOwner,
+	removeDeferredOwner,
+} from './graph'
 import { getInstance } from './registry'
 import {
 	type StoreState,
@@ -39,7 +57,7 @@ export function release<S>(state: StoreState, instance: Instance<S>) {
 		releaseUnowned(state, instance)
 		return
 	}
-	const mountedDeps = detachMountedDeps(state, instance)
+	const mountedDeps = detachMountedEdges(instance)
 	teardown(state, instance)
 	if (instance.familyEntry) queueEviction(state, instance)
 	for (const dep of mountedDeps) release(state, dep)
@@ -47,42 +65,31 @@ export function release<S>(state: StoreState, instance: Instance<S>) {
 
 function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 	let linked = false
-	for (const dep of instance.depVersions.keys()) {
+	for (const dep of dependencies(instance)) {
 		if (instance.mountCount === 0) return
-		if (instance.mountedDeps.has(dep)) continue
+		if (hasMountedDependency(instance, dep)) continue
 		link(state, instance, dep)
 		linked = true
 	}
-	if (!linked && instance.depVersions.size === instance.mountedDeps.size) return
-	for (const dep of instance.mountedDeps) {
-		if (instance.depVersions.has(dep)) continue
+	if (!linked && dependencyCount(instance) === mountedDependencyCount(instance))
+		return
+	for (const dep of mountedDependencies(instance)) {
+		if (hasDependency(instance, dep)) continue
 		pruneMountedDeps(state, instance)
 		return
 	}
 }
 
 function pruneMountedDeps<S>(state: StoreState, instance: Instance<S>) {
-	for (const dep of Array.from(instance.mountedDeps)) {
+	for (const dep of Array.from(mountedDependencies(instance))) {
 		if (instance.mountCount === 0) return
-		if (!instance.depVersions.has(dep)) unlink(state, instance, dep)
+		if (!hasDependency(instance, dep)) unlink(state, instance, dep)
 	}
 }
 
-/**
- * Swaps out the mounted dependency set and clears the reverse links. It
- * must run before any user callback can change dependencies or remount.
- */
-function detachMountedDeps<S>(state: StoreState, instance: Instance<S>) {
-	const mountedDeps = instance.mountedDeps
-	instance.mountedDeps = new Set()
-	for (const dep of mountedDeps) dep.mountedSubs.delete(instance)
-	return mountedDeps
-}
-
 function link<S>(state: StoreState, instance: Instance<S>, dep: Instance<any>) {
-	isoAssert(!instance.mountedDeps.has(dep))
-	instance.mountedDeps.add(dep)
-	dep.mountedSubs.add(instance)
+	isoAssert(!hasMountedDependency(instance, dep))
+	addMountedEdge(instance, dep)
 	retain(state, dep)
 }
 
@@ -91,7 +98,7 @@ function unlink<S>(
 	instance: Instance<S>,
 	dep: Instance<any>,
 ) {
-	if (!instance.mountedDeps.delete(dep)) return
+	if (!hasMountedDependency(instance, dep)) return
 	const owners = new Set<EffectLifecycle<any>>()
 	const visited = new Set<Instance<any>>()
 	const collect = (consumer: Instance<any>) => {
@@ -100,16 +107,16 @@ function unlink<S>(
 		const lifecycle = consumer.effectLifecycle
 		if (lifecycle && (lifecycle.cleanup || lifecycle.cleaning))
 			owners.add(lifecycle)
-		for (const deferred of consumer.deferredOwners)
+		for (const deferred of deferredOwners(consumer))
 			for (const owner of deferred.owners) owners.add(owner)
-		for (const sub of consumer.mountedSubs) collect(sub)
+		for (const sub of consumers(consumer)) collect(sub)
 	}
 	collect(instance)
-	dep.mountedSubs.delete(instance)
+	removeMountedEdge(instance, dep)
 	if (owners.size === 0) release(state, dep)
 	else {
 		const deferred: DeferredRelease = { dependency: dep, owners }
-		dep.deferredOwners.add(deferred)
+		addDeferredOwner(dep, deferred)
 		for (const owner of owners) owner.deferredReleases.add(deferred)
 	}
 }
@@ -156,7 +163,7 @@ export function cleanupEffect(
 		lifecycle.deferredReleases.delete(deferred)
 		deferred.owners.delete(lifecycle)
 		if (deferred.owners.size === 0) {
-			deferred.dependency.deferredOwners.delete(deferred)
+			removeDeferredOwner(deferred.dependency, deferred)
 			release(state, deferred.dependency)
 		}
 	}
@@ -174,14 +181,14 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 	if (instance.freshness.type === 'dirty') {
 		isoAssert(symbol.type === 'derived')
 		instance.freshness = { type: 'evaluating' }
-		instance.depVersions = new Map()
+		resetDependencies(instance)
 		const read = (<T, Key, Args extends unknown[]>(
 			target: AtomFamily<T, Key, Args> | AtomSymbol<T, Args>,
 			key?: Key,
 		) => {
 			const dep = getInstance(state, target, key)
 			const value = peekInstance(state, dep)
-			instance.depVersions.set(dep, dep.version)
+			recordDependency(instance, dep, dep.version)
 			return value
 		}) as Read
 		const previous = instance.value
@@ -218,7 +225,7 @@ function revalidateUnmounted<S>(state: StoreState, instance: Instance<S>) {
 
 function depsAreCurrent<S>(state: StoreState, instance: Instance<S>) {
 	state.validations++
-	for (const [dep, version] of instance.depVersions) {
+	for (const [dep, version] of dependencyVersions(instance)) {
 		if (dep.version !== version) return false
 		peekInstance(state, dep)
 		if (dep.version !== version) return false

@@ -1,5 +1,6 @@
 import { exhaustive, fromInit, isoAssert } from '../../functions'
 import { type AtomFamily, type AtomSymbol } from '../atoms'
+import { createLinks, consumerCount, clearDependencies } from './graph'
 import { type StoreState, queueEviction, publishChange } from './state'
 import { type FamilySlot, type FamilyStorage, type Instance } from './types'
 
@@ -134,12 +135,9 @@ function createInstance<S, Args extends unknown[]>(
 		effectLifecycle: undefined,
 		mountLifecycle: undefined,
 		version: 0,
-		depVersions: new Map(),
-		mountedSubs: new Set(),
+		...createLinks(),
 		subscriptions: new Map(),
 		mountCount: 0,
-		mountedDeps: new Set(),
-		deferredOwners: new Set(),
 	}
 }
 
@@ -163,10 +161,10 @@ export function evict<S>(state: StoreState, instance: Instance<S>) {
 			return exhaustive(entry)
 	}
 	isoAssert(
-		instance.mountedSubs.size === 0,
+		consumerCount(instance) === 0,
 		'evicting an instance with dependants',
 	)
 	publishChange(state, instance)
-	instance.depVersions.clear()
+	clearDependencies(instance)
 	if (instance.symbol.type === 'derived') instance.freshness = { type: 'dirty' }
 }
