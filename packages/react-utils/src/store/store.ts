@@ -60,6 +60,8 @@ class Store {
 	>()
 	private pendingEvaluations = new Set<Instance<any>>()
 	private epoch = 0
+	/** Test instrumentation counting every dependency validation call. */
+	private validations = 0
 	private tasks: Tasks | undefined = undefined
 	private phase: FlushPhase = {
 		mounts: undefined,
@@ -681,6 +683,7 @@ class Store {
 		else instance.freshness = { type: 'dirty' }
 	}
 	private depsAreCurrent<S>(instance: Instance<S>) {
+		this.validations++
 		for (const [dep, version] of instance.depVersions) {
 			if (dep.version !== version) return false
 			this.peekInstance(dep)

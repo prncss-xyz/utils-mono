@@ -2810,6 +2810,7 @@ describe('unmounted derived caches', () => {
 		expect(store.peek(top)).toBe(initial)
 		expect(store.peek(top)).toBe(initial)
 		expect(depsAreCurrent).not.toHaveBeenCalled()
+		expect((store as any).validations).toBe(depsAreCurrent.mock.calls.length)
 		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
 		store.send(leaf, 2)
 		await flushMicrotask()
@@ -2818,6 +2819,7 @@ describe('unmounted derived caches', () => {
 		expect(depsAreCurrent.mock.calls.length).toBeLessThanOrEqual(
 			derivedCount + 1,
 		)
+		expect((store as any).validations).toBe(depsAreCurrent.mock.calls.length)
 	})
 
 	it('recomputes unmounted dependants of an evicted family member', async () => {
