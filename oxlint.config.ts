@@ -90,6 +90,7 @@ const lintConfig: OxlintConfig = {
 		'require-yield': 'error',
 		'sort-vars': 'error',
 		'import/no-duplicates': 'error',
+		'import/no-cycle': 'error',
 		eqeqeq: ['error', 'smart'],
 		yoda: ['error', 'never', { onlyEquality: true }],
 		'typescript/await-thenable': 'error',
@@ -166,12 +167,6 @@ const lintConfig: OxlintConfig = {
 		'react/no-unknown-property': 'error',
 		'react/void-dom-elements-no-children': 'error',
 	},
-	overrides: [
-		{
-			files: ['packages/react-utils/src/store/**'],
-			rules: { 'import/no-cycle': 'error' },
-		},
-	],
 	settings: {
 		react: {
 			version: '19.2.3',
