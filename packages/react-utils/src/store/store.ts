@@ -26,6 +26,7 @@ import type {
 	Instance,
 	MountLifecycle,
 	Tasks,
+	Transition,
 } from './runtime/types'
 
 // NOTE: we are currently not handling the possibility that a user-supplied method (such as a getter or unmount) throws an exception. This is deliberately left for later.
@@ -438,55 +439,70 @@ class Store {
 		this.flushingEffects = effects
 		this.flushingReconciles = reconciles
 		this.flushingFamilyEvictions = pendingFamilyEvictions
-		const applyUpdates = (pending: Map<Instance<any>, any>) => {
-			while (pending.size > 0) {
-				const updates = [...pending]
-				pending.clear()
-				const changed: Instance<any>[] = []
-				for (const [instance, next] of updates)
-					if (!Object.is(next, instance.value)) {
-						instance.value = next
-						this.publishChange(instance)
-						changed.push(instance)
-					}
-				this.notify(changed)
-			}
+		this.settle(primitives, mounts, reconciles, mountWrites)
+		const transitions = this.collectTransitions(effects)
+		this.runCleanups(transitions)
+		this.runTransitions(transitions)
+		this.scheduleEvictions(pendingFamilyEvictions)
+	}
+	private applyUpdates(pending: Map<Instance<any>, any>) {
+		while (pending.size > 0) {
+			const updates = [...pending]
+			pending.clear()
+			const changed: Instance<any>[] = []
+			for (const [instance, next] of updates)
+				if (!Object.is(next, instance.value)) {
+					instance.value = next
+					this.publishChange(instance)
+					changed.push(instance)
+				}
+			this.notify(changed)
 		}
-		const mount = (instance: Instance<any>) => {
-			if (instance.mountCount === 0 || instance.mountLifecycle) {
-				mounts.delete(instance)
-				return
-			}
-			this.peekInstance(instance)
-			for (const dep of instance.depVersions.keys()) mount(dep)
+	}
+	private settleMount(
+		instance: Instance<any>,
+		mounts: Set<Instance<any>>,
+		mountWrites: Map<Instance<any>, any>,
+	) {
+		if (instance.mountCount === 0 || instance.mountLifecycle) {
 			mounts.delete(instance)
-			this.mountWrites = mountWrites
-			this.mount(instance)
-			this.mountWrites = undefined
-			// Mount writes must settle before consumers mount or effects run.
-			applyUpdates(mountWrites)
+			return
 		}
-		const reconcile = (instance: Instance<any>) => {
-			if (!reconciles.delete(instance)) return
-			for (const sub of Array.from(instance.mountedSubs)) reconcile(sub)
-			if (instance.mountCount > 0) this.peekInstance(instance)
-		}
-		applyUpdates(primitives)
+		this.peekInstance(instance)
+		for (const dep of instance.depVersions.keys())
+			this.settleMount(dep, mounts, mountWrites)
+		mounts.delete(instance)
+		this.mountWrites = mountWrites
+		this.mount(instance)
+		this.mountWrites = undefined
+		// Mount writes must settle before consumers mount or effects run.
+		this.applyUpdates(mountWrites)
+	}
+	private reconcile(instance: Instance<any>, reconciles: Set<Instance<any>>) {
+		if (!reconciles.delete(instance)) return
+		for (const sub of Array.from(instance.mountedSubs))
+			this.reconcile(sub, reconciles)
+		if (instance.mountCount > 0) this.peekInstance(instance)
+	}
+	private settle(
+		primitives: Map<Instance<any>, any>,
+		mounts: Set<Instance<any>>,
+		reconciles: Set<Instance<any>>,
+		mountWrites: Map<Instance<any>, any>,
+	) {
+		this.applyUpdates(primitives)
 		do {
-			applyUpdates(mountWrites)
-			for (const instance of reconciles) reconcile(instance)
-			for (const instance of mounts) mount(instance)
+			this.applyUpdates(mountWrites)
+			for (const instance of reconciles) this.reconcile(instance, reconciles)
+			for (const instance of mounts)
+				this.settleMount(instance, mounts, mountWrites)
 		} while (mountWrites.size > 0 || mounts.size > 0 || reconciles.size > 0)
 		this.flushingMounts = undefined
 		this.flushingReconciles = undefined
+	}
+	private collectTransitions(effects: Set<Instance<any>>): Transition[] {
 		const visited = new Set<Instance<any>>()
-		const transitions: {
-			instance: Instance<any>
-			effect: Effect<any>
-			next: any
-			previous: EffectLifecycle<any> | undefined
-			mountLifecycle: MountLifecycle | undefined
-		}[] = []
+		const transitions: Transition[] = []
 		const collect = (instance: Instance<any>) => {
 			if (visited.has(instance) || instance.mountCount === 0) return
 			visited.add(instance)
@@ -510,6 +526,9 @@ class Store {
 		}
 		for (const instance of effects) collect(instance)
 		this.flushingEffects = undefined
+		return transitions
+	}
+	private runCleanups(transitions: Transition[]) {
 		const cleanupOrder = getCleanupOrder(
 			transitions.map(({ instance }) => instance),
 		)
@@ -520,6 +539,8 @@ class Store {
 			const lifecycle = instance.effectLifecycle
 			if (lifecycle) this.cleanupEffect(lifecycle)
 		}
+	}
+	private runTransitions(transitions: Transition[]) {
 		// Recreate dependency resources before their consumers run.
 		for (const {
 			instance,
@@ -534,6 +555,8 @@ class Store {
 				instance.effectLifecycle === previous
 			)
 				this.runEffect(instance, effect, next, previous?.value)
+	}
+	private scheduleEvictions(pendingFamilyEvictions: Set<Instance<any>>) {
 		for (const instance of pendingFamilyEvictions) {
 			if (instance.mountCount > 0) continue
 			const { familyEntry } = instance

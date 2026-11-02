@@ -1,4 +1,9 @@
-import type { AtomSymbol, FamilyRetention, ResolvedAtom } from '../atoms'
+import type {
+	AtomSymbol,
+	Effect,
+	FamilyRetention,
+	ResolvedAtom,
+} from '../atoms'
 
 export type FamilyStorage<S, Key> =
 	| { type: 'hash'; map: Map<unknown, Instance<S>> }
@@ -68,4 +73,12 @@ export type Tasks = {
 	effects: Set<Instance<any>>
 	reconciles: Set<Instance<any>>
 	pendingFamilyEvictions: Set<Instance<any>>
+}
+
+export type Transition = {
+	instance: Instance<any>
+	effect: Effect<any>
+	next: any
+	previous: EffectLifecycle<any> | undefined
+	mountLifecycle: MountLifecycle | undefined
 }
