@@ -14,6 +14,7 @@
 			"project": ["src/**/*.{ts,tsx}!"]
 		}
 	},
+	"ignore": ["packages/react-utils/src/store/runtime/testing.ts"],
 	"ignoreBinaries": ["vp"],
 	"ignoreDependencies": [
 		"@astryxdesign/theme-neutral",

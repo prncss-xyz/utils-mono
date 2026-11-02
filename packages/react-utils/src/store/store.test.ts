@@ -3,8 +3,8 @@ import { afterEach, assert, describe, expect, it, type Mock, vi } from 'vitest'
 import { RESET, type SetStateWithReset } from '../functions'
 import { shallowEqual } from '../shallow-equal'
 import { createCommands } from './commandAtoms'
+import { createStore, inspect } from './runtime/testing'
 import {
-	createStore,
 	derivedAtom,
 	atomFamily,
 	hydrate,
@@ -14,12 +14,13 @@ import {
 	type AtomFamilyOptions,
 	type AtomSymbol,
 	type Read,
+	type Store,
 } from './store'
 
 const flushMicrotask = () => Promise.resolve()
 
 const internalInstance = (store: unknown, symbol: unknown) =>
-	(store as any).instances.get(symbol)
+	inspect(store as Store).instances.get(symbol as AtomSymbol<any, any>)!
 
 const mountedSubCount = (store: unknown, symbol: unknown) =>
 	internalInstance(store, symbol).mountedSubs.size as number
@@ -2806,20 +2807,18 @@ describe('unmounted derived caches', () => {
 		const initial = store.peek(top)
 		const derivedCount = depth * width
 		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
-		const depsAreCurrent = vi.spyOn(store as any, 'depsAreCurrent')
+		const validations = inspect(store).validations
 		expect(store.peek(top)).toBe(initial)
 		expect(store.peek(top)).toBe(initial)
-		expect(depsAreCurrent).not.toHaveBeenCalled()
-		expect((store as any).validations).toBe(depsAreCurrent.mock.calls.length)
+		expect(inspect(store).validations).toBe(validations)
 		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
 		store.send(leaf, 2)
 		await flushMicrotask()
 		expect(store.peek(top)).toBe(2 * initial)
 		expect(evaluate).toHaveBeenCalledTimes(2 * derivedCount)
-		expect(depsAreCurrent.mock.calls.length).toBeLessThanOrEqual(
+		expect(inspect(store).validations - validations).toBeLessThanOrEqual(
 			derivedCount + 1,
 		)
-		expect((store as any).validations).toBe(depsAreCurrent.mock.calls.length)
 	})
 
 	it('recomputes unmounted dependants of an evicted family member', async () => {

@@ -59,6 +59,40 @@ export type Write = {
 	): void
 	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>, ...args: Args): void
 }
+export type Resolve = {
+	<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+	): ResolvedAtom<S, Args>
+	<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+	): ResolvedAtom<S, Args>
+}
+/**
+ * Each call owns a reference and returns an independently idempotent disposer.
+ * Distinct active callbacks run once per update; only the final reference removes
+ * a callback and releases its subscription ownership. Delivery uses a snapshot:
+ * new callbacks wait for a later update, and callbacks removed before their turn
+ * are skipped even if re-registered. Resolved handles share this contract.
+ */
+export type Subscribe = {
+	<S, Key, Args extends unknown[]>(
+		symbol: AtomFamily<S, Key, Args>,
+		key: Key,
+		notify: () => void,
+	): () => void
+	<S, Args extends unknown[]>(
+		symbol: AtomSymbol<S, Args>,
+		notify: () => void,
+	): () => void
+}
+export type Store = {
+	peek: Read
+	send: Write
+	resolve: Resolve
+	subscribe: Subscribe
+}
+
 export type Hydrate = readonly HydrateEntry[]
 // Effect<never> is contravariant, so write-only atoms need their own catch-all.
 type HydrateEntry =
