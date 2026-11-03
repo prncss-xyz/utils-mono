@@ -10,7 +10,11 @@ export default {
 			project: ['src/**/*.{ts,tsx,css}!'],
 		},
 		'packages/react-utils': {
-			entry: ['src/index.ts!', 'stryker.vitest.config.ts!'],
+			entry: [
+				'src/index.ts!',
+				'stryker.vitest.config.ts!',
+				'stryker.setup.testing.ts!',
+			],
 			project: [
 				'**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,mdx,css}!',
 				'!**/*.testing.ts!',

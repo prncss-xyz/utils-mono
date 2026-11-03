@@ -29,6 +29,7 @@
 		"@storybook/addon-docs": "catalog:",
 		"@storybook/addon-vitest": "catalog:",
 		"@storybook/react-vite": "catalog:",
+		"@stryker-mutator/api": "catalog:",
 		"@stryker-mutator/core": "catalog:",
 		"@stryker-mutator/vitest-runner": "catalog:",
 		"@types/node": "catalog:",
