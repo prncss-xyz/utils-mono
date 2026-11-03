@@ -34,7 +34,7 @@ export default defineConfig({
 		trace: 'on-first-retry',
 	},
 	webServer: {
-		command: 'pnpm --prefix apps/web start',
+		command: 'pnpm --prefix apps/web preview',
 		timeout: 120 * 1000,
 		reuseExistingServer: !process.env.CI,
 	},
