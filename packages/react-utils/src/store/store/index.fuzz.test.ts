@@ -1,12 +1,7 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 
-import {
-	createStore,
-	derivedAtom,
-	primitiveAtom,
-	type AtomSymbol,
-} from './store'
+import { createStore, derivedAtom, primitiveAtom, type AtomSymbol } from '.'
 
 const value = fc.integer({ min: 0, max: 4 })
 const dependency = fc.integer({ min: 0, max: 9 })

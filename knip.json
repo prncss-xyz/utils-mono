@@ -12,9 +12,14 @@
 				"src/main.tsx!"
 			],
 			"project": ["src/**/*.{ts,tsx}!"]
+		},
+		"packages/react-utils": {
+			"project": [
+				"**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,mdx}!",
+				"!**/*.testing.ts!"
+			]
 		}
 	},
-	"ignore": ["packages/react-utils/src/store/runtime/testing.ts"],
 	"ignoreBinaries": ["vp"],
 	"ignoreDependencies": [
 		"@astryxdesign/theme-neutral",

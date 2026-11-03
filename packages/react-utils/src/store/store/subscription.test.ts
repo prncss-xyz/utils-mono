@@ -1,7 +1,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { type Value } from './runtime/testing'
 import {
 	atomFamily,
 	createStore,
@@ -10,7 +9,8 @@ import {
 	TRANSIENT,
 	type AtomSymbol,
 	type ResolvedAtom,
-} from './store'
+} from '.'
+import { type Value } from './utils.testing'
 
 type Subscribable = Pick<ResolvedAtom<number, never>, 'subscribe'>
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { atomFamily, primitiveAtom, TRANSIENT } from '../atoms'
 import { evict, getInstance } from './registry'
-import { createStubState } from './testing'
+import { createStubState } from './utils.testing'
 
 describe('family resolution', () => {
 	const operation = fc.oneof(

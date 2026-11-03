@@ -1,8 +1,6 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 
-import { RESET } from '../functions'
-import { type Value } from './runtime/testing'
 import {
 	createStore,
 	derivedAtom,
@@ -10,7 +8,9 @@ import {
 	type AtomSymbol,
 	type Read,
 	type Write,
-} from './store'
+} from '.'
+import { RESET } from '../../functions'
+import { type Value } from './utils.testing'
 
 const PRIMITIVES = 3
 const small = fc.integer({ min: 0, max: 4 })

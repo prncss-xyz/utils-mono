@@ -1,5 +1,5 @@
-import type { Hydrate, Store, ValidHydrate } from './atoms'
-import { createRuntime } from './runtime/createRuntime'
+import type { Hydrate, Store, ValidHydrate } from '../atoms'
+import { createRuntime } from './createRuntime'
 
 export {
 	TRANSIENT,
@@ -20,7 +20,7 @@ export {
 	type Store,
 	type ValidHydrate,
 	type Write,
-} from './atoms'
+} from '../atoms'
 
 export function createStore(): Store
 export function createStore<

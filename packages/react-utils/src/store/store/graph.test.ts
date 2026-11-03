@@ -20,7 +20,7 @@ import {
 	resetDependencies,
 } from './graph'
 import { getInstance } from './registry'
-import { createStubState } from './testing'
+import { createStubState } from './utils.testing'
 
 type Node = ReturnType<typeof instances>[number]
 

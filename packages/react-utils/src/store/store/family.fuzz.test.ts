@@ -1,15 +1,15 @@
 import fc from 'fast-check'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { SetStateWithReset } from '../functions'
-import { type Value } from './runtime/testing'
 import {
 	atomFamily,
 	createStore,
 	derivedAtom,
 	primitiveAtom,
 	type ResolvedAtom,
-} from './store'
+} from '.'
+import type { SetStateWithReset } from '../../functions'
+import { type Value } from './utils.testing'
 
 type Key = { id: number }
 type Handle = ResolvedAtom<string, [SetStateWithReset<string>]>

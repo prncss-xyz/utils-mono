@@ -1,8 +1,8 @@
 import type fc from 'fast-check'
 
+import type { createStore as publicCreateStore } from '.'
 import { isoAssert } from '../../functions'
 import type { Hydrate, Store } from '../atoms'
-import type { createStore as publicCreateStore } from '../store'
 import { createRuntime } from './createRuntime'
 import { createState, type StoreState } from './state'
 
@@ -16,7 +16,7 @@ export const createStore: typeof publicCreateStore = ((hydrate?: Hydrate) => {
 
 export function inspect(store: Store): StoreState {
 	const state = states.get(store)
-	isoAssert(state, 'store was not created by runtime/testing')
+	isoAssert(state, 'store was not created by store/utils.testing')
 	return state
 }
 

@@ -7,7 +7,7 @@ import {
 	derivedAtom,
 	primitiveAtom,
 	TRANSIENT,
-} from './store'
+} from '.'
 
 describe('store graph invariants', () => {
 	it('rejects a getter that reads itself', () => {

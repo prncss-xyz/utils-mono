@@ -1,6 +1,7 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 
+import { derivedAtom, primitiveAtom, type AtomSymbol } from '.'
 import {
 	consumerCount,
 	createStore,
@@ -8,8 +9,7 @@ import {
 	inspect,
 	mountedDependencyCount,
 	type Value,
-} from './runtime/testing'
-import { derivedAtom, primitiveAtom, type AtomSymbol } from './store'
+} from './utils.testing'
 
 const flags = { effect: fc.boolean(), mount: fc.boolean() }
 const dependency = fc.integer({ min: 0, max: 9 })

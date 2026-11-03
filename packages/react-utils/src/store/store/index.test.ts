@@ -1,8 +1,5 @@
 import { assert, describe, expect, it, type Mock, vi } from 'vitest'
 
-import { isoAssert, type SetStateWithReset } from '../functions'
-import { createCommands } from './commandAtoms'
-import { consumerCount, createStore, inspect } from './runtime/testing'
 import {
 	derivedAtom,
 	atomFamily,
@@ -12,7 +9,10 @@ import {
 	type AtomSymbol,
 	type Read,
 	type Store,
-} from './store'
+} from '.'
+import { isoAssert, type SetStateWithReset } from '../../functions'
+import { createCommands } from '../commandAtoms'
+import { consumerCount, createStore, inspect } from './utils.testing'
 
 const flushMicrotask = () => Promise.resolve()
 

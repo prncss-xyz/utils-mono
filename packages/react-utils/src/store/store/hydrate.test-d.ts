@@ -1,12 +1,6 @@
 import { describe, expectTypeOf, it } from 'vitest'
 
-import {
-	atomFamily,
-	createStore,
-	hydrate,
-	primitiveAtom,
-	type Store,
-} from './store'
+import { atomFamily, createStore, hydrate, primitiveAtom, type Store } from '.'
 
 const count = primitiveAtom(0)
 const members = atomFamily((key: string) => primitiveAtom(key.length))

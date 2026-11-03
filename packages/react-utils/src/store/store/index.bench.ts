@@ -6,7 +6,7 @@ import {
 	derivedAtom,
 	primitiveAtom,
 	type AtomSymbol,
-} from './store'
+} from '.'
 
 type Counters = {
 	getters: number
