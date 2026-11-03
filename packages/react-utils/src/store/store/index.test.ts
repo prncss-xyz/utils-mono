@@ -12,9 +12,12 @@ import {
 } from '.'
 import { isoAssert, type SetStateWithReset } from '../../functions'
 import { createCommands } from '../commandAtoms'
-import { consumerCount, createStore, inspect } from './utils.testing'
-
-const flushMicrotask = () => Promise.resolve()
+import {
+	consumerCount,
+	createStore,
+	flushMicrotask,
+	inspect,
+} from './utils.testing'
 
 const internalInstance = <S, Args extends unknown[]>(
 	store: Store,

@@ -10,7 +10,7 @@ import {
 	type AtomSymbol,
 	type ResolvedAtom,
 } from '.'
-import { type Value } from './utils.testing'
+import { flushMicrotask, type Value } from './utils.testing'
 
 type Subscribable = Pick<ResolvedAtom<number, never>, 'subscribe'>
 
@@ -213,7 +213,7 @@ async function run(
 						}
 				}
 				written = false
-				await Promise.resolve()
+				await flushMicrotask()
 				expect(calls, report(`${label}: delivered callbacks`)).toEqual(expected)
 				expect(violations, report(label)).toEqual([])
 				const active = model.some(({ active }) => active)

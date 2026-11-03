@@ -10,7 +10,7 @@ import {
 	type Write,
 } from '.'
 import { RESET } from '../../functions'
-import { type Value } from './utils.testing'
+import { flushMicrotask, type Value } from './utils.testing'
 
 const PRIMITIVES = 3
 const small = fc.integer({ min: 0, max: 4 })
@@ -341,7 +341,7 @@ async function run(
 					for (const { primitive: watched, bumps } of subscriptions)
 						if (!Object.is(before[watched], committed[watched]))
 							pending.set(bumps, overlay(bumps) + 1)
-					await Promise.resolve()
+					await flushMicrotask()
 					checkCommitted(step)
 					break
 				}

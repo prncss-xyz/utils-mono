@@ -37,3 +37,5 @@ export function createStubState(): StoreState {
 }
 
 export type Value<A> = A extends fc.Arbitrary<infer V> ? V : never
+
+export const flushMicrotask = () => Promise.resolve()

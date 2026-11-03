@@ -77,6 +77,12 @@ describe('mounted edges', () => {
 			{ numRuns: 300 },
 		)
 	})
+
+	it('rejects adding an edge that is already mounted', () => {
+		const [consumer, dep] = instances() as [Node, Node]
+		addMountedEdge(consumer, dep)
+		expect(() => addMountedEdge(consumer, dep)).toThrow('added twice')
+	})
 })
 
 describe('dependency records', () => {

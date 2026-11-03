@@ -88,7 +88,6 @@ function pruneMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function link<S>(state: StoreState, instance: Instance<S>, dep: Instance<any>) {
-	isoAssert(!hasMountedDependency(instance, dep))
 	addMountedEdge(instance, dep)
 	retain(state, dep)
 }
