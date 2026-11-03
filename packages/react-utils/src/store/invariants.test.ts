@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { atomFamily, createStore, derivedAtom, primitiveAtom } from './store'
+import {
+	atomFamily,
+	createStore,
+	type AtomFamilyOptions,
+	derivedAtom,
+	primitiveAtom,
+	TRANSIENT,
+} from './store'
 
 describe('store graph invariants', () => {
 	it('rejects a getter that reads itself', () => {
@@ -72,17 +79,27 @@ describe('store graph invariants', () => {
 	})
 })
 
-describe('atom family option invariants', () => {
-	it('rejects NaN TTL when the family is declared', () => {
-		expect(() => atomFamily(() => primitiveAtom(0), { TTL: NaN })).toThrow(
-			'atomFamily TTL must not be NaN',
-		)
-	})
-
-	it.each([-Infinity, -2, -0.5])('keeps TTL %s transient', (TTL) => {
+describe('atom family options', () => {
+	it.each([-Infinity, -2, -0.5, TRANSIENT])('keeps TTL %s transient', (TTL) => {
 		const family = atomFamily(() => primitiveAtom({}), { TTL })
 		const store = createStore()
 
 		expect(store.peek(family, 'key')).not.toBe(store.peek(family, 'key'))
+	})
+
+	it.each<[string, AtomFamilyOptions<string[]>, string]>([
+		['a NaN TTL', { TTL: NaN }, 'atomFamily TTL must not be NaN'],
+		[
+			'both hash and eq',
+			{
+				hash: (key: string[]) => key.join(),
+				eq: (a: string[], b: string[]) => a.length === b.length,
+			} as never,
+			'atomFamily accepts either hash or eq, not both',
+		],
+	])('rejects %s', (_label, options, message) => {
+		expect(() =>
+			atomFamily((key: string[]) => primitiveAtom(key.length), options),
+		).toThrow(message)
 	})
 })

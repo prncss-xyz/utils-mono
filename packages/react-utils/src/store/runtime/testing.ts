@@ -1,8 +1,10 @@
+import type fc from 'fast-check'
+
 import { isoAssert } from '../../functions'
 import type { Hydrate, Store } from '../atoms'
 import type { createStore as publicCreateStore } from '../store'
 import { createRuntime } from './createRuntime'
-import type { StoreState } from './state'
+import { createState, type StoreState } from './state'
 
 const states = new WeakMap<Store, StoreState>()
 
@@ -17,3 +19,21 @@ export function inspect(store: Store): StoreState {
 	isoAssert(state, 'store was not created by runtime/testing')
 	return state
 }
+
+export {
+	consumerCount,
+	deferredOwnerCount,
+	mountedDependencyCount,
+} from './graph'
+
+/** A state whose wiring is inert, for unit tests of registry and graph primitives. */
+export function createStubState(): StoreState {
+	return createState({
+		read: (() => {}) as never,
+		write: (() => {}) as never,
+		readPending: (() => {}) as never,
+		scheduleFlush: () => {},
+	})
+}
+
+export type Value<A> = A extends fc.Arbitrary<infer V> ? V : never

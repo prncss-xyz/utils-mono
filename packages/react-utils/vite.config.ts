@@ -80,6 +80,13 @@ export default defineConfig({
 					name: 'unit',
 				},
 			},
+			{
+				test: {
+					name: 'types',
+					include: [],
+					typecheck: { enabled: true, include: ['src/**/*.test-d.ts'] },
+				},
+			},
 			...(canRunBrowserTests
 				? [{ extends: true, ...storybookTestProject }]
 				: []),

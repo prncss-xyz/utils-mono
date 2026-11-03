@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import fc from 'fast-check'
+import { describe, expect, it } from 'vitest'
 
+import { type Value } from './runtime/testing'
 import {
 	atomFamily,
 	createStore,
@@ -10,175 +12,263 @@ import {
 	type ResolvedAtom,
 } from './store'
 
-const modes = [
-	'store',
-	'resolved atom',
-	'family store',
-	'resolved family',
-	'mixed family',
-	'transient handle',
-] as const
+type Subscribable = Pick<ResolvedAtom<number, never>, 'subscribe'>
 
-const setup = (
-	mode: (typeof modes)[number],
-	atom: AtomSymbol<number, never>,
-) => {
+type ModeContext = {
+	direct: Subscribable
+	familyDirect: Subscribable
+	handle: () => Subscribable
+	atomHandle: () => Subscribable
+}
+
+type ModeConfig = {
+	TTL?: number
+	target: (context: ModeContext) => Subscribable
+	other?: (context: ModeContext) => Subscribable['subscribe']
+}
+
+const modeConfigs = {
+	store: { target: ({ direct }) => direct },
+	'resolved atom': {
+		target: ({ atomHandle }) => atomHandle(),
+	},
+	'family store': {
+		target: ({ familyDirect }) => familyDirect,
+	},
+	'resolved family': { target: ({ handle }) => handle() },
+	'mixed family': {
+		target: ({ handle }) => handle(),
+		other: ({ familyDirect }) => familyDirect.subscribe,
+	},
+	'transient handle': {
+		TTL: TRANSIENT,
+		target: ({ handle }) => handle(),
+	},
+} satisfies Record<string, ModeConfig>
+
+type Mode = keyof typeof modeConfigs
+const modes = Object.keys(modeConfigs) as Mode[]
+
+const setup = (mode: Mode, atom: AtomSymbol<number, never>) => {
+	const config: ModeConfig = modeConfigs[mode]
 	const store = createStore()
-	const family = atomFamily(() => ({ ...atom }), {
-		TTL: mode === 'transient handle' ? TRANSIENT : 0,
-	})
-	const handle = store.resolve(family, 'key')
-	const direct: ResolvedAtom<number, never> = {
-		peek: () => store.peek(atom),
-		send: (...args) => store.send(atom, ...args),
-		subscribe: (notify) => store.subscribe(atom, notify),
+	const family = atomFamily(() => ({ ...atom }), { TTL: config.TTL ?? 0 })
+	const context: ModeContext = {
+		direct: { subscribe: (notify) => store.subscribe(atom, notify) },
+		familyDirect: {
+			subscribe: (notify) => store.subscribe(family, 'key', notify),
+		},
+		handle: () => store.resolve(family, 'key'),
+		atomHandle: () => store.resolve(atom),
 	}
-	const familyDirect: ResolvedAtom<number, never> = {
-		peek: () => store.peek(family, 'key'),
-		send: (...args) => store.send(family, 'key', ...args),
-		subscribe: (notify) => store.subscribe(family, 'key', notify),
-	}
-	const target =
-		mode === 'store'
-			? direct
-			: mode === 'resolved atom'
-				? store.resolve(atom)
-				: mode === 'family store'
-					? familyDirect
-					: handle
+	const target = config.target(context)
 	return {
 		store,
 		target,
-		subscribeOther:
-			mode === 'mixed family' ? familyDirect.subscribe : target.subscribe,
+		subscribeOther: config.other?.(context) ?? target.subscribe,
 	}
 }
 
-describe.each(modes)('%s subscription references', (mode) => {
-	it.each([0, 1])(
-		'delivers once and independently releases duplicate callbacks (first disposer: %s)',
-		async (first) => {
-			const source = primitiveAtom(0)
-			const { store, target, subscribeOther } = setup(
-				mode,
-				derivedAtom((read) => read(source)),
-			)
-			const notify = vi.fn()
-			const releases = [target.subscribe(notify), subscribeOther(notify)]
-			await Promise.resolve()
+type Action =
+	| { type: 'unsubscribe'; handle: number }
+	| { type: 'subscribe'; callback: number; other: boolean }
 
-			store.send(source, 1)
-			await Promise.resolve()
-			expect(notify).toHaveBeenCalledTimes(1)
+const action: fc.Arbitrary<Action> = fc.oneof(
+	fc.record({
+		type: fc.constant('unsubscribe' as const),
+		handle: fc.nat({ max: 30 }),
+	}),
+	fc.record({
+		type: fc.constant('subscribe' as const),
+		callback: fc.nat({ max: 2 }),
+		other: fc.boolean(),
+	}),
+)
 
-			releases[first]!()
-			releases[first]!()
-			store.send(source, 2)
-			await Promise.resolve()
-			expect(notify).toHaveBeenCalledTimes(2)
+const operation = fc.oneof(
+	{ weight: 4, arbitrary: action },
+	{ weight: 3, arbitrary: fc.record({ type: fc.constant('write' as const) }) },
+	{ weight: 4, arbitrary: fc.record({ type: fc.constant('yield' as const) }) },
+)
 
-			releases[1 - first]!()
-			releases[1 - first]!()
-			store.send(source, 3)
-			await Promise.resolve()
-			expect(notify).toHaveBeenCalledTimes(2)
+const scripts = fc.array(fc.array(action, { maxLength: 3 }), {
+	minLength: 3,
+	maxLength: 3,
+})
+
+type Registration = { references: number }
+
+/**
+ * Models subscriptions as a registration per distinct callback. A notification
+ * delivers to a snapshot of registrations, skipping those removed or replaced
+ * before their turn.
+ */
+async function run(
+	mode: Mode,
+	scripts: Action[][],
+	operations: Value<typeof operation>[],
+) {
+	const source = primitiveAtom(0)
+	const events: string[] = []
+	const live = new Set<string>()
+	const violations: string[] = []
+	const resource = (name: string, requires: string[], forbids: string[]) => ({
+		start: () => {
+			events.push(`${name} start`)
+			if (live.has(name)) violations.push(`${name} started twice`)
+			for (const other of requires)
+				if (!live.has(other)) violations.push(`${name} started before ${other}`)
+			live.add(name)
 		},
-	)
-
-	it('preserves consumer and dependency lifecycles until the final reference', async () => {
-		const events: string[] = []
-		const source = primitiveAtom(0, {
-			onMount: () => {
-				events.push('source mount')
-				return () => events.push('source cleanup')
-			},
-		})
-		const atom = derivedAtom((read) => read(source), undefined, {
-			onMount: () => {
-				events.push('consumer mount')
-				return () => events.push('consumer cleanup')
-			},
-			effect: () => {
-				events.push('effect setup')
-				return () => events.push('effect cleanup')
-			},
-		})
-		const { target, subscribeOther } = setup(mode, atom)
-		const notify = vi.fn()
-		const release = target.subscribe(notify)
-		const releaseOther = subscribeOther(notify)
-		await Promise.resolve()
-		expect(events).toEqual(['source mount', 'consumer mount', 'effect setup'])
-		events.length = 0
-
-		release()
-		release()
-		await Promise.resolve()
-		expect(events).toEqual([])
-
-		releaseOther()
-		releaseOther()
-		await Promise.resolve()
-		expect(events).toEqual([
-			'effect cleanup',
-			'consumer cleanup',
-			'source cleanup',
-		])
+		stop: () => {
+			events.push(`${name} stop`)
+			if (!live.delete(name)) violations.push(`${name} stopped twice`)
+			for (const other of forbids)
+				if (live.has(other)) violations.push(`${name} stopped before ${other}`)
+		},
 	})
-
-	it('keeps a snapshotted registration active across reference count changes', async () => {
-		const source = primitiveAtom(0)
-		const { store, target, subscribeOther } = setup(
-			mode,
-			derivedAtom((read) => read(source)),
-		)
-		const later = vi.fn()
-		let releaseAdded = () => {}
-		const releaseEarlier = target.subscribe(() => {
-			releaseLater()
-			releaseAdded = subscribeOther(later)
-		})
-		const releaseLater = target.subscribe(later)
-		const releaseOther = subscribeOther(later)
-		await Promise.resolve()
-
-		store.send(source, 1)
-		await Promise.resolve()
-		expect(later).toHaveBeenCalledTimes(1)
-
-		releaseEarlier()
-		releaseLater()
-		releaseOther()
-		releaseAdded()
+	const sourceMount = resource('source mount', [], ['consumer mount', 'effect'])
+	const consumerMount = resource('consumer mount', ['source mount'], ['effect'])
+	const effect = resource('effect', ['consumer mount'], [])
+	const atom = derivedAtom((read) => read(source), undefined, {
+		onMount: () => {
+			consumerMount.start()
+			return consumerMount.stop
+		},
+		effect: () => {
+			effect.start()
+			return effect.stop
+		},
 	})
+	source.onMount = () => {
+		sourceMount.start()
+		return sourceMount.stop
+	}
+	const { store, target, subscribeOther } = setup(mode, atom)
 
-	it('does not revive a removed snapshot registration when the callback is re-added', async () => {
-		const source = primitiveAtom(0)
-		const { store, target, subscribeOther } = setup(
-			mode,
-			derivedAtom((read) => read(source)),
+	const calls: number[] = []
+	const expected: number[] = []
+	const releases: (() => void)[] = []
+	const history: string[] = []
+	const report = (label: string) =>
+		`${label}\nsteps:\n${history.join('\n')}\nevents:\n${events.join('\n')}`
+	const model: {
+		registration: Registration
+		callback: number
+		active: boolean
+	}[] = []
+	const registrations = new Map<number, Registration>()
+
+	const callbacks: (() => void)[] = scripts.map((script, id) => () => {
+		calls.push(id)
+		for (const step of script) applyReal(step)
+	})
+	const applyReal = (step: Action) => {
+		if (step.type === 'subscribe') {
+			releases.push(
+				(step.other ? subscribeOther : target.subscribe)(
+					callbacks[step.callback]!,
+				),
+			)
+			return
+		}
+		if (releases.length > 0) releases[step.handle % releases.length]!()
+	}
+	const applyModel = (step: Action) => {
+		if (step.type === 'subscribe') {
+			let registration = registrations.get(step.callback)
+			if (!registration) {
+				registration = { references: 0 }
+				registrations.set(step.callback, registration)
+			}
+			registration.references++
+			model.push({ registration, callback: step.callback, active: true })
+			return
+		}
+		if (model.length === 0) return
+		const handle = model[step.handle % model.length]!
+		if (!handle.active) return
+		handle.active = false
+		if (--handle.registration.references === 0)
+			registrations.delete(handle.callback)
+	}
+
+	let counter = 0
+	let written = false
+	for (const [index, step] of operations.entries()) {
+		const label = `step ${index} ${JSON.stringify(step)}`
+		history.push(label)
+		switch (step.type) {
+			case 'write':
+				store.send(source, ++counter)
+				written = true
+				break
+			case 'yield': {
+				if (written) {
+					const snapshot = [...registrations]
+					for (const [callback, registration] of snapshot)
+						if (registrations.get(callback) === registration) {
+							expected.push(callback)
+							for (const inner of scripts[callback]!) applyModel(inner)
+						}
+				}
+				written = false
+				await Promise.resolve()
+				expect(calls, report(`${label}: delivered callbacks`)).toEqual(expected)
+				expect(violations, report(label)).toEqual([])
+				const active = model.some(({ active }) => active)
+				expect(live.has('source mount'), report(`${label}: source`)).toBe(
+					active,
+				)
+				expect(live.has('consumer mount'), report(`${label}: consumer`)).toBe(
+					active,
+				)
+				expect(live.has('effect'), report(`${label}: effect`)).toBe(active)
+				break
+			}
+			default:
+				applyReal(step)
+				applyModel(step)
+		}
+	}
+	const releaseAll = () => {
+		for (const release of releases) release()
+	}
+	releaseAll()
+	releaseAll()
+	expect(violations, report('after releasing twice')).toEqual([])
+	expect([...live], report('resources outliving all releases')).toEqual([])
+}
+
+describe.each(modes)('%s subscription references', (mode) => {
+	it('delivers each distinct callback once per update to a snapshot of registrations', async () => {
+		await fc.assert(
+			fc.asyncProperty(
+				scripts,
+				fc.array(operation, { maxLength: 30 }),
+				(scripts, operations) => run(mode, scripts, operations),
+			),
+			{
+				numRuns: 200,
+				examples: [
+					[
+						[
+							[
+								{ type: 'unsubscribe', handle: 15 },
+								{ type: 'subscribe', callback: 1, other: false },
+							],
+							[],
+							[],
+						],
+						[
+							{ type: 'subscribe', callback: 0, other: false },
+							{ type: 'write' },
+							{ type: 'subscribe', callback: 1, other: false },
+							{ type: 'yield' },
+						],
+					],
+				],
+			},
 		)
-		const later = vi.fn()
-		let releaseAdded = () => {}
-		const releaseEarlier = target.subscribe(() => {
-			releaseLater()
-			releaseOther()
-			releaseAdded = subscribeOther(later)
-		})
-		const releaseLater = target.subscribe(later)
-		const releaseOther = subscribeOther(later)
-		await Promise.resolve()
-
-		store.send(source, 1)
-		await Promise.resolve()
-		expect(later).not.toHaveBeenCalled()
-
-		releaseEarlier()
-		releaseLater()
-		releaseOther()
-		store.send(source, 2)
-		await Promise.resolve()
-		expect(later).toHaveBeenCalledTimes(1)
-		releaseAdded()
 	})
 })

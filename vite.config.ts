@@ -71,6 +71,17 @@ export default defineConfig({
 					name: 'unit',
 				},
 			},
+			{
+				test: {
+					name: 'types',
+					include: [],
+					typecheck: {
+						enabled: true,
+						include: ['packages/react-utils/**/*.test-d.ts'],
+						tsconfig: './packages/react-utils/tsconfig.json',
+					},
+				},
+			},
 			...(canRunBrowserTests
 				? [
 						{
