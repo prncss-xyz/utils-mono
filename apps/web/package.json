@@ -11,11 +11,9 @@
 		"dev": "vp dev",
 		"tsc": "vp run vp:tsc",
 		"build": "vp build",
-		"start": "vp preview",
 		"preview": "vp preview"
 	},
 	"dependencies": {
-		"@astryxdesign/cli": "catalog:",
 		"@astryxdesign/core": "catalog:",
 		"@astryxdesign/theme-neutral": "catalog:",
 		"@prncss-xyz/react-utils": "workspace:*",
@@ -25,6 +23,7 @@
 		"zod": "catalog:"
 	},
 	"devDependencies": {
+		"@astryxdesign/cli": "catalog:",
 		"@fast-check/vitest": "catalog:",
 		"@types/node": "catalog:",
 		"@types/react": "catalog:",
