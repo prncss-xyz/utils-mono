@@ -5,12 +5,7 @@
 			"entry": ["oxfmt.config.ts!"]
 		},
 		"apps/web": {
-			"entry": [
-				"src/features/store2/react.tsx!",
-				"src/features/store2/store.ts!",
-				"index.html!",
-				"src/main.tsx!"
-			],
+			"entry": ["index.html!"],
 			"project": ["src/**/*.{ts,tsx}!"]
 		},
 		"packages/react-utils": {
@@ -20,10 +15,12 @@
 			]
 		}
 	},
-	"ignoreBinaries": ["vp"],
+	"ignoreBinaries": ["typos", "vp"],
 	"ignoreDependencies": [
-		"@astryxdesign/theme-neutral",
 		"@astryxdesign/cli",
-		"@astryxdesign/core"
+		"@astryxdesign/core",
+		"@astryxdesign/theme-neutral",
+		"@commitlint/cli",
+		"bumpp"
 	]
 }
