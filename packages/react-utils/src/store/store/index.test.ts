@@ -16,10 +16,9 @@ import {
 	consumerCount,
 	countOperations,
 	createStore,
+	flushMicrotask,
 	inspect,
 } from './utils.testing'
-
-const flushMicrotask = () => Promise.resolve()
 
 const internalInstance = <S, Args extends unknown[]>(
 	store: Store,

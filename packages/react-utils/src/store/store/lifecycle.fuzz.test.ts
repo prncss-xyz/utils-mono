@@ -6,6 +6,7 @@ import {
 	consumerCount,
 	createStore,
 	deferredOwnerCount,
+	flushMicrotask,
 	inspect,
 	mountedDependencyCount,
 	type Value,
@@ -264,7 +265,7 @@ async function run(
 	const commit = async () => {
 		for (const [node, next] of pending) committed[node] = next
 		pending.clear()
-		await Promise.resolve()
+		await flushMicrotask()
 		prior = [...committed]
 	}
 

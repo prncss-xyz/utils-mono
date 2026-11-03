@@ -2,6 +2,7 @@ import fc from 'fast-check'
 import { expect, it } from 'vitest'
 
 import { createStore, derivedAtom, primitiveAtom, type AtomSymbol } from '.'
+import { flushMicrotask } from './utils.testing'
 
 const value = fc.integer({ min: 0, max: 4 })
 const dependency = fc.integer({ min: 0, max: 9 })
@@ -86,8 +87,12 @@ it('matches a reference evaluation across random derived graphs', async () => {
 					: reference(c) % modulus
 			}
 			const unsubscribes: (() => void)[] = []
+			const steps: string[] = []
+			const report = (label: string) => `${label}\nsteps:\n${steps.join('\n')}`
 			try {
-				for (const [step, operation] of operations.entries()) {
+				for (const [position, operation] of operations.entries()) {
+					const step = `step ${position} ${JSON.stringify(operation)}`
+					steps.push(step)
 					switch (operation.type) {
 						case 'write':
 							store.send(primitives[operation.primitive]!, operation.value)
@@ -110,7 +115,7 @@ it('matches a reference evaluation across random derived graphs', async () => {
 								)[0]!()
 							break
 						case 'yield':
-							await Promise.resolve()
+							await flushMicrotask()
 							for (const [index, next] of pending) expected[index] = next
 							pending.clear()
 							break
@@ -118,12 +123,12 @@ it('matches a reference evaluation across random derived graphs', async () => {
 							for (const [index, primitive] of primitives.entries())
 								expect(
 									store.peek(primitive),
-									`step ${step} primitive ${index}`,
+									report(`${step}: primitive ${index}`),
 								).toBe(expected[index])
 							const index = primitives.length + operation.derived
 							expect(
 								store.peek(nodes[index]!),
-								`step ${step} node ${index}`,
+								report(`${step}: node ${index}`),
 							).toBe(reference(index))
 							break
 						}
@@ -131,7 +136,7 @@ it('matches a reference evaluation across random derived graphs', async () => {
 				}
 			} finally {
 				for (const unsubscribe of unsubscribes) unsubscribe()
-				await Promise.resolve()
+				await flushMicrotask()
 			}
 		}),
 		{ numRuns: 2000 },

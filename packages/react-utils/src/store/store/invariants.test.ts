@@ -8,6 +8,7 @@ import {
 	primitiveAtom,
 	TRANSIENT,
 } from '.'
+import { flushMicrotask } from './utils.testing'
 
 describe('store graph invariants', () => {
 	it('rejects a getter that reads itself', () => {
@@ -35,7 +36,7 @@ describe('store graph invariants', () => {
 
 		expect(store.peek(first)).toBe(1)
 		store.send(flag, true)
-		await Promise.resolve()
+		await flushMicrotask()
 
 		expect(() => store.peek(first)).toThrow('cyclic atom dependency')
 	})
@@ -55,7 +56,7 @@ describe('store graph invariants', () => {
 			store.send(count, 1)
 
 			expect(() => store.send(command)).toThrow('cyclic atom dependency')
-			await Promise.resolve()
+			await flushMicrotask()
 			expect(store.peek(count)).toBe(1)
 		},
 	)
@@ -73,7 +74,7 @@ describe('store graph invariants', () => {
 		expect(store.peek(leaf)).toBe(4)
 		store.send(source, 2)
 		store.send(command)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(source)).toBe(7)
 		expect(store.peek(leaf)).toBe(22)
 	})

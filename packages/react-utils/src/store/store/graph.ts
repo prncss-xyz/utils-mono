@@ -1,3 +1,4 @@
+import { isoAssert } from '../../functions'
 import type { DeferredRelease, Instance } from './types'
 
 export function createLinks() {
@@ -79,6 +80,7 @@ export function recordDependency(
 }
 
 export function addMountedEdge(instance: Instance<any>, dep: Instance<any>) {
+	isoAssert(!hasMountedDependency(instance, dep), 'mounted edge added twice')
 	instance.mountedDeps.add(dep)
 	dep.mountedSubs.add(instance)
 }
