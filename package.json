@@ -7,7 +7,6 @@
 	"license": "MIT",
 	"author": "",
 	"type": "module",
-	"main": "index.js",
 	"scripts": {
 		"prepare": "vp config",
 		"dev": "pnpm run -r --parallel dev",
@@ -28,12 +27,11 @@
 		"@commitlint/config-conventional": "catalog:",
 		"@commitlint/types": "catalog:",
 		"@playwright/test": "catalog:",
-		"@storybook/addon-vitest": "catalog:",
 		"@vitest/browser-playwright": "catalog:",
 		"@vitest/coverage-v8": "catalog:",
 		"knip": "catalog:",
 		"sherif": "catalog:",
-		"vite": "catalog:",
+		"typescript": "catalog:",
 		"vite-plus": "catalog:"
 	},
 	"devEngines": {

@@ -9,12 +9,8 @@ export default defineMain({
 	],
 	framework: {
 		name: '@storybook/react-vite',
-		options: {},
-	},
-	core: {
-		builder: {
-			name: '@storybook/builder-vite',
-			options: {
+		options: {
+			builder: {
 				viteConfigPath: '.storybook/vite.config.ts',
 			},
 		},
