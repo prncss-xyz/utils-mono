@@ -2,6 +2,7 @@ import { defineConfig } from 'vite-plus'
 
 import fmt from './oxfmt.config'
 import lint from './oxlint.config'
+import { unitTestConfig } from './packages/react-utils/unit.testing'
 import {
 	canRunBrowserTests,
 	storybookTestProject,
@@ -65,10 +66,8 @@ export default defineConfig({
 			},
 			{
 				test: {
-					environment: 'node',
-					globals: true,
+					...unitTestConfig,
 					include: ['packages/react-utils/**/*.test.ts'],
-					name: 'unit',
 				},
 			},
 			{

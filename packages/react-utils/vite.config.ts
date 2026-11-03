@@ -6,6 +6,8 @@ import viteReact from '@vitejs/plugin-react'
 import { playwright } from '@vitest/browser-playwright'
 import { defineConfig } from 'vite-plus'
 
+import { unitTestConfig } from './unit.testing'
+
 const react = () => viteReact({ compiler: true })
 
 const systemChromium = '/usr/bin/chromium'
@@ -73,12 +75,7 @@ export default defineConfig({
 	test: {
 		projects: [
 			{
-				test: {
-					environment: 'node',
-					globals: true,
-					include: ['**/*.test.ts'],
-					name: 'unit',
-				},
+				test: unitTestConfig,
 			},
 			{
 				test: {

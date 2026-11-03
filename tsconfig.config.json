@@ -4,5 +4,12 @@
 	"compilerOptions": {
 		"types": ["vite-plus/client"]
 	},
-	"include": ["*.config.ts", "*.config.mts", "*.config.cts"]
+	"include": [
+		"*.config.ts",
+		"*.config.mts",
+		"*.config.cts",
+		"packages/*/*.config.ts",
+		"packages/*/*.testing.ts",
+		"apps/*/*.config.ts"
+	]
 }
