@@ -15,3 +15,6 @@ storybook-static
 *.tsbuildinfo
 .cache
 *.pem
+
+/.stryker-tmp/
+/packages/react-utils/reports/

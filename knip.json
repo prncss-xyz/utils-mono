@@ -9,6 +9,7 @@
 			"project": ["src/**/*.{ts,tsx}!"]
 		},
 		"packages/react-utils": {
+			"entry": ["src/index.ts!", "stryker.vitest.config.ts!"],
 			"project": [
 				"**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,mdx}!",
 				"!**/*.testing.ts!"
