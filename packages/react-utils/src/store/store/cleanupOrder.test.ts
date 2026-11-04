@@ -8,20 +8,30 @@ type Node = Instance<any> & {
 	effectLifecycle: EffectLifecycle<any> | undefined
 }
 
-const node = (effect: boolean, mountCount = 1) =>
-	({
+type MutableLifecycle = {
+	-readonly [K in keyof EffectLifecycle<any>]: EffectLifecycle<any>[K]
+}
+
+const node = (effect: boolean, mountCount = 1) => {
+	const result = {
 		mountCount,
 		mountedSubs: new Set(),
 		mountedDeps: new Set(),
 		deferredOwners: new Set(),
-		effectLifecycle: effect
-			? {
-					cleaning: false,
-					dependencies: new Set(),
-					deferredReleases: new Set(),
-				}
-			: undefined,
-	}) as unknown as Node
+		effectLifecycle: undefined,
+	} as unknown as Node
+	if (effect) {
+		const lifecycle = {
+			cleaning: false,
+			dependencies: new Set(),
+			readClosure: new Set(),
+			deferredReleases: new Set(),
+		} as unknown as MutableLifecycle
+		lifecycle.instance = result
+		result.effectLifecycle = lifecycle
+	}
+	return result
+}
 
 const link = (consumer: Node, dependency: Node) => {
 	consumer.mountedDeps.add(dependency)
@@ -92,7 +102,7 @@ describe('getCleanupOrder', () => {
 		)
 	})
 
-	it('puts a deferred dependency ahead of its owner unless the dependency already depends on the owner', () => {
+	it('puts a deferred dependency ahead of its owner unless the dependency records the owner as an effect dependency', () => {
 		const owner = node(true)
 		const resource = node(true)
 		owner.effectLifecycle!.deferredReleases.add({
@@ -104,6 +114,18 @@ describe('getCleanupOrder', () => {
 		link(resource, owner)
 		withLifecycleDependencies([owner, resource])
 		expect(getCleanupOrder([owner, resource])).toEqual([owner, resource])
+	})
+
+	it('lets a deferred dependency win over a mounted edge that points the other way', () => {
+		const owner = node(true)
+		const resource = node(true)
+		owner.effectLifecycle!.deferredReleases.add({
+			dependency: resource,
+			owners: new Set([owner.effectLifecycle!]),
+		})
+		link(resource, owner)
+
+		expect(getCleanupOrder([owner, resource])).toEqual([resource, owner])
 	})
 
 	it("looks through effect-less nodes to the deferred dependency's resource", () => {

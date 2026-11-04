@@ -42,6 +42,20 @@ export function mountedDependencies(
 	return instance.mountedDeps
 }
 
+/**
+ * Adds `instance` and everything reachable from it through mounted
+ * dependencies to `into`, skipping what `into` already holds.
+ */
+export function collectMountedReach(
+	instance: Instance<any>,
+	into: Set<Instance<any>>,
+) {
+	if (into.has(instance)) return
+	into.add(instance)
+	for (const dep of mountedDependencies(instance))
+		collectMountedReach(dep, into)
+}
+
 export function hasMountedDependency(
 	instance: Instance<any>,
 	dep: Instance<any>,

@@ -37,6 +37,8 @@ export type StoreState = {
 	instances: WeakMap<AtomSymbol<any, any>, Instance<any>>
 	families: WeakMap<AtomFamily<any, any, any>, FamilyStorage<any, any>>
 	pendingEvaluations: Set<Instance<any>>
+	/** Mounted edges linked since the last flush recorded the reads. */
+	linkedEdges: [consumer: Instance<any>, dependency: Instance<any>][]
 	epoch: number
 	/**
 	 * Opt-in operation counters, in total and by atom name; `undefined`
@@ -69,6 +71,7 @@ export function createState(
 		instances: new WeakMap(),
 		families: new WeakMap(),
 		pendingEvaluations: new Set(),
+		linkedEdges: [],
 		epoch: 0,
 		instrumentation: undefined,
 		tasks: undefined,
@@ -78,6 +81,7 @@ export function createState(
 			effects: undefined,
 			familyEvictions: undefined,
 			mountWrites: undefined,
+			releases: undefined,
 		},
 		hydrating: true,
 		...wiring,

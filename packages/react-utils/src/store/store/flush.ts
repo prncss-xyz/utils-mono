@@ -1,8 +1,14 @@
 import { exhaustive, isoAssert } from '../../functions'
 import { type Effect } from '../atoms'
 import { getCleanupOrder } from './cleanupOrder'
-import { peekInstance, cleanupEffect, runCleanup } from './engine'
-import { consumers, mountedDependencies, dependencies } from './graph'
+import { peekInstance, cleanupEffect, release, runCleanup } from './engine'
+import {
+	consumers,
+	mountedDependencies,
+	dependencies,
+	hasMountedDependency,
+	collectMountedReach,
+} from './graph'
 import { evict } from './registry'
 import {
 	type StoreState,
@@ -75,12 +81,16 @@ function runEffect<S>(
 	next: S,
 	last: S | undefined,
 ) {
+	const readClosure = new Set<Instance<any>>()
+	for (const dep of mountedDependencies(instance))
+		collectMountedReach(dep, readClosure)
 	const lifecycle: EffectLifecycle<S> = {
 		value: next,
 		instance,
 		cleaning: false,
 		deferredReleases: new Set(),
 		dependencies: new Set(),
+		readClosure,
 	}
 	const visited = new Set<Instance<any>>()
 	const collect = (dependency: Instance<any>) => {
@@ -112,13 +122,50 @@ export function flush(state: StoreState) {
 	state.phase.effects = effects
 	state.phase.reconciles = reconciles
 	state.phase.familyEvictions = pendingFamilyEvictions
+	state.phase.releases = []
 	settle(state, primitives, mounts, reconciles, mountWrites)
-	if (effects.size > 0) {
-		const transitions = collectTransitions(state, effects)
-		runCleanups(state, transitions)
-		runTransitions(state, transitions)
-	} else state.phase.effects = undefined
+	const transitions = collectTransitions(state, effects)
+	recordReads(state, new Set(transitions.map(({ instance }) => instance)))
+	runCleanups(state, transitions)
+	runTransitions(state, transitions)
 	scheduleEvictions(state, pendingFamilyEvictions)
+}
+
+/**
+ * Extends the read closure of every live effect that is not about to rerun
+ * with what the edges linked since the last flush, and still present, reach,
+ * then drops the instances that are no longer mounted. Edges below consumers
+ * with no such effect above are skipped without being walked again.
+ */
+function recordReads(state: StoreState, retiring: Set<Instance<any>>) {
+	const touched = new Set<EffectLifecycle<any>>()
+	const withoutReader = new Set<Instance<any>>()
+	for (const [consumer, dependency] of state.linkedEdges.splice(0)) {
+		if (!hasMountedDependency(consumer, dependency)) continue
+		const visited = new Set<Instance<any>>()
+		const readers: EffectLifecycle<any>[] = []
+		const collectReaders = (current: Instance<any>) => {
+			if (visited.has(current) || withoutReader.has(current)) return
+			visited.add(current)
+			const lifecycle = current.effectLifecycle
+			if (lifecycle && !retiring.has(current)) readers.push(lifecycle)
+			for (const sub of consumers(current)) collectReaders(sub)
+		}
+		collectReaders(consumer)
+		if (readers.length === 0) {
+			for (const instance of visited) withoutReader.add(instance)
+			continue
+		}
+		const reached = new Set<Instance<any>>()
+		collectMountedReach(dependency, reached)
+		for (const lifecycle of readers) {
+			for (const instance of reached) lifecycle.readClosure.add(instance)
+			touched.add(lifecycle)
+		}
+	}
+	for (const { readClosure } of touched)
+		for (const instance of readClosure)
+			if (instance.mountCount === 0) readClosure.delete(instance)
 }
 
 function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
@@ -136,25 +183,53 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
 	}
 }
 
+/**
+ * Mounts, dependencies first, every retained instance reachable from
+ * `instance` through retained dependencies that is not mounted yet, whether or
+ * not it is queued in `mounts`. After each mount, every ancestor on the current
+ * path re-walks its dependencies, since `onMount` may change the graph. A
+ * dependency mounted for one root can be cleaned up in the same flush if a later
+ * root's `onMount` write unlinks it.
+ */
 function settleMount(
 	state: StoreState,
 	instance: Instance<any>,
 	mounts: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
 ) {
-	if (instance.mountCount === 0 || instance.mountLifecycle) {
-		mounts.delete(instance)
-		return
+	const visited = new Set<Instance<any>>()
+	/**
+	 * Returns whether the caller must re-walk because a mount ran (user code
+	 * may have changed the graph).
+	 */
+	const walk = (node: Instance<any>): boolean => {
+		if (visited.has(node)) return false
+		visited.add(node)
+		if (node.mountCount === 0) {
+			mounts.delete(node)
+			return false
+		}
+		const walkDependencies = () => {
+			peekInstance(state, node)
+			for (const dep of dependencies(node)) if (walk(dep)) return true
+			return false
+		}
+		let dependencyRequestedRewalk = false
+		while (walkDependencies()) {
+			dependencyRequestedRewalk = true
+			visited.clear()
+			visited.add(node)
+		}
+		mounts.delete(node)
+		if (node.mountLifecycle) return dependencyRequestedRewalk
+		isoAssert(mountWrites.size === 0)
+		state.phase.mountWrites = mountWrites
+		mount(state, node)
+		state.phase.mountWrites = undefined
+		applyUpdates(state, mountWrites)
+		return true
 	}
-	peekInstance(state, instance)
-	for (const dep of dependencies(instance))
-		settleMount(state, dep, mounts, mountWrites)
-	mounts.delete(instance)
-	state.phase.mountWrites = mountWrites
-	mount(state, instance)
-	state.phase.mountWrites = undefined
-	// Mount writes must settle before consumers mount or effects run.
-	applyUpdates(state, mountWrites)
+	walk(instance)
 }
 
 function reconcile(
@@ -175,13 +250,19 @@ function settle(
 	reconciles: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
 ) {
+	const releases = state.phase.releases
+	isoAssert(releases)
+	const idle = () =>
+		mountWrites.size === 0 && mounts.size === 0 && reconciles.size === 0
 	applyUpdates(state, primitives)
 	do {
 		applyUpdates(state, mountWrites)
 		for (const instance of reconciles) reconcile(state, instance, reconciles)
 		for (const instance of mounts)
 			settleMount(state, instance, mounts, mountWrites)
-	} while (mountWrites.size > 0 || mounts.size > 0 || reconciles.size > 0)
+		if (idle()) for (const dep of releases.splice(0)) release(state, dep)
+	} while (!idle() || releases.length > 0)
+	state.phase.releases = undefined
 	state.phase.mounts = undefined
 	state.phase.reconciles = undefined
 }

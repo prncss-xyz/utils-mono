@@ -16,33 +16,35 @@ export function getCleanupOrder(instances: Iterable<Instance<any>>) {
 		EffectLifecycle<any>,
 		Set<EffectLifecycle<any>>
 	>()
-	const deferredDependencies: [EffectLifecycle<any>, EffectLifecycle<any>][] =
-		[]
+	type Edge = [EffectLifecycle<any>, EffectLifecycle<any>]
+	const deferredDependencies: Edge[] = []
+	const mountedDependencyEdges: Edge[] = []
 	const collect = (lifecycle: EffectLifecycle<any>) => {
 		if (dependencies.has(lifecycle)) return
 		const deps = new Set<EffectLifecycle<any>>()
 		dependencies.set(lifecycle, deps)
 		const collectDependency = (
 			dependency: Instance<any>,
-			deferred: boolean,
+			target: Set<EffectLifecycle<any>> | Edge[],
 			visited = new Set<Instance<any>>(),
 		): void => {
 			if (visited.has(dependency)) return
 			visited.add(dependency)
 			const dependencyLifecycle = dependency.effectLifecycle
 			if (dependencyLifecycle) {
-				if (deferred)
-					deferredDependencies.push([lifecycle, dependencyLifecycle])
-				else deps.add(dependencyLifecycle)
+				if (Array.isArray(target)) target.push([lifecycle, dependencyLifecycle])
+				else target.add(dependencyLifecycle)
 				collect(dependencyLifecycle)
 			} else
 				for (const dep of mountedDependencies(dependency))
-					collectDependency(dep, deferred, visited)
+					collectDependency(dep, target, visited)
 		}
 		for (const dependency of lifecycle.dependencies)
-			collectDependency(dependency, false)
+			collectDependency(dependency, deps)
+		for (const dependency of mountedDependencies(lifecycle.instance))
+			collectDependency(dependency, mountedDependencyEdges)
 		for (const { dependency } of lifecycle.deferredReleases)
-			collectDependency(dependency, true)
+			collectDependency(dependency, deferredDependencies)
 	}
 	for (const lifecycle of cleanupInstances.keys()) collect(lifecycle)
 	const reaches = (
@@ -57,7 +59,10 @@ export function getCleanupOrder(instances: Iterable<Instance<any>>) {
 			if (reaches(dependency, to, visited)) return true
 		return false
 	}
-	for (const [lifecycle, dependency] of deferredDependencies)
+	for (const [lifecycle, dependency] of [
+		...deferredDependencies,
+		...mountedDependencyEdges,
+	])
 		if (!reaches(dependency, lifecycle))
 			dependencies.get(lifecycle)!.add(dependency)
 	const cleanupOrder: Instance<any>[] = []

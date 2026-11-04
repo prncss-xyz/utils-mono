@@ -29,6 +29,11 @@ export type EffectLifecycle<S> = MountLifecycle & {
 	cleaning: boolean
 	deferredReleases: Set<DeferredRelease>
 	dependencies: Set<Instance<any>>
+	/**
+	 * Everything the effect's instance reached when the effect ran or
+	 * at the end of a later flush, until cleanup.
+	 */
+	readClosure: Set<Instance<any>>
 }
 
 export type DeferredRelease = {
@@ -89,4 +94,5 @@ export type FlushPhase = {
 	effects: Set<Instance<any>> | undefined
 	familyEvictions: Set<Instance<any>> | undefined
 	mountWrites: Map<Instance<any>, any> | undefined
+	releases: Instance<any>[] | undefined
 }

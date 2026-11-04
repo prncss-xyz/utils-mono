@@ -39,6 +39,15 @@ const mountCount = <S, Args extends unknown[]>(
 	symbol: AtomSymbol<S, Args>,
 ) => internalInstance(store, symbol).mountCount
 
+const readClosure = <S, Args extends unknown[]>(
+	store: Store,
+	symbol: AtomSymbol<S, Args>,
+) => {
+	const lifecycle = internalInstance(store, symbol).effectLifecycle
+	assert(lifecycle)
+	return lifecycle.readClosure
+}
+
 const expectNoStrongReferences = <S, Args extends unknown[]>(
 	store: Store,
 	symbol: AtomSymbol<S, Args>,
@@ -558,6 +567,520 @@ describe('Store', () => {
 		unsubscribeAgain()
 		expect(sourceEffect).toHaveBeenCalledTimes(2)
 		expect(cleanup).toHaveBeenCalledTimes(2)
+	})
+
+	describe('transitive mount order within a flush', () => {
+		const logMount = (order: string[], name: string) => ({
+			onMount: () => {
+				order.push(name)
+			},
+		})
+		const fixture = (order: string[]) => {
+			const flag = primitiveAtom(false)
+			const sw = primitiveAtom(false)
+			const e = primitiveAtom(1, logMount(order, 'E'))
+			const b = primitiveAtom(0, {
+				onMount: (_get, set) => {
+					order.push('B')
+					set(flag, true)
+				},
+			})
+			const m = derivedAtom((get) => (get(flag) ? get(e) : 0))
+			const m2 = derivedAtom((get) => (get(sw) ? get(b) : 0))
+			return { flag, sw, e, b, m, m2 }
+		}
+		type Atoms = ReturnType<typeof fixture>
+		it.each<{
+			name: string
+			read: (get: Read, atoms: Atoms) => number
+		}>([
+			{
+				name: 'a mounted intermediate gains the dependency',
+				read: (get, { sw, b, m }) => (get(sw) ? get(b) : 0) + get(m),
+			},
+			{
+				name: 'the consumer itself gains the dependency',
+				read: (get, { sw, b, flag, e }) =>
+					(get(sw) ? get(b) : 0) + (get(flag) ? get(e) : 0),
+			},
+			{
+				name: 'the writer is reached through a mounted intermediate without onMount',
+				read: (get, { m2, flag, e }) => (get(flag) ? get(e) : 0) + get(m2),
+			},
+			{
+				name: 'a mounted intermediate is walked before the writer',
+				read: (get, { sw, b, m }) => get(m) + (get(sw) ? get(b) : 0),
+			},
+		])('mounts the new dependency first when $name', async ({ read }) => {
+			const order: string[] = []
+			const atoms = fixture(order)
+			const a = derivedAtom(
+				(get) => read(get, atoms),
+				undefined,
+				logMount(order, 'A'),
+			)
+			const store = createStore()
+			store.subscribe(atoms.m, () => {})
+			store.subscribe(atoms.m2, () => {})
+			await flushMicrotask()
+			store.subscribe(a, () => {})
+			store.send(atoms.sw, true)
+			await flushMicrotask()
+
+			expect(order).toEqual(['B', 'E', 'A'])
+		})
+
+		it('does not mount a sibling that an onMount write unlinked', async () => {
+			const order: string[] = []
+			const flag = primitiveAtom(false)
+			const keep = primitiveAtom(true)
+			const sw = primitiveAtom(false)
+			const a = primitiveAtom(1, {
+				onMount: (_get, set) => {
+					order.push('A')
+					set(keep, false)
+				},
+			})
+			const b = primitiveAtom(2, {
+				onMount: () => {
+					order.push('B')
+					return () => {
+						order.push('~B')
+					}
+				},
+			})
+			const i = derivedAtom(
+				(get) => (get(flag) ? get(a) + (get(keep) ? get(b) : 0) : 0),
+				undefined,
+				logMount(order, 'I'),
+			)
+			const c = derivedAtom(
+				(get) => (get(sw) ? get(i) : 0),
+				undefined,
+				logMount(order, 'C'),
+			)
+			const store = createStore()
+			store.subscribe(c, () => {})
+			store.send(flag, true)
+			store.send(sw, true)
+			await flushMicrotask()
+			await flushMicrotask()
+
+			expect(order).toEqual(['A', 'I', 'C'])
+		})
+
+		it('mounts a dependency gained through an unmounted intermediate before the consumer', async () => {
+			const order: string[] = []
+			const flag = primitiveAtom(false)
+			const sw = primitiveAtom(false)
+			const g = primitiveAtom(1, {
+				onMount: (_get, set) => {
+					order.push('G')
+					set(flag, true)
+				},
+			})
+			const i = derivedAtom((get) => get(g), undefined, logMount(order, 'I'))
+			const e = primitiveAtom(1, logMount(order, 'E'))
+			const c = derivedAtom(
+				(get) => (get(sw) ? get(i) : 0) + (get(flag) ? get(e) : 0),
+				undefined,
+				logMount(order, 'C'),
+			)
+			const store = createStore()
+			store.subscribe(c, () => {})
+			store.send(sw, true)
+			await flushMicrotask()
+			await flushMicrotask()
+
+			expect(order).toEqual(['G', 'I', 'E', 'C'])
+		})
+
+		it('remounts a node torn down and requeued by user code during its own walk', async () => {
+			const order: string[] = []
+			const sw = primitiveAtom(false)
+			let unsubscribeN = () => {}
+			let unsubscribeP = () => {}
+			let tornDown = false
+			const store = createStore()
+			const d = primitiveAtom(1, {
+				onMount: () => {
+					order.push('D')
+					if (tornDown) return
+					tornDown = true
+					unsubscribeN()
+					unsubscribeP()
+					unsubscribeP = store.subscribe(p, () => {})
+					return () => {
+						order.push('~D')
+					}
+				},
+			})
+			const n = derivedAtom((get) => (get(sw) ? get(d) : 0), undefined, {
+				onMount: () => {
+					order.push('N')
+					return () => {
+						order.push('~N')
+					}
+				},
+			})
+			const p = derivedAtom((get) => get(n), undefined, logMount(order, 'P'))
+			unsubscribeN = store.subscribe(n, () => {})
+			await flushMicrotask()
+			unsubscribeP = store.subscribe(p, () => {})
+			store.send(sw, true)
+			await flushMicrotask()
+
+			expect(order).toEqual(['N', 'D', '~N', '~D', 'D', 'N', 'P'])
+		})
+
+		it('mounts the parent after a sibling torn down and requeued without a write', async () => {
+			const order: string[] = []
+			let unsubscribeR = () => {}
+			let tornDown = false
+			const store = createStore()
+			const w = primitiveAtom(1, {
+				onMount: () => {
+					order.push('W')
+					return () => {
+						order.push('~W')
+					}
+				},
+			})
+			const x = primitiveAtom(2, {
+				onMount: () => {
+					order.push('X')
+					if (tornDown) return
+					tornDown = true
+					unsubscribeR()
+					unsubscribeR = store.subscribe(r, () => {})
+				},
+			})
+			const sw = primitiveAtom(false)
+			const r = derivedAtom(
+				(get) => (get(sw) ? get(w) + get(x) : 0),
+				undefined,
+				logMount(order, 'R'),
+			)
+			unsubscribeR = store.subscribe(r, () => {})
+			store.send(sw, true)
+			store.subscribe(x, () => {})
+			await flushMicrotask()
+
+			expect(order).toEqual(['W', 'X', '~W', 'W', 'R'])
+		})
+	})
+
+	describe('release bookkeeping within a flush', () => {
+		const logMountCycle = (events: string[]) => ({
+			onMount: () => {
+				events.push('mount')
+				return () => events.push('unmount')
+			},
+		})
+		const logEffect = (events: string[], name: string) => ({
+			effect: () => {
+				events.push(`${name} setup`)
+				return () => events.push(`${name} cleanup`)
+			},
+		})
+		const effectWithCleanup = { effect: () => () => {} }
+		const effectWithoutCleanup = { effect: () => {} }
+		const mountWriter = <T>(
+			target: ReturnType<typeof primitiveAtom<T>>,
+			value: T,
+		) =>
+			primitiveAtom(0, {
+				onMount: (_get, set) => {
+					set(target, value)
+				},
+			})
+		const diamond = <Args extends unknown[]>(
+			leaf: AtomSymbol<number, Args>,
+		) => {
+			const sel = primitiveAtom(false)
+			const mode = primitiveAtom(false)
+			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(leaf)))
+			const direct = derivedAtom<number>((get) => get(gated))
+			const bypass = derivedAtom<number>((get) => get(leaf))
+			const joined = derivedAtom<number>((get) => get(gated) + get(bypass))
+			const top = derivedAtom<number>((get) =>
+				get(mode) ? get(joined) : get(direct),
+			)
+			return { sel, mode, top }
+		}
+		const setupThenCleanupOrder = [
+			'top setup',
+			'resource setup',
+			'top cleanup',
+			'resource cleanup',
+		]
+
+		it('cleans up a late-linked dependency only after the consumer effects that read it', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const mode = primitiveAtom(0)
+			const resource = primitiveAtom(0, logEffect(events, 'resource'))
+			const middle = derivedAtom<number>(
+				(get) => (get(sel) ? get(resource) * 0 : 0),
+				undefined,
+				logEffect(events, 'middle'),
+			)
+			const top = derivedAtom<number>(
+				(get) => (get(mode) === 0 ? get(middle) : get(mode)),
+				undefined,
+				logEffect(events, 'top'),
+			)
+			const store = createStore()
+			store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+			events.length = 0
+			store.send(mode, 1)
+			store.send(resource, 5)
+			await flushMicrotask()
+
+			expect(events).toEqual([
+				'top cleanup',
+				'middle cleanup',
+				'resource cleanup',
+				'top setup',
+			])
+		})
+
+		it('releases a dependency of a retained dependency that the retaining effect never read', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(true)
+			const reads = primitiveAtom(false)
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const middle = derivedAtom<number>((get) =>
+				get(reads) ? get(resource) * 0 : 0,
+			)
+			const inner = derivedAtom<number>((get) => (get(sel) ? get(middle) : 0))
+			const top = derivedAtom<number>(
+				(get) => get(inner),
+				undefined,
+				effectWithCleanup,
+			)
+			const store = createStore()
+			store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(sel, false)
+			await flushMicrotask()
+			store.send(reads, true)
+			await flushMicrotask()
+			expect(events).toEqual(['mount'])
+			store.send(reads, false)
+			await flushMicrotask()
+
+			expect(events).toEqual(['mount', 'unmount'])
+		})
+
+		it('keeps a dependency mounted when a stale consumer is dropped and another path regains it in the same flush', async () => {
+			const events: string[] = []
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const { sel, mode, top } = diamond(resource)
+			const store = createStore()
+			store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			store.send(mode, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['mount'])
+		})
+
+		it('keeps a dependency mounted when a mount write regains it after its only stale consumer is dropped', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const trigger = primitiveAtom(false)
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const writer = mountWriter(trigger, true)
+			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(resource)))
+			const top = derivedAtom<number>((get) => get(gated))
+			const regain = derivedAtom<number>((get) =>
+				get(trigger) ? get(resource) : 0,
+			)
+			const store = createStore()
+			store.subscribe(top, () => {})
+			store.subscribe(regain, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			store.subscribe(writer, () => {})
+			await flushMicrotask()
+
+			expect(events).toEqual(['mount'])
+		})
+
+		it('never mounts a pending subgraph below a dependency dropped by a stale consumer', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const left = derivedAtom<number>((get) => get(resource))
+			const right = derivedAtom<number>((get) => get(resource))
+			const leaf = derivedAtom<number>((get) => get(left) + get(right))
+			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(leaf)))
+			const direct = derivedAtom<number>((get) => get(gated))
+			const top = derivedAtom<number>((get) => get(direct))
+			const store = createStore()
+			store.subscribe(top, () => {})
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual([])
+		})
+
+		it('keeps a dependency mounted when its live resource sits below a dropped dependency that is not mounted yet', async () => {
+			const events: string[] = []
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const inner = derivedAtom<number>((get) => get(resource))
+			const { sel, mode, top } = diamond(inner)
+			const store = createStore()
+			const releaseResource = store.subscribe(resource, () => {})
+			await flushMicrotask()
+			store.subscribe(top, () => {})
+			releaseResource()
+			store.send(sel, true)
+			store.send(mode, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['mount'])
+		})
+
+		it('defers the cleanup of a resource linked below an effect that did not rerun until that effect is cleaned up', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const resource = primitiveAtom(0, logEffect(events, 'resource'))
+			const inner = derivedAtom<number>((get) =>
+				get(sel) ? get(resource) * 0 : 0,
+			)
+			const middle = derivedAtom<number>((get) => get(inner))
+			const top = derivedAtom<number>(
+				(get) => get(middle),
+				undefined,
+				logEffect(events, 'top'),
+			)
+			const store = createStore()
+			const unsubscribe = store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+			store.send(sel, false)
+			await flushMicrotask()
+			expect(events).toEqual(['top setup', 'resource setup'])
+			unsubscribe()
+			await flushMicrotask()
+
+			expect(events).toEqual(setupThenCleanupOrder)
+		})
+
+		it('defers the cleanup of a resource linked below a retained orphan once an effect reads the orphan again', async () => {
+			const events: string[] = []
+			const gate = primitiveAtom(true)
+			const sel = primitiveAtom(false)
+			const resource = primitiveAtom(0, logEffect(events, 'resource'))
+			const middle = derivedAtom<number>((get) =>
+				get(sel) ? get(resource) * 0 : 0,
+			)
+			const top = derivedAtom<number>(
+				(get) => (get(gate) ? get(middle) : 0),
+				undefined,
+				logEffect(events, 'top'),
+			)
+			const store = createStore()
+			const unsubscribe = store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(gate, false)
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+			store.send(gate, true)
+			await flushMicrotask()
+			store.send(sel, false)
+			await flushMicrotask()
+			expect(events).toEqual(['top setup', 'resource setup'])
+			unsubscribe()
+			await flushMicrotask()
+
+			expect(events).toEqual(setupThenCleanupOrder)
+		})
+
+		const linkedAndUnlinkedInOneFlush = async ({
+			keepLinkedMounted,
+		}: {
+			keepLinkedMounted: boolean
+		}) => {
+			const branch = primitiveAtom(0)
+			const fallback = primitiveAtom(5)
+			const linked = primitiveAtom(7)
+			const writer = mountWriter(branch, 2)
+			const top = derivedAtom<number>(
+				(get) => (get(branch) === 1 ? get(linked) : get(fallback)),
+				undefined,
+				effectWithCleanup,
+			)
+			const store = createStore()
+			if (keepLinkedMounted) store.subscribe(linked, () => {})
+			store.subscribe(top, () => {})
+			await flushMicrotask()
+			store.send(branch, 1)
+			store.subscribe(writer, () => {})
+			await flushMicrotask()
+			return { store, branch, linked, top }
+		}
+
+		it('releases a dependency linked and unlinked in the same flush without waiting for the live effect above it', async () => {
+			const { store, linked } = await linkedAndUnlinkedInOneFlush({
+				keepLinkedMounted: false,
+			})
+
+			expect(mountCount(store, linked)).toBe(0)
+		})
+
+		it('keeps a dependency linked and unlinked in the same flush out of the read closure of the effect above it', async () => {
+			const { store, branch, linked, top } = await linkedAndUnlinkedInOneFlush({
+				keepLinkedMounted: true,
+			})
+			const closure = readClosure(store, top)
+
+			expect(closure).toContain(internalInstance(store, branch))
+			expect(closure).not.toContain(internalInstance(store, linked))
+		})
+
+		it('drops the instances of evicted family members from the read closure of an effect that does not rerun', async () => {
+			const key = primitiveAtom('a')
+			const created = new Map<
+				string,
+				ReturnType<typeof primitiveAtom<number>>
+			>()
+			const members = atomFamily((name: string) => {
+				const member = primitiveAtom(name.length)
+				created.set(name, member)
+				return member
+			})
+			const top = derivedAtom<number>(
+				(get) => (get(members, get(key)) > 0 ? 1 : 0),
+				undefined,
+				effectWithoutCleanup,
+			)
+			const store = createStore()
+			store.subscribe(top, () => {})
+			await flushMicrotask()
+			const keys = ['b', 'c', 'd', 'e']
+			for (const name of keys) {
+				store.send(key, name)
+				await flushMicrotask()
+			}
+			const closure = readClosure(store, top)
+			const latest = created.get(keys.at(-1)!)
+			assert(latest)
+
+			expect(closure).toContain(internalInstance(store, key))
+			expect(closure).toContain(internalInstance(store, latest))
+			expect([...closure].filter(({ mountCount }) => mountCount === 0)).toEqual(
+				[],
+			)
+		})
 	})
 
 	describe('conditional dependency cleanup ordering', () => {
