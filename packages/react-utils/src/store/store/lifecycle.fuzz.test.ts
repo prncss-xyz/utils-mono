@@ -148,11 +148,11 @@ async function run(
 		for (const node of nodes) visit(node)
 		return result
 	}
-	const nearestEffects = (node: number) => {
+	const nearest = (node: number, flag: keyof typeof flags) => {
 		const result = new Set<number>()
 		const visit = (current: number) => {
 			for (const dependency of directDependencies(current))
-				if (spec(dependency).effect) result.add(dependency)
+				if (spec(dependency)[flag]) result.add(dependency)
 				else visit(dependency)
 		}
 		visit(node)
@@ -170,7 +170,7 @@ async function run(
 			violate(`n${node} rerun although its value stayed ${next}`)
 		if (last !== undefined && last !== lastSetup.get(node))
 			violate(`n${node} saw previous ${last}, expected ${lastSetup.get(node)}`)
-		for (const dependency of nearestEffects(node))
+		for (const dependency of nearest(node, 'effect'))
 			if (!liveEffects.has(dependency))
 				violate(`n${node} set up before its dependency n${dependency}`)
 		liveEffects.set(node, { value: next, closure: closure([node]) })
@@ -195,17 +195,16 @@ async function run(
 		liveEffects.delete(node)
 	}
 	/**
-	 * Only direct dependencies must be mounted first. A dependency newly linked
-	 * under an already-mounted intermediate can mount after a consumer mounted
-	 * in the same flush (shrunk case: P0 flips so n3, already mounted, gains n2
-	 * while n5, newly subscribed, mounts first).
+	 * Every nearest dependency with `onMount`, reached through intermediates
+	 * without one, must mount first, including a dependency newly linked
+	 * beneath an already-mounted intermediate in the same flush.
 	 */
 	const onMount = (node: number) => {
 		log.push(`mount n${node}`)
 		history.push({ kind: 'mount', node })
 		if (liveMounts.has(node)) violate(`n${node} mounted twice`)
-		for (const dependency of directDependencies(node))
-			if (spec(dependency).mount && !liveMounts.has(dependency))
+		for (const dependency of nearest(node, 'mount'))
+			if (!liveMounts.has(dependency))
 				violate(`n${node} mounted before its dependency n${dependency}`)
 		liveMounts.add(node)
 	}
@@ -398,11 +397,201 @@ async function run(
 	}
 }
 
+/**
+ * Shrunk case: n3 is mounted without `onMount` and gains n2 when P0 flips,
+ * while the newly subscribed n5 reads n3; n2 must mount before n5.
+ */
+const mountOrderExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [{ initial: 0, effect: true, mount: false }],
+		derived: [
+			{ a: 0, b: 0, c: 0, modulus: 3, effect: false, mount: false },
+			{ a: 1, b: 0, c: 1, modulus: 3, effect: false, mount: true },
+			{ a: 0, b: 2, c: 1, modulus: 2, effect: true, mount: false },
+			{ a: 3, b: 1, c: 0, modulus: 3, effect: true, mount: false },
+			{ a: 1, b: 4, c: 1, modulus: 2, effect: false, mount: true },
+			{ a: 2, b: 1, c: 1, modulus: 3, effect: false, mount: false },
+			{ a: 1, b: 0, c: 5, modulus: 3, effect: true, mount: true },
+		],
+	},
+	operations: [
+		{ type: 'subscribe', node: 3 },
+		{ type: 'write', primitive: 0, value: 3 },
+		{ type: 'yield' },
+		{ type: 'subscribe', node: 5 },
+		{ type: 'write', primitive: 0, value: 0 },
+		{ type: 'yield' },
+	],
+}
+
+/**
+ * Shrunk case: n2 is released while consumers n3 and n5 still read it, because
+ * its cleanup runs before theirs after P1 flips.
+ */
+const releaseOrderExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 1, effect: false, mount: false },
+			{ initial: 1, effect: false, mount: false },
+		],
+		derived: [
+			{ a: 1, b: 0, c: 0, modulus: 3, effect: true, mount: true },
+			{ a: 1, b: 1, c: 2, modulus: 3, effect: true, mount: false },
+			{ a: 2, b: 1, c: 3, modulus: 2, effect: true, mount: true },
+			{ a: 0, b: 3, c: 0, modulus: 3, effect: true, mount: false },
+			{ a: 1, b: 1, c: 2, modulus: 2, effect: false, mount: false },
+			{ a: 6, b: 1, c: 0, modulus: 2, effect: true, mount: false },
+			{ a: 5, b: 6, c: 0, modulus: 3, effect: true, mount: true },
+		],
+	},
+	operations: [
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'subscribe', node: 8 },
+		{ type: 'write', primitive: 0, value: 0 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 1 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 0, value: 1 },
+		{ type: 'yield' },
+	],
+}
+
+/**
+ * Shrunk case: n2 stays mounted without a consumer after P1 is rewritten.
+ */
+const danglingMountExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 3, effect: false, mount: true },
+			{ initial: 2, effect: false, mount: false },
+		],
+		derived: [
+			{ a: 1, b: 0, c: 0, modulus: 3, effect: false, mount: true },
+			{ a: 1, b: 2, c: 0, modulus: 3, effect: false, mount: true },
+			{ a: 1, b: 0, c: 0, modulus: 2, effect: false, mount: false },
+			{ a: 4, b: 0, c: 1, modulus: 3, effect: true, mount: true },
+			{ a: 1, b: 1, c: 3, modulus: 3, effect: false, mount: true },
+			{ a: 5, b: 6, c: 4, modulus: 3, effect: true, mount: true },
+			{ a: 5, b: 1, c: 6, modulus: 3, effect: false, mount: false },
+		],
+	},
+	operations: [
+		{ type: 'subscribe', node: 7 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 2 },
+		{ type: 'yield' },
+	],
+}
+
+/**
+ * Shrunk case: n2 is unmounted while n6 still reads it after P0 and P1 are
+ * written in one flush.
+ */
+const unmountOrderExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 0, effect: true, mount: true },
+			{ initial: 3, effect: false, mount: false },
+			{ initial: 1, effect: false, mount: true },
+		],
+		derived: [
+			{ a: 0, b: 2, c: 1, modulus: 3, effect: false, mount: true },
+			{ a: 0, b: 0, c: 2, modulus: 3, effect: false, mount: true },
+			{ a: 3, b: 4, c: 1, modulus: 2, effect: false, mount: true },
+			{ a: 1, b: 3, c: 4, modulus: 3, effect: false, mount: true },
+			{ a: 3, b: 2, c: 2, modulus: 2, effect: false, mount: false },
+			{ a: 1, b: 5, c: 6, modulus: 2, effect: false, mount: true },
+			{ a: 0, b: 6, c: 5, modulus: 3, effect: false, mount: false },
+		],
+	},
+	operations: [
+		{ type: 'subscribe', node: 8 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 0, value: 1 },
+		{ type: 'write', primitive: 1, value: 2 },
+		{ type: 'yield' },
+	],
+}
+
+/**
+ * Shrunk case: n2 keeps a reference after its last consumer is gone, because a
+ * deferred release treated an effect as owner of an edge linked after that
+ * effect ran.
+ */
+const lateLinkedOwnerExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 0, effect: false, mount: false },
+			{ initial: 1, effect: false, mount: false },
+		],
+		derived: [
+			{ a: 0, b: 0, c: 1, modulus: 3, effect: false, mount: false },
+			{ a: 1, b: 0, c: 2, modulus: 2, effect: false, mount: false },
+			{ a: 3, b: 1, c: 1, modulus: 2, effect: false, mount: false },
+			{ a: 1, b: 3, c: 0, modulus: 2, effect: true, mount: false },
+		],
+	},
+	operations: [
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'subscribe', node: 3 },
+		{ type: 'subscribe', node: 5 },
+		{ type: 'subscribe', node: 4 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 1 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'yield' },
+	],
+}
+
+/**
+ * Shrunk case that passes at the baseline commit 3c389f7 and guards the
+ * flush-end closure extension: n4 links n3 beneath itself in a flush where its
+ * effect does not rerun. A closure taken only when the effect runs would
+ * unmount n0 while n4 still reads it.
+ */
+const lateLinkedReaderExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 1, effect: false, mount: true },
+			{ initial: 0, effect: false, mount: false },
+			{ initial: 3, effect: false, mount: true },
+		],
+		derived: [
+			{ a: 1, b: 2, c: 0, modulus: 3, effect: false, mount: true },
+			{ a: 1, b: 2, c: 3, modulus: 3, effect: true, mount: true },
+			{ a: 2, b: 4, c: 4, modulus: 2, effect: false, mount: false },
+			{ a: 0, b: 1, c: 4, modulus: 3, effect: false, mount: false },
+		],
+	},
+	operations: [
+		{ type: 'write', primitive: 2, value: 1 },
+		{ type: 'subscribe', node: 4 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 1 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'yield' },
+	],
+}
+
 it('keeps effect and mount lifecycles balanced and ordered across random graphs', async () => {
 	await fc.assert(
 		fc.asyncProperty(scenario, ({ graph, operations }) =>
 			run(graph, operations),
 		),
-		{ numRuns: 1000 },
+		{
+			numRuns: 1000,
+			examples: [
+				[mountOrderExample],
+				[releaseOrderExample],
+				[danglingMountExample],
+				[unmountOrderExample],
+				[lateLinkedOwnerExample],
+				[lateLinkedReaderExample],
+			],
+		},
 	)
 })

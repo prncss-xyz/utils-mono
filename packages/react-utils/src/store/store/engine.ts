@@ -89,6 +89,7 @@ function pruneMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 
 function link<S>(state: StoreState, instance: Instance<S>, dep: Instance<any>) {
 	addMountedEdge(instance, dep)
+	state.linkedEdges.push([instance, dep])
 	retain(state, dep)
 }
 
@@ -100,24 +101,48 @@ function unlink<S>(
 	if (!hasMountedDependency(instance, dep)) return
 	const owners = new Set<EffectLifecycle<any>>()
 	const visited = new Set<Instance<any>>()
+	let stale = false
 	const collect = (consumer: Instance<any>) => {
 		if (visited.has(consumer)) return
 		visited.add(consumer)
+		if (consumer.freshness.type !== 'clean') stale = true
 		const lifecycle = consumer.effectLifecycle
-		if (lifecycle && (lifecycle.cleanup || lifecycle.cleaning))
+		if (
+			lifecycle &&
+			(lifecycle.cleanup || lifecycle.cleaning) &&
+			lifecycle.readClosure.has(dep)
+		)
 			owners.add(lifecycle)
 		for (const deferred of deferredOwners(consumer))
-			for (const owner of deferred.owners) owners.add(owner)
+			for (const owner of deferred.owners)
+				if (owner.readClosure.has(instance) && owner.readClosure.has(dep))
+					owners.add(owner)
 		for (const sub of consumers(consumer)) collect(sub)
 	}
 	collect(instance)
 	removeMountedEdge(instance, dep)
-	if (owners.size === 0) release(state, dep)
-	else {
+	if (owners.size === 0) {
+		if (stale && hasLiveResource(dep)) {
+			isoAssert(state.phase.releases, 'stale consumer outside settle')
+			state.phase.releases.push(dep)
+		} else release(state, dep)
+	} else {
 		const deferred: DeferredRelease = { dependency: dep, owners }
 		addDeferredOwner(dep, deferred)
 		for (const owner of owners) owner.deferredReleases.add(deferred)
 	}
+}
+
+function hasLiveResource(
+	instance: Instance<any>,
+	visited = new Set<Instance<any>>(),
+): boolean {
+	if (visited.has(instance)) return false
+	visited.add(instance)
+	if (instance.mountLifecycle || instance.effectLifecycle) return true
+	for (const dep of mountedDependencies(instance))
+		if (hasLiveResource(dep, visited)) return true
+	return false
 }
 
 function releaseUnowned(state: StoreState, instance: Instance<any>) {
