@@ -4,8 +4,7 @@ import { expect } from 'storybook/test'
 import preview from '../../.storybook/preview'
 import { StoreProvider, useAtom, useAtomValue, useSetAtom } from './react'
 import { atomFamily, derivedAtom, primitiveAtom, TRANSIENT } from './store'
-
-const flushMicrotask = () => Promise.resolve()
+import { flushMicrotask } from './utils.testing'
 
 const members = atomFamily(
 	(_key: string | undefined) => {
