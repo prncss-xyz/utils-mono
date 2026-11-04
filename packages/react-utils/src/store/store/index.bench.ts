@@ -7,6 +7,7 @@ import {
 	primitiveAtom,
 	type AtomSymbol,
 } from '.'
+import { flushMicrotask } from '../utils.testing'
 
 type Counters = {
 	getters: number
@@ -36,24 +37,24 @@ function scenario(name: string, setup: (counts: Counters) => Scenario) {
 		let value = 0
 		const iterate = async () => {
 			graph.update()
-			await Promise.resolve()
+			await flushMicrotask()
 			value = graph.read()
-			await Promise.resolve()
+			await flushMicrotask()
 		}
 		try {
-			await Promise.resolve()
-			await Promise.resolve()
+			await flushMicrotask()
+			await flushMicrotask()
 			await iterate()
 			graph.verify(value)
 			const settled = { ...counts }
-			await Promise.resolve()
-			await Promise.resolve()
+			await flushMicrotask()
+			await flushMicrotask()
 			expect(counts).toEqual(settled)
 			await bench(name, iterate).run()
 			graph.verify(value)
 		} finally {
 			graph.dispose()
-			await Promise.resolve()
+			await flushMicrotask()
 		}
 	})
 }

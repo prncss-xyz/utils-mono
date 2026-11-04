@@ -3,9 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { RESET } from '../../functions'
 import { tag } from '../../tags'
 import { createStore, primitiveAtom } from '../store'
+import { flushMicrotask } from '../utils.testing'
 import { modalMachineAtom } from './modalMachineAtom'
-
-const flushMicrotask = () => Promise.resolve()
 
 describe('modalMachineAtom', () => {
 	it('supports handlers returning RESET', async () => {

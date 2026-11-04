@@ -3,9 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { isReset, RESET } from '../../functions'
 import { tag, type Sendable } from '../../tags'
 import { createStore, primitiveAtom } from '../store'
+import { flushMicrotask } from '../utils.testing'
 import { coreMachineAtom } from './coreMachineAtom'
-
-const flushMicrotask = () => Promise.resolve()
 
 describe('coreMachineAtom', () => {
 	it('transitions from nullish states and projects them through result', async () => {
