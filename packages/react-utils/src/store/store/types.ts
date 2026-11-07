@@ -1,6 +1,6 @@
 import type {
 	AtomSymbol,
-	Effect,
+	EffectAtom,
 	FamilyRetention,
 	ResolvedAtom,
 } from '../atoms'
@@ -22,23 +22,10 @@ type EvictableRetention = Extract<
 
 type FamilyEntry = FamilySlot & { retention: EvictableRetention }
 
-export type MountLifecycle = { cleanup?: () => void }
-export type EffectLifecycle<S> = MountLifecycle & {
-	readonly value: S
-	readonly instance: Instance<S>
-	cleaning: boolean
-	deferredReleases: Set<DeferredRelease>
-	dependencies: Set<Instance<any>>
-	/**
-	 * Everything the effect's instance reached when the effect ran or
-	 * at the end of a later flush, until cleanup.
-	 */
-	readClosure: Set<Instance<any>>
-}
-
-export type DeferredRelease = {
-	dependency: Instance<any>
-	owners: Set<EffectLifecycle<any>>
+export type MountLifecycle = {
+	cleanup?: () => void
+	children: Instance<any>[]
+	active: boolean
 }
 
 type Registration = { references: number }
@@ -56,12 +43,12 @@ type Freshness =
 
 export type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
-	symbol: AtomSymbol<S, any>
+	symbol: AtomSymbol<S, any> | EffectAtom
 	familyEntry: FamilyEntry | undefined
 	familyRemovalTimeout: ReturnType<typeof setTimeout> | undefined
 	freshness: Freshness
 	value: S
-	effectLifecycle: EffectLifecycle<S> | undefined
+	effectLifecycle: MountLifecycle | undefined
 	mountLifecycle: MountLifecycle | undefined
 	version: number
 	depVersions: Map<Instance<any>, number>
@@ -69,7 +56,7 @@ export type Instance<S> = {
 	subscriptions: Map<() => void, Registration>
 	mountCount: number
 	mountedDeps: Set<Instance<any>>
-	deferredOwners: Set<DeferredRelease>
+	owners: Map<Instance<any>, number>
 }
 
 export type Tasks = {
@@ -78,14 +65,6 @@ export type Tasks = {
 	effects: Set<Instance<any>>
 	reconciles: Set<Instance<any>>
 	pendingFamilyEvictions: Set<Instance<any>>
-}
-
-export type Transition = {
-	instance: Instance<any>
-	effect: Effect<any>
-	next: any
-	previous: EffectLifecycle<any> | undefined
-	mountLifecycle: MountLifecycle | undefined
 }
 
 export type FlushPhase = {

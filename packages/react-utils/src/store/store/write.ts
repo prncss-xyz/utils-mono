@@ -29,6 +29,7 @@ export function readPending<S, Key, Args extends unknown[]>(
 		return pending.has(instance)
 			? pending.get(instance)
 			: peekInstance(state, instance)
+	isoAssert(instance.symbol.type === 'derived')
 	isoAssert(!state.pendingEvaluations.has(instance), 'cyclic atom dependency')
 	state.pendingEvaluations.add(instance)
 	if (state.instrumentation)
@@ -44,6 +45,7 @@ export function sendInstance<S>(
 	args: readonly unknown[],
 ) {
 	const { symbol } = instance
+	isoAssert(symbol.type !== 'effect', 'effect atoms have no value')
 	if (symbol.type === 'primitive' || symbol.getter !== noread)
 		cancelEviction(state, instance)
 	switch (symbol.type) {

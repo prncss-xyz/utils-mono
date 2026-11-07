@@ -1,5 +1,5 @@
 import fc from 'fast-check'
-import { describe, expect, it, vi } from 'vitest'
+import { assert, describe, expect, it, vi } from 'vitest'
 
 import { atomFamily, primitiveAtom, TRANSIENT } from '../atoms'
 import { evict, getInstance } from './registry'
@@ -128,5 +128,16 @@ describe('family resolution', () => {
 		expect(() => getInstance(current, family, 'a')).toThrow(
 			'atomFamily create must return a fresh symbol on every call',
 		)
+	})
+	it('rejects eviction when a hash slot no longer belongs to that instance', () => {
+		const state = createStubState()
+		const family = atomFamily((key: string) => primitiveAtom(key))
+		const first = getInstance(state, family, 'first')
+		const second = getInstance(state, family, 'second')
+		const entry = first.familyEntry
+		assert(entry?.type === 'hash')
+		entry.map.set(entry.hashedKey, second)
+		expect(() => evict(state, first)).toThrow()
+		expect(entry.map.get(entry.hashedKey)).toBe(second)
 	})
 })

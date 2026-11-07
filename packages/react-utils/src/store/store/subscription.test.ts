@@ -5,6 +5,7 @@ import {
 	atomFamily,
 	createStore,
 	derivedAtom,
+	effectAtom,
 	primitiveAtom,
 	TRANSIENT,
 	type AtomSymbol,
@@ -131,13 +132,15 @@ async function run(
 	const consumerMount = resource('consumer mount', ['source mount'], ['effect'])
 	const effect = resource('effect', ['consumer mount'], [])
 	const atom = derivedAtom((read) => read(source), undefined, {
-		onMount: () => {
+		onMount: (_get, _set, mountEffect) => {
 			consumerMount.start()
+			mountEffect(
+				effectAtom(() => {
+					effect.start()
+					return effect.stop
+				}),
+			)
 			return consumerMount.stop
-		},
-		effect: () => {
-			effect.start()
-			return effect.stop
 		},
 	})
 	source.onMount = () => {

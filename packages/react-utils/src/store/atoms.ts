@@ -8,8 +8,10 @@ export type FamilyRetention =
 	| { type: 'timed'; ms: number }
 	| { type: 'permanent' }
 
+declare const atomValue: unique symbol
+
 export type AtomOptions<S> = {
-	effect?: Effect<S>
+	readonly [atomValue]?: S
 	onMount?: OnMount
 	/** Label under which opt-in operation counters report this atom's work. */
 	name?: string
@@ -93,10 +95,10 @@ export type Store = {
 	send: Write
 	resolve: Resolve
 	subscribe: Subscribe
+	mountEffect: (effect: EffectAtom) => () => void
 }
 
 export type Hydrate = readonly HydrateEntry[]
-// Effect<never> is contravariant, so write-only atoms need their own catch-all.
 type HydrateEntry =
 	| readonly [symbol: AtomSymbol<any, any>, ...args: any[]]
 	| readonly [symbol: AtomSymbol<never, any>, ...args: any[]]
@@ -126,16 +128,56 @@ type Setter<Args extends unknown[]> = (
 	write: Write,
 	...args: Args
 ) => void
-export type Effect<S> = (
+export type MountEffect = (effect: EffectAtom) => void
+export type EffectTracker<S = void | (() => void)> = (get: Read) => S
+export type EffectBody<S> = (
 	next: S,
 	last: S | undefined,
-	/** Read an atom without tracking it as a dependency. */
 	get: Read,
 	set: Write,
+	mountEffect: MountEffect,
 ) => void | (() => void)
+export type EffectAtom = { type: 'effect'; body: OnMount }
+
+/**
+ * Tracks reads in the tracker and body. The previous tracked value is scoped
+ * to each store's mounted lifecycle and is undefined on its first run.
+ */
+export function effectAtom<S>(
+	tracker: EffectTracker<S>,
+	body: EffectBody<S>,
+): EffectAtom
+export function effectAtom(tracker: EffectTracker): EffectAtom
+export function effectAtom<S>(
+	tracker: EffectTracker<S> | EffectTracker,
+	body?: EffectBody<S>,
+): EffectAtom {
+	if (body) {
+		return {
+			type: 'effect',
+			body: (_get, _set, mountEffect) => {
+				let last: S | undefined
+				mountEffect({
+					type: 'effect',
+					body: (get, set, mountEffect) => {
+						const next = (tracker as EffectTracker<S>)(get)
+						const cleanup = body(next, last, get, set, mountEffect)
+						last = next
+						return cleanup
+					},
+				})
+			},
+		}
+	}
+	return { type: 'effect', body: (get) => (tracker as EffectTracker)(get) }
+}
 
 /** Runs in the effect microtask after the first subscription; cleans up on last release. */
-export type OnMount = (get: Read, set: Write) => void | (() => void)
+export type OnMount = (
+	get: Read,
+	set: Write,
+	mountEffect: MountEffect,
+) => void | (() => void)
 
 export type ResolvedAtom<S, Args extends unknown[]> = {
 	peek: () => S
@@ -249,5 +291,11 @@ export function hydrate(
 	symbol: AtomSymbol<any, any> | AtomFamily<any, any, any>,
 	...rest: unknown[]
 ) {
+	isoAssert(
+		symbol.type === 'primitive' ||
+			symbol.type === 'derived' ||
+			symbol.type === 'family',
+		'effect atoms have no value',
+	)
 	return [symbol, ...rest] as const
 }

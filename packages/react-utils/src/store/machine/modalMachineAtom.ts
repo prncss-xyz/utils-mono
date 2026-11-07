@@ -6,8 +6,9 @@ import {
 	type Reset,
 } from '../../functions'
 import type { Tags } from '../../tags'
-import type { AtomSymbol, Effect, Read, Write } from '../store'
+import type { AtomSymbol, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
+import type { MachineEffect } from './machineEffect'
 
 export function modalMachineAtom<Event, State, Result = Tags<State>>(
 	init: Init<Tags<State>>,
@@ -26,7 +27,7 @@ export function modalMachineAtom<Event, State, Result = Tags<State>>(
 			[S in keyof State]: (state: State[S], read: Read) => Result
 		}
 		factory?: (value: Tags<State>) => AtomSymbol<Tags<State>, any>
-		effect?: Effect<Result>
+		effect?: MachineEffect<Result>
 	},
 ) {
 	const { effect, factory, result } = opts ?? {}

@@ -11,17 +11,23 @@ import {
 	useAtom,
 	atomFamily,
 	primitiveAtom,
+	effectAtom,
+	useMountEffect,
 } from '@prncss-xyz/react-utils'
+const simple = primitiveAtom(0)
 
-const simple = primitiveAtom(
-	0,
-	// oxlint-disable-next-line no-console
-	{ effect: (next, last) => console.log(next, last) },
+const simpleEffect = effectAtom(
+	(get) => get(simple),
+	(next, last) => {
+		// oxlint-disable-next-line no-console
+		console.log(next, last)
+	},
 )
 
 const group = atomFamily((k: number) => primitiveAtom(k), { TTL: Infinity })
 
 function Simple() {
+	useMountEffect(simpleEffect)
 	const [value, setValue] = useAtom(simple)
 	const [value2, setValue2] = useAtom(group, value)
 	return (

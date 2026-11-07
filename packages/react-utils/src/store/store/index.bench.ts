@@ -3,6 +3,7 @@ import { expect, test } from 'vite-plus/test'
 import {
 	atomFamily,
 	derivedAtom,
+	effectAtom,
 	primitiveAtom,
 	type AtomSymbol,
 	type Store,
@@ -14,7 +15,7 @@ import {
 	flushMicrotask,
 	stopCountingOperations,
 	type OperationCounts,
-} from ./utils.testing
+} from './utils.testing'
 
 type Counters = {
 	getters: number
@@ -296,12 +297,6 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 			},
 			null,
 			{
-				effect: () => {
-					counts.effects++
-					return () => {
-						counts.cleanups++
-					}
-				},
 				onMount: () => {
 					counts.mounts++
 					return () => {
@@ -316,6 +311,18 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 			counts.subscribers++
 		}),
 	)
+	for (const atom of atoms)
+		disposers.push(
+			store.mountEffect(
+				effectAtom((get) => {
+					get(atom)
+					counts.effects++
+					return () => {
+						counts.cleanups++
+					}
+				}),
+			),
+		)
 	let next = 0
 	return {
 		stores: [store],

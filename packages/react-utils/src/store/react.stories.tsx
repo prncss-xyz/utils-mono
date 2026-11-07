@@ -1,9 +1,21 @@
 import { Suspense, useState } from 'react'
-import { expect } from 'storybook/test'
+import { expect, waitFor } from 'storybook/test'
 
 import preview from '../../.storybook/preview'
-import { StoreProvider, useAtom, useAtomValue, useSetAtom } from './react'
-import { atomFamily, derivedAtom, primitiveAtom, TRANSIENT } from './store'
+import {
+	StoreProvider,
+	useAtom,
+	useAtomValue,
+	useMountEffect,
+	useSetAtom,
+} from './react'
+import {
+	atomFamily,
+	derivedAtom,
+	effectAtom,
+	primitiveAtom,
+	TRANSIENT,
+} from './store'
 import { flushMicrotask } from './utils.testing'
 
 const members = atomFamily(
@@ -301,6 +313,76 @@ export const EvictionBeforeSubscription = meta.story({
 		await expect(firstRenderFixture.generations()).toBeGreaterThanOrEqual(2)
 		await expect(output).toHaveTextContent(
 			String(firstRenderFixture.generations()),
+		)
+	},
+})
+
+let effectEvents: string[] = []
+const hookSource = primitiveAtom(0)
+const hookEffect = effectAtom((get) => {
+	const value = get(hookSource)
+	effectEvents.push(`run ${value}`)
+	return () => {
+		effectEvents.push(`cleanup ${value}`)
+	}
+})
+
+function EffectProbe() {
+	useMountEffect(hookEffect)
+	return <output aria-label='Effect mounted'>mounted</output>
+}
+
+function EffectHarness() {
+	const [shown, setShown] = useState(true)
+	const send = useSetAtom(hookSource)
+	return (
+		<>
+			<button type='button' onClick={() => setShown((value) => !value)}>
+				Toggle effect
+			</button>
+			<button type='button' onClick={() => send((value) => value + 1)}>
+				Update effect
+			</button>
+			{shown && <EffectProbe />}
+		</>
+	)
+}
+
+export const EffectLifetime = meta.story({
+	beforeEach: () => {
+		effectEvents = []
+	},
+	render: () => (
+		<StoreProvider>
+			<EffectHarness />
+		</StoreProvider>
+	),
+	play: async ({ canvas, userEvent }) => {
+		await canvas.findByLabelText('Effect mounted')
+		await waitFor(() => expect(effectEvents).toEqual(['run 0']))
+		await userEvent.click(canvas.getByRole('button', { name: 'Update effect' }))
+		await waitFor(() =>
+			expect(effectEvents).toEqual(['run 0', 'cleanup 0', 'run 1']),
+		)
+		await userEvent.click(canvas.getByRole('button', { name: 'Toggle effect' }))
+		await waitFor(() =>
+			expect(effectEvents).toEqual([
+				'run 0',
+				'cleanup 0',
+				'run 1',
+				'cleanup 1',
+			]),
+		)
+		await userEvent.click(canvas.getByRole('button', { name: 'Update effect' }))
+		await userEvent.click(canvas.getByRole('button', { name: 'Toggle effect' }))
+		await waitFor(() =>
+			expect(effectEvents).toEqual([
+				'run 0',
+				'cleanup 0',
+				'run 1',
+				'cleanup 1',
+				'run 2',
+			]),
 		)
 	},
 })

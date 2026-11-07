@@ -2,15 +2,18 @@
 import {
 	createContext,
 	useContext,
+	useEffect,
 	useRef,
 	useState,
 	useSyncExternalStore,
 } from 'react'
 
+import { isoAssert } from '../functions'
 import {
 	createStore,
 	type AtomFamily,
 	type AtomSymbol,
+	type EffectAtom,
 	type ValidHydrate,
 	type ResolvedAtom,
 } from './store'
@@ -41,6 +44,11 @@ export function StoreProvider<
 		hydrate ? createStore(hydrate) : createStore(),
 	)
 	return <StoreCtx.Provider value={store}>{children}</StoreCtx.Provider>
+}
+
+export function useMountEffect(effect: EffectAtom): void {
+	const store = useStore()
+	useEffect(() => store.mountEffect(effect), [store, effect])
 }
 
 function useResolvedAtom<V, Key, Args extends unknown[]>(
@@ -85,6 +93,12 @@ export function useSetAtom<V, Key, Args extends unknown[]>(
 	key?: Key,
 ) {
 	const store = useStore()
+	isoAssert(
+		atom.type === 'primitive' ||
+			atom.type === 'derived' ||
+			atom.type === 'family',
+		'effect atoms have no value',
+	)
 	const resolvedAtomRef = useRef<
 		| {
 				store: ReturnType<typeof createStore>

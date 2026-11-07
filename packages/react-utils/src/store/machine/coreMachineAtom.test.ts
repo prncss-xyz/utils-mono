@@ -177,4 +177,77 @@ describe('coreMachineAtom', () => {
 		await flushMicrotask()
 		expect(store.peek(machine)).toBe('running')
 	})
+	it('keeps projected effect values and cleanups local to each store mount', async () => {
+		const events: (string | boolean | undefined)[][] = []
+		const machine = coreMachineAtom<{ set: number }, number, boolean>(
+			0,
+			(event, state) => (isReset(event) ? state : event.payload),
+			{
+				result: (state) => state > 0,
+				effect: (next, last) => {
+					events.push(['effect', next, last])
+					return () => {
+						events.push(['cleanup', next])
+					}
+				},
+			},
+		)
+		const first = createStore()
+		const second = createStore()
+		const releaseFirst = first.subscribe(machine, () => {})
+		const releaseSecond = second.subscribe(machine, () => {})
+		await flushMicrotask()
+		first.send(machine, tag('set', 1))
+		await flushMicrotask()
+		first.send(machine, tag('set', 2))
+		await flushMicrotask()
+		expect(events).toEqual([
+			['effect', false, undefined],
+			['effect', false, undefined],
+			['cleanup', false],
+			['effect', true, false],
+		])
+		releaseFirst()
+		releaseSecond()
+		expect(events.slice(-2)).toEqual([
+			['cleanup', true],
+			['cleanup', false],
+		])
+		const again = first.subscribe(machine, () => {})
+		await flushMicrotask()
+		expect(events.at(-1)).toEqual(['effect', true, undefined])
+		again()
+	})
+	it('cleans a machine effect whose first setup releases the output', async () => {
+		let release = () => {}
+		const cleanup = vi.fn()
+		const machine = coreMachineAtom<{}, number>(0, (_event, value) => value, {
+			effect: () => {
+				release()
+				return cleanup
+			},
+		})
+		const store = createStore()
+		release = store.subscribe(machine, () => {})
+		await flushMicrotask()
+		expect(cleanup).toHaveBeenCalledOnce()
+	})
+
+	it('does not repeat machine cleanup when it releases the output on a transition', async () => {
+		let release = () => {}
+		const cleanup = vi.fn(() => release())
+		const effect = vi.fn(() => cleanup)
+		const machine = coreMachineAtom<{ set: number }, number>(
+			0,
+			(event, value) => (isReset(event) ? value : event.payload),
+			{ effect },
+		)
+		const store = createStore()
+		release = store.subscribe(machine, () => {})
+		await flushMicrotask()
+		store.send(machine, tag('set', 1))
+		await flushMicrotask()
+		expect(cleanup).toHaveBeenCalledOnce()
+		expect(effect).toHaveBeenCalledOnce()
+	})
 })

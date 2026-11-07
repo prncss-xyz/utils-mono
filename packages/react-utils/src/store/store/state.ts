@@ -2,6 +2,7 @@ import { isoAssert } from '../../functions'
 import {
 	type AtomFamily,
 	type AtomSymbol,
+	type EffectAtom,
 	type Read,
 	type Write,
 } from '../atoms'
@@ -34,11 +35,9 @@ export type Operation =
 type OperationCounts = Record<Operation, number>
 
 export type StoreState = {
-	instances: WeakMap<AtomSymbol<any, any>, Instance<any>>
+	instances: WeakMap<AtomSymbol<any, any> | EffectAtom, Instance<any>>
 	families: WeakMap<AtomFamily<any, any, any>, FamilyStorage<any, any>>
 	pendingEvaluations: Set<Instance<any>>
-	/** Mounted edges linked since the last flush recorded the reads. */
-	linkedEdges: [consumer: Instance<any>, dependency: Instance<any>][]
 	epoch: number
 	/**
 	 * Opt-in operation counters, in total and by atom name; `undefined`
@@ -71,7 +70,6 @@ export function createState(
 		instances: new WeakMap(),
 		families: new WeakMap(),
 		pendingEvaluations: new Set(),
-		linkedEdges: [],
 		epoch: 0,
 		instrumentation: undefined,
 		tasks: undefined,
@@ -106,7 +104,7 @@ export function queueMount(state: StoreState, instance: Instance<any>) {
 }
 
 export function queueEffect<S>(state: StoreState, instance: Instance<S>) {
-	if (!instance.symbol.effect) return
+	if (instance.symbol.type !== 'effect') return
 	;(state.phase.effects ?? getTasks(state).effects).add(instance)
 }
 
@@ -167,12 +165,12 @@ export function advanceDerivedVersion<S>(
 export function countOperation(
 	state: StoreState,
 	operation: Operation,
-	symbol: AtomSymbol<any, any>,
+	symbol: AtomSymbol<any, any> | EffectAtom,
 ) {
 	const instrumentation = state.instrumentation
 	isoAssert(instrumentation)
 	instrumentation.totals[operation]++
-	const { name } = symbol
+	const name = symbol.type === 'effect' ? undefined : symbol.name
 	if (name === undefined) return
 	let named = instrumentation.byName.get(name)
 	if (named === undefined) {

@@ -8,6 +8,7 @@ import {
 	atomFamily,
 	createStore,
 	derivedAtom,
+	effectAtom,
 	hydrate,
 	primitiveAtom,
 	type AtomSymbol,
@@ -164,8 +165,15 @@ describe('setter argument tuples', () => {
 			},
 		)
 		const source = primitiveAtom(0, {
-			onMount: (_read, write) => write(command, 'mount', 1),
-			effect: (_next, _last, _read, write) => write(command, 'effect', 2),
+			onMount: (_read, write, mountEffect) => {
+				write(command, 'mount', 1)
+				mountEffect(
+					effectAtom(
+						() => undefined,
+						(_next, _last, _get, set) => set(command, 'effect', 2),
+					),
+				)
+			},
 		})
 		const store = createStore()
 		const release = store.subscribe(source, () => {})

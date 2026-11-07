@@ -1,11 +1,10 @@
 import fc from 'fast-check'
 import { expect, it } from 'vitest'
 
-import { derivedAtom, primitiveAtom, type AtomSymbol } from '.'
+import { derivedAtom, effectAtom, primitiveAtom, type AtomSymbol } from '.'
 import {
 	consumerCount,
 	createStore,
-	deferredOwnerCount,
 	flushMicrotask,
 	inspect,
 	mountedDependencyCount,
@@ -13,7 +12,7 @@ import {
 } from './utils.testing'
 
 const flags = { effect: fc.boolean(), mount: fc.boolean() }
-const dependency = fc.integer({ min: 0, max: 9 })
+const dependency = fc.integer({ min: 0, max: 13 })
 
 const graph = fc
 	.record({
@@ -29,7 +28,7 @@ const graph = fc
 				modulus: fc.integer({ min: 2, max: 3 }),
 				...flags,
 			}),
-			{ minLength: 1, maxLength: 7, size: 'max' },
+			{ minLength: 1, maxLength: 11, size: 'max' },
 		),
 	})
 	.map(({ primitives, derived }) => ({
@@ -69,7 +68,7 @@ const scenario = graph.chain((graph) => {
 					weight: 3,
 					arbitrary: fc.record({
 						type: fc.constant('unsubscribe' as const),
-						slot: fc.integer({ min: 0, max: 29 }),
+						slot: fc.integer({ min: 0, max: 49 }),
 					}),
 				},
 				{
@@ -81,7 +80,7 @@ const scenario = graph.chain((graph) => {
 					arbitrary: fc.record({ type: fc.constant('peek' as const), node }),
 				},
 			),
-			{ maxLength: 30, size: 'max' },
+			{ maxLength: 50, size: 'max' },
 		),
 	})
 })
@@ -89,9 +88,9 @@ const scenario = graph.chain((graph) => {
 type Graph = Value<typeof graph>
 
 /**
- * Runs the graph against the lifecycle contract: every setup has one cleanup,
- * dependencies are set up before and cleaned after their consumers, and no
- * resource is released while a mounted consumer still reads it.
+ * Models value reachability, direct effect reads and owner-scoped children.
+ * Effects retain their last direct read until cleanup; value intermediates
+ * retain only their current dependencies. Every resource has a balanced lifetime.
  */
 async function run(
 	graph: Graph,
@@ -102,24 +101,14 @@ async function run(
 	let prior = [...committed]
 	const pending = new Map<number, number>()
 	const subscriptions: { node: number; release: () => void }[] = []
-	const steps: string[] = []
 	const log: string[] = []
-	const violations: string[] = []
-	const liveEffects = new Map<number, { value: number; closure: Set<number> }>()
+	const steps: string[] = []
 	const liveMounts = new Set<number>()
-	const lastSetup = new Map<number, number>()
-	const history: {
-		kind: 'setup' | 'cleanup' | 'mount' | 'unmount'
-		node: number
-	}[] = []
-	const suspects: {
-		index: number
-		node: number
-		consumer: number
-		kind: 'cleanup' | 'unmount'
-		consumerReleaseKind: 'cleanup' | 'unmount'
-	}[] = []
-
+	const liveEffects = new Map<number, number>()
+	const liveChildren = new Set<string>()
+	const violations: string[] = []
+	const suspects: { node: number; consumer: number; index: number }[] = []
+	const history: { node: number; kind: 'mount' | 'unmount' }[] = []
 	const spec = (node: number) =>
 		node < primitiveCount
 			? graph.primitives[node]!
@@ -131,123 +120,78 @@ async function run(
 			? value(b, values)
 			: value(c, values) % modulus
 	}
-	const directDependencies = (node: number, values = committed): number[] => {
+	const direct = (node: number, values = committed): number[] => {
 		if (node < primitiveCount) return []
 		const { a, b, c, modulus } = graph.derived[node - primitiveCount]!
 		return [a, value(a, values) % modulus === 0 ? b : c]
 	}
-	const closure = (nodes: Iterable<number>, values = committed) => {
-		const result = new Set<number>()
+	const closure = (roots: Iterable<number>, values = committed) => {
+		const found = new Set<number>()
 		const visit = (node: number) => {
-			for (const dependency of directDependencies(node, values))
-				if (!result.has(dependency)) {
-					result.add(dependency)
-					visit(dependency)
-				}
+			if (found.has(node)) return
+			found.add(node)
+			for (const dep of direct(node, values)) visit(dep)
 		}
-		for (const node of nodes) visit(node)
-		return result
+		for (const root of roots) visit(root)
+		return found
 	}
-	const nearest = (node: number, flag: keyof typeof flags) => {
-		const result = new Set<number>()
-		const visit = (current: number) => {
-			for (const dependency of directDependencies(current))
-				if (spec(dependency)[flag]) result.add(dependency)
-				else visit(dependency)
-		}
-		visit(node)
-		return result
-	}
-	const violate = (message: string) => violations.push(message)
-
-	const onSetup = (node: number, next: number, last: number | undefined) => {
-		log.push(`setup n${node}=${next}`)
-		history.push({ kind: 'setup', node })
-		if (liveEffects.has(node)) violate(`n${node} set up twice without cleanup`)
-		if (next !== value(node))
-			violate(`n${node} set up with ${next}, current value is ${value(node)}`)
-		if (Object.is(next, last))
-			violate(`n${node} rerun although its value stayed ${next}`)
-		if (last !== undefined && last !== lastSetup.get(node))
-			violate(`n${node} saw previous ${last}, expected ${lastSetup.get(node)}`)
-		for (const dependency of nearest(node, 'effect'))
-			if (!liveEffects.has(dependency))
-				violate(`n${node} set up before its dependency n${dependency}`)
-		liveEffects.set(node, { value: next, closure: closure([node]) })
-		lastSetup.set(node, next)
-	}
-	const suspectConsumers = (node: number, kind: 'cleanup' | 'unmount') => {
-		for (const [consumer, { closure: reads }] of liveEffects)
-			if (consumer !== node && reads.has(node))
-				suspects.push({
-					index: history.length,
-					node,
-					consumer,
-					kind,
-					consumerReleaseKind: 'cleanup',
-				})
-	}
-	const onCleanup = (node: number) => {
-		log.push(`cleanup n${node}`)
-		history.push({ kind: 'cleanup', node })
-		if (!liveEffects.has(node)) violate(`n${node} cleaned up while not set up`)
-		suspectConsumers(node, 'cleanup')
-		liveEffects.delete(node)
-	}
-	/**
-	 * Every nearest dependency with `onMount`, reached through intermediates
-	 * without one, must mount first, including a dependency newly linked
-	 * beneath an already-mounted intermediate in the same flush.
-	 */
-	const onMount = (node: number) => {
-		log.push(`mount n${node}`)
-		history.push({ kind: 'mount', node })
-		if (liveMounts.has(node)) violate(`n${node} mounted twice`)
-		for (const dependency of nearest(node, 'mount'))
-			if (!liveMounts.has(dependency))
-				violate(`n${node} mounted before its dependency n${dependency}`)
-		liveMounts.add(node)
-	}
-	const onUnmount = (node: number) => {
-		log.push(`unmount n${node}`)
-		history.push({ kind: 'unmount', node })
-		if (!liveMounts.has(node)) violate(`n${node} unmounted while not mounted`)
-		liveMounts.delete(node)
-		for (const consumer of liveMounts)
-			if (closure([consumer]).has(node) && closure([consumer], prior).has(node))
-				suspects.push({
-					index: history.length,
-					node,
-					consumer,
-					kind: 'unmount',
-					consumerReleaseKind: 'unmount',
-				})
-		suspectConsumers(node, 'unmount')
-	}
-
-	const options = (node: number) => {
-		const { effect, mount } = spec(node)
-		return {
-			effect: effect
-				? (next: number, last: number | undefined) => {
-						onSetup(node, next, last)
-						return () => onCleanup(node)
+	const child = (key: string) =>
+		effectAtom(() => {
+			if (liveChildren.has(key)) violations.push(`${key} set up twice`)
+			liveChildren.add(key)
+			log.push(`child ${key}`)
+			return () => {
+				if (!liveChildren.delete(key)) violations.push(`${key} cleaned twice`)
+				log.push(`child cleanup ${key}`)
+			}
+		})
+	const options = (node: number) => ({
+		onMount:
+			spec(node).mount || spec(node).effect
+				? (
+						_get: unknown,
+						_set: unknown,
+						mountEffect: (effect: ReturnType<typeof effectAtom>) => void,
+					) => {
+						if (spec(node).mount) {
+							if (liveMounts.has(node))
+								violations.push(`n${node} mounted twice`)
+							for (const dep of closure(direct(node)))
+								if (spec(dep).mount && !liveMounts.has(dep))
+									violations.push(`n${node} mounted before n${dep}`)
+							liveMounts.add(node)
+							history.push({ node, kind: 'mount' })
+							log.push(`mount n${node}`)
+						}
+						if (spec(node).effect) mountEffect(child(`mount ${node}`))
+						return () => {
+							if (liveChildren.has(`mount ${node}`))
+								violations.push(`child outlived mount n${node}`)
+							if (!spec(node).mount) return
+							if (!liveMounts.delete(node))
+								violations.push(`n${node} unmounted twice`)
+							if (liveEffects.has(node))
+								violations.push(
+									`n${node} unmounted while directly read by its effect`,
+								)
+							history.push({ node, kind: 'unmount' })
+							log.push(`unmount n${node}`)
+							for (const consumer of liveMounts)
+								if (
+									closure(direct(consumer)).has(node) &&
+									closure(direct(consumer, prior), prior).has(node)
+								)
+									suspects.push({ node, consumer, index: history.length })
+						}
 					}
 				: undefined,
-			onMount: mount
-				? () => {
-						onMount(node)
-						return () => onUnmount(node)
-					}
-				: undefined,
-		}
-	}
+	})
 	const nodes: AtomSymbol<number, any>[] = []
 	for (const [index, { initial }] of graph.primitives.entries())
-		nodes.push(primitiveAtom(initial, options(index)) as never)
+		nodes.push(primitiveAtom(initial, options(index)))
 	for (const [index, { a, b, c, modulus }] of graph.derived.entries())
 		nodes.push(
-			derivedAtom<number>(
+			derivedAtom(
 				(get) =>
 					get(nodes[a]!) % modulus === 0
 						? get(nodes[b]!)
@@ -256,144 +200,129 @@ async function run(
 				options(primitiveCount + index),
 			) as never,
 		)
-
+	const effects = nodes.map((symbol, node) =>
+		effectAtom(
+			(get) => get(symbol),
+			(next, _last, _get, _set, mountEffect) => {
+				if (liveEffects.has(node))
+					violations.push(`effect n${node} ran without cleanup`)
+				if (next !== value(node))
+					violations.push(
+						`effect n${node} read ${next}, expected ${value(node)}`,
+					)
+				if (spec(node).mount && !liveMounts.has(node))
+					violations.push(`effect n${node} ran before its direct resource`)
+				liveEffects.set(node, next)
+				log.push(`effect n${node}=${next}`)
+				mountEffect(child(`run ${node}`))
+				return () => {
+					if (!liveEffects.delete(node))
+						violations.push(`effect n${node} cleaned twice`)
+					log.push(`cleanup n${node}`)
+				}
+			},
+		),
+	)
 	const store = createStore()
 	const report = (label: string) =>
 		`${label}\nsteps:\n${steps.join('\n')}\nlog:\n${log.join('\n')}`
-
 	const commit = async () => {
 		for (const [node, next] of pending) committed[node] = next
 		pending.clear()
 		await flushMicrotask()
 		prior = [...committed]
 	}
-
-	const mounted = () => {
-		const roots = subscriptions.map(({ node }) => node)
-		return new Set([...roots, ...closure(roots)])
-	}
-	const check = (settled: boolean, step: string) => {
-		for (const {
-			index,
-			node,
-			consumer,
-			kind,
-			consumerReleaseKind,
-		} of suspects.splice(0)) {
+	const check = (settled: boolean, label: string) => {
+		for (const { node, consumer, index } of suspects.splice(0)) {
 			const later = history.slice(index)
-			const reacquired = later.some(
-				(event) =>
-					event.node === node &&
-					event.kind === (kind === 'cleanup' ? 'setup' : 'mount'),
+			if (
+				!later.some((event) => event.node === node && event.kind === 'mount') ||
+				later.some(
+					(event) => event.node === consumer && event.kind === 'unmount',
+				)
 			)
-			const consumerCleaned = later.some(
-				(event) =>
-					event.node === consumer && event.kind === consumerReleaseKind,
-			)
-			if (!reacquired || consumerCleaned)
-				violate(
-					`n${node} ${kind === 'cleanup' ? 'cleaned up' : 'unmounted'} while n${consumer} still reads it without being released first`,
+				violations.push(
+					`n${node} released before mounted consumer n${consumer}`,
 				)
 		}
-		for (const [node, effect] of liveEffects)
-			for (const read of [...closure([node]), ...closure([node], prior)])
-				effect.closure.add(read)
-		const reachable = mounted()
-		const allowed = new Set([...reachable])
-		for (const { closure: reads } of liveEffects.values())
-			for (const node of reads) allowed.add(node)
-		for (const node of closure(allowed)) allowed.add(node)
-		for (const node of liveMounts)
-			if (!allowed.has(node)) violate(`n${node} mounted without a consumer`)
-		for (const [node, { value: setup }] of liveEffects) {
-			if (!allowed.has(node)) violate(`n${node} set up without a consumer`)
-			if (settled && setup !== value(node))
-				violate(
-					`n${node} effect holds ${setup}, current value is ${value(node)}`,
+		const reachable = closure(subscriptions.map(({ node }) => node))
+		if (settled) {
+			for (const node of nodes.keys()) {
+				if (spec(node).mount && liveMounts.has(node) !== reachable.has(node))
+					violations.push(`n${node} mount reachability mismatch`)
+				const active =
+					spec(node).effect &&
+					subscriptions.some((subscription) => subscription.node === node)
+				if (liveEffects.has(node) !== active)
+					violations.push(`n${node} effect reachability mismatch`)
+				if (active && liveEffects.get(node) !== value(node))
+					violations.push(`n${node} stale effect`)
+				if (
+					spec(node).effect &&
+					liveChildren.has(`mount ${node}`) !== reachable.has(node)
 				)
-		}
-		if (settled)
-			for (const node of reachable) {
-				if (spec(node).mount && !liveMounts.has(node))
-					violate(`n${node} is reachable but not mounted`)
-				if (spec(node).effect && !liveEffects.has(node))
-					violate(`n${node} is reachable but has no effect`)
+					violations.push(`n${node} mount child mismatch`)
+				if (liveChildren.has(`run ${node}`) !== active)
+					violations.push(`n${node} run child mismatch`)
 			}
-		for (const [node, symbol] of nodes.entries()) {
-			const instance = inspect(store).instances.get(symbol)
-			if (!instance) continue
-			if (instance.mountCount > 0 && !allowed.has(node))
-				violate(`n${node} holds ${instance.mountCount} references`)
-			if (settled && reachable.has(node) && instance.mountCount === 0)
-				violate(`n${node} is reachable but holds no reference`)
 		}
-		expect(violations, report(`after ${step}`)).toEqual([])
+		expect(violations, report(label)).toEqual([])
 	}
-
 	for (const [index, operation] of operations.entries()) {
-		const step = `step ${index} ${JSON.stringify(operation)}`
-		steps.push(step)
+		const label = `step ${index} ${JSON.stringify(operation)}`
+		steps.push(label)
 		switch (operation.type) {
 			case 'write':
-				store.send(
-					nodes[operation.primitive]! as never,
-					operation.value as never,
-				)
+				store.send(nodes[operation.primitive]!, operation.value)
 				pending.set(operation.primitive, operation.value)
-				check(false, step)
 				break
 			case 'subscribe':
 				subscriptions.push({
 					node: operation.node,
-					release: store.subscribe(nodes[operation.node]!, () => {}),
+					release: spec(operation.node).effect
+						? store.mountEffect(effects[operation.node]!)
+						: store.subscribe(nodes[operation.node]!, () => {}),
 				})
-				check(false, step)
 				break
-			case 'unsubscribe': {
-				if (subscriptions.length === 0) break
-				subscriptions
-					.splice(operation.slot % subscriptions.length, 1)[0]!
-					.release()
-				check(false, step)
+			case 'unsubscribe':
+				if (subscriptions.length > 0)
+					subscriptions
+						.splice(operation.slot % subscriptions.length, 1)[0]!
+						.release()
 				break
-			}
 			case 'peek': {
 				const before = log.length
-				expect(
-					store.peek(nodes[operation.node]!),
-					report(`${step}: peeked value`),
-				).toBe(value(operation.node))
-				expect(
-					log.length,
-					report(`${step}: peek ran lifecycle callbacks`),
-				).toBe(before)
+				expect(store.peek(nodes[operation.node]!), report(label)).toBe(
+					value(operation.node),
+				)
+				expect(log.length, report('peek ran lifecycle callbacks')).toBe(before)
 				break
 			}
 			case 'yield':
 				await commit()
-				check(true, step)
 				break
 		}
+		check(operation.type === 'yield', label)
 	}
 	for (const { release } of subscriptions.splice(0)) release()
 	expect(
-		[...liveEffects.keys(), ...liveMounts],
-		report('resources outlived their last subscription'),
+		[...liveMounts, ...liveEffects.keys(), ...liveChildren],
+		report('last release'),
 	).toEqual([])
 	await commit()
 	check(true, 'final release')
-	for (const [node, symbol] of nodes.entries()) {
+	for (const symbol of [...nodes, ...effects]) {
 		const instance = inspect(store).instances.get(symbol)
-		if (!instance) continue
-		expect(
-			[
-				instance.mountCount,
-				consumerCount(instance),
-				mountedDependencyCount(instance),
-				deferredOwnerCount(instance),
-			],
-			report(`n${node} counts after release`),
-		).toEqual([0, 0, 0, 0])
+		if (instance)
+			expect(
+				[
+					instance.mountCount,
+					consumerCount(instance),
+					mountedDependencyCount(instance),
+					instance.owners.size,
+				],
+				report('remaining references'),
+			).toEqual([0, 0, 0, 0])
 	}
 }
 
@@ -425,8 +354,8 @@ const mountOrderExample: Value<typeof scenario> = {
 }
 
 /**
- * Shrunk case: n2 is released while consumers n3 and n5 still read it, because
- * its cleanup runs before theirs after P1 flips.
+ * Stored release-order graph: P1 relinks n3 and n5 away from n2. Leaf
+ * observers hold their direct value nodes, while n2 follows current value reachability.
  */
 const releaseOrderExample: Value<typeof scenario> = {
 	graph: {
@@ -516,9 +445,8 @@ const unmountOrderExample: Value<typeof scenario> = {
 }
 
 /**
- * Shrunk case: n2 keeps a reference after its last consumer is gone, because a
- * deferred release treated an effect as owner of an edge linked after that
- * effect ran.
+ * Stored late-linked-owner graph: n2 must lose its last reference when the
+ * current value graph no longer reaches it, even while a leaf observer stays live.
  */
 const lateLinkedOwnerExample: Value<typeof scenario> = {
 	graph: {
@@ -547,10 +475,9 @@ const lateLinkedOwnerExample: Value<typeof scenario> = {
 }
 
 /**
- * Shrunk case that passes at the baseline commit 3c389f7 and guards the
- * flush-end closure extension: n4 links n3 beneath itself in a flush where its
- * effect does not rerun. A closure taken only when the effect runs would
- * unmount n0 while n4 still reads it.
+ * Stored late-linked-reader graph: n4 links n3 while its leaf observer does
+ * not rerun. Resources below n3 follow the current value graph, without an
+ * observer accumulating transitive ownership.
  */
 const lateLinkedReaderExample: Value<typeof scenario> = {
 	graph: {

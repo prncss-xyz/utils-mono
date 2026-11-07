@@ -5,8 +5,9 @@ import {
 	type Init,
 	type Reset,
 } from '../../functions'
-import type { AtomSymbol, Effect, Read, Write } from '../store'
+import type { AtomSymbol, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
+import type { MachineEffect } from './machineEffect'
 
 export function directMachineAtom<E, S extends object, R = S>(
 	init: Init<S>,
@@ -21,7 +22,7 @@ export function directMachineAtom<E, S extends object, R = S>(
 	opts?: {
 		result?: (state: S, read: Read) => R
 		factory?: (value: S) => AtomSymbol<S, any>
-		effect?: Effect<R>
+		effect?: MachineEffect<R>
 	},
 ) {
 	return coreMachineAtom<E, S, R>(

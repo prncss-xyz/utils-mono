@@ -1,6 +1,5 @@
 import { isoAssert } from '../../functions'
 import { type AtomFamily, type AtomSymbol, type Read } from '../atoms'
-import { getCleanupOrder, unownedComponent } from './cleanupOrder'
 import {
 	dependencies,
 	dependencyVersions,
@@ -10,14 +9,11 @@ import {
 	mountedDependencies,
 	hasMountedDependency,
 	mountedDependencyCount,
-	deferredOwners,
 	resetDependencies,
 	recordDependency,
 	addMountedEdge,
 	removeMountedEdge,
 	detachMountedEdges,
-	addDeferredOwner,
-	removeDeferredOwner,
 } from './graph'
 import { getInstance } from './registry'
 import {
@@ -29,12 +25,7 @@ import {
 	advanceDerivedVersion,
 	countOperation,
 } from './state'
-import {
-	type DeferredRelease,
-	type EffectLifecycle,
-	type Instance,
-	type MountLifecycle,
-} from './types'
+import { type Instance, type MountLifecycle } from './types'
 
 /**
  * `peekInstance` must run while the instance is still unmounted, so that a
@@ -44,7 +35,8 @@ import {
 export function retain<S>(state: StoreState, instance: Instance<S>) {
 	if (instance.mountCount === 0) {
 		cancelEviction(state, instance)
-		peekInstance(state, instance)
+		if (instance.symbol.type === 'effect') resetDependencies(instance)
+		else peekInstance(state, instance)
 	}
 	if (instance.mountCount++ > 0) return
 	syncMountedDeps(state, instance)
@@ -54,17 +46,14 @@ export function retain<S>(state: StoreState, instance: Instance<S>) {
 }
 
 export function release<S>(state: StoreState, instance: Instance<S>) {
-	if (--instance.mountCount > 0) {
-		releaseUnowned(state, instance)
-		return
-	}
+	if (--instance.mountCount > 0) return
 	const mountedDeps = detachMountedEdges(instance)
 	teardown(state, instance)
 	if (instance.familyEntry) queueEviction(state, instance)
 	for (const dep of mountedDeps) release(state, dep)
 }
 
-function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
+export function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 	let linked = false
 	for (const dep of dependencies(instance)) {
 		if (instance.mountCount === 0) return
@@ -88,9 +77,13 @@ function pruneMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 	}
 }
 
-function link<S>(state: StoreState, instance: Instance<S>, dep: Instance<any>) {
+export function link<S>(
+	state: StoreState,
+	instance: Instance<S>,
+	dep: Instance<any>,
+) {
+	assertOwnershipEdge(instance, dep)
 	addMountedEdge(instance, dep)
-	state.linkedEdges.push([instance, dep])
 	retain(state, dep)
 }
 
@@ -100,38 +93,24 @@ function unlink<S>(
 	dep: Instance<any>,
 ) {
 	if (!hasMountedDependency(instance, dep)) return
-	const owners = new Set<EffectLifecycle<any>>()
 	const visited = new Set<Instance<any>>()
-	let stale = false
-	const collect = (consumer: Instance<any>) => {
-		if (visited.has(consumer)) return
+	const staleConsumer = (consumer: Instance<any>): boolean => {
+		if (visited.has(consumer)) return false
 		visited.add(consumer)
-		if (consumer.freshness.type !== 'clean') stale = true
-		const lifecycle = consumer.effectLifecycle
 		if (
-			lifecycle &&
-			(lifecycle.cleanup || lifecycle.cleaning) &&
-			lifecycle.readClosure.has(dep)
+			consumer.symbol.type === 'derived' &&
+			consumer.freshness.type !== 'clean'
 		)
-			owners.add(lifecycle)
-		for (const deferred of deferredOwners(consumer))
-			for (const owner of deferred.owners)
-				if (owner.readClosure.has(instance) && owner.readClosure.has(dep))
-					owners.add(owner)
-		for (const sub of consumers(consumer)) collect(sub)
+			return true
+		for (const sub of consumers(consumer)) if (staleConsumer(sub)) return true
+		return false
 	}
-	collect(instance)
+	const stale = staleConsumer(instance)
 	removeMountedEdge(instance, dep)
-	if (owners.size === 0) {
-		if (stale && hasLiveResource(dep)) {
-			isoAssert(state.phase.releases, 'stale consumer outside settle')
-			state.phase.releases.push(dep)
-		} else release(state, dep)
-	} else {
-		const deferred: DeferredRelease = { dependency: dep, owners }
-		addDeferredOwner(dep, deferred)
-		for (const owner of owners) owner.deferredReleases.add(deferred)
-	}
+	if (stale && hasLiveResource(dep)) {
+		isoAssert(state.phase.releases, 'stale consumer outside settle')
+		state.phase.releases.push(dep)
+	} else release(state, dep)
 }
 
 function hasLiveResource(
@@ -146,28 +125,45 @@ function hasLiveResource(
 	return false
 }
 
-function releaseUnowned(state: StoreState, instance: Instance<any>) {
-	const component = unownedComponent(instance)
-	if (!component) return
-	const order = getCleanupOrder(component)
-	for (let index = order.length - 1; index >= 0; index--) {
-		const consumer = order[index]!
-		if (consumer.mountCount === 0 || !unownedComponent(consumer)) continue
-		teardown(state, consumer)
-		if (consumer.mountCount > 0) {
-			queueMount(state, consumer)
-			queueEffect(state, consumer)
-		}
+export function assertOwnershipEdge(
+	owner: Instance<any>,
+	target: Instance<any>,
+) {
+	const visited = new Set<Instance<any>>()
+	const walk = (current: Instance<any>) => {
+		isoAssert(current !== target, 'cyclic effect ownership')
+		if (visited.has(current)) return
+		visited.add(current)
+		for (const parent of current.owners.keys()) walk(parent)
+		for (const consumer of consumers(current)) walk(consumer)
+	}
+	walk(owner)
+}
+
+export function releaseChildren(
+	state: StoreState,
+	owner: Instance<any>,
+	lifecycle: MountLifecycle,
+) {
+	while (lifecycle.children.length > 0) {
+		const child = lifecycle.children.pop()!
+		const references = child.owners.get(owner)!
+		if (references === 1) child.owners.delete(owner)
+		else child.owners.set(owner, references - 1)
+		release(state, child)
 	}
 }
 
 function teardown(state: StoreState, instance: Instance<any>) {
-	const effectLifecycle = instance.effectLifecycle
-	const mountLifecycle = instance.mountLifecycle
+	const lifecycle = instance.effectLifecycle ?? instance.mountLifecycle
 	instance.effectLifecycle = undefined
 	instance.mountLifecycle = undefined
-	if (effectLifecycle) cleanupEffect(state, effectLifecycle, mountLifecycle)
-	else runCleanup(state, instance, mountLifecycle?.cleanup)
+	if (!lifecycle) return
+	lifecycle.active = false
+	releaseChildren(state, instance, lifecycle)
+	const cleanup = lifecycle.cleanup
+	lifecycle.cleanup = undefined
+	runCleanup(state, instance, cleanup)
 }
 
 export function runCleanup(
@@ -180,35 +176,10 @@ export function runCleanup(
 	cleanup()
 }
 
-export function cleanupEffect(
-	state: StoreState,
-	lifecycle: EffectLifecycle<any>,
-	mountLifecycle?: MountLifecycle,
-) {
-	if (lifecycle.cleaning) {
-		runCleanup(state, lifecycle.instance, mountLifecycle?.cleanup)
-		return
-	}
-	const cleanup = lifecycle.cleanup
-	lifecycle.cleanup = undefined
-	lifecycle.cleaning = true
-	runCleanup(state, lifecycle.instance, cleanup)
-	runCleanup(state, lifecycle.instance, mountLifecycle?.cleanup)
-	for (const deferred of lifecycle.deferredReleases) {
-		lifecycle.deferredReleases.delete(deferred)
-		deferred.owners.delete(lifecycle)
-		if (deferred.owners.size === 0) {
-			removeDeferredOwner(deferred.dependency, deferred)
-			release(state, deferred.dependency)
-		}
-	}
-	lifecycle.dependencies.clear()
-	lifecycle.cleaning = false
-}
-
 export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 	isoAssert(instance.freshness.type !== 'evaluating', 'cyclic atom dependency')
 	const { symbol } = instance
+	isoAssert(symbol.type !== 'effect', 'effect atoms have no value')
 	if (symbol.type === 'derived' && instance.freshness.type !== 'dirty') {
 		if (isFresh(state, instance)) return instance.value
 		revalidateUnmounted(state, instance)

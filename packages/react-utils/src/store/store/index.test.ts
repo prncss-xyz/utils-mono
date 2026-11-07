@@ -1,7 +1,8 @@
-import { assert, describe, expect, it, type Mock, vi } from 'vitest'
+import { assert, describe, expect, it, vi } from 'vitest'
 
 import {
 	derivedAtom,
+	effectAtom,
 	atomFamily,
 	hydrate,
 	primitiveAtom,
@@ -38,16 +39,6 @@ const mountCount = <S, Args extends unknown[]>(
 	store: Store,
 	symbol: AtomSymbol<S, Args>,
 ) => internalInstance(store, symbol).mountCount
-
-const readClosure = <S, Args extends unknown[]>(
-	store: Store,
-	symbol: AtomSymbol<S, Args>,
-) => {
-	const lifecycle = internalInstance(store, symbol).effectLifecycle
-	assert(lifecycle)
-	return lifecycle.readClosure
-}
-
 const expectNoStrongReferences = <S, Args extends unknown[]>(
 	store: Store,
 	symbol: AtomSymbol<S, Args>,
@@ -121,57 +112,6 @@ describe('Store', () => {
 		expect(second.peek(atom)).toBe(0)
 	})
 
-	it('settles a diamond once per batch', async () => {
-		const events: string[] = []
-		const effect =
-			(name: string) =>
-			(next: number | undefined, last: number | undefined) => {
-				events.push(`run:${name}:${last}->${next}`)
-				return () => {
-					events.push(`cleanup:${name}:${next}`)
-				}
-			}
-		const source = primitiveAtom(0, { effect: effect('source') })
-		const other = primitiveAtom(0)
-		const left = derivedAtom<number>((read) => read(source) + 1, undefined, {
-			effect: effect('left'),
-		})
-		const right = derivedAtom<number>((read) => read(source) + 2, undefined, {
-			effect: effect('right'),
-		})
-		const leaf = derivedAtom<number>(
-			(read) => read(left) + read(right),
-			undefined,
-			{ effect: effect('leaf') },
-		)
-		const sum = derivedAtom((read) => read(source) + read(other))
-		const store = createStore()
-		const leafSeen: number[] = []
-		const sumSeen: number[] = []
-		store.subscribe(leaf, () => leafSeen.push(store.peek(leaf)))
-		store.subscribe(sum, () => sumSeen.push(store.peek(sum)))
-		await flushMicrotask()
-		events.length = 0
-
-		store.send(source, 1)
-		store.send(source, 2)
-		store.send(other, 5)
-		await flushMicrotask()
-
-		expect(leafSeen).toEqual([7])
-		expect(sumSeen).toEqual([7])
-		expect(events).toEqual([
-			'cleanup:leaf:3',
-			'cleanup:right:2',
-			'cleanup:left:1',
-			'cleanup:source:0',
-			'run:source:0->2',
-			'run:left:1->3',
-			'run:right:2->4',
-			'run:leaf:3->7',
-		])
-	})
-
 	it('reads and writes atom families from a derived setter', async () => {
 		const sourceFamily = atomFamily((_key: string) => primitiveAtom(3))
 		const targetFamily = atomFamily((_key: string) => primitiveAtom(0))
@@ -243,330 +183,6 @@ describe('Store', () => {
 		await flushMicrotask()
 		expect(subscriber).toHaveBeenCalledOnce()
 		expect(subscriber).toHaveLastReturnedWith(11)
-	})
-
-	it('reads atoms and families in effects without tracking dependencies', async () => {
-		const source = primitiveAtom(1)
-		const values = atomFamily((key: string) => primitiveAtom(key.length))
-		const observed = derivedAtom(
-			(read) => read(source) * 2,
-			() => {},
-		)
-		const runs = vi.fn()
-		const trigger = primitiveAtom(0, {
-			effect: (next, _last, get) => {
-				runs(next, get(source), get(observed), get(values, 'key'))
-			},
-		})
-		const store = createStore()
-
-		store.subscribe(trigger, () => {})
-		await flushMicrotask()
-		expect(runs).toHaveBeenLastCalledWith(0, 1, 2, 3)
-
-		store.send(source, 2)
-		store.send(values, 'key', 4)
-		await flushMicrotask()
-		expect(runs).toHaveBeenCalledOnce()
-
-		store.send(trigger, 1)
-		await flushMicrotask()
-		expect(runs).toHaveBeenLastCalledWith(1, 2, 4, 4)
-	})
-
-	it('writes other atoms, derived atoms, and families from effects', async () => {
-		const target = primitiveAtom(0)
-		const doubled = derivedAtom(
-			(read) => read(target) * 2,
-			(_read, write, value: number) => write(target, value / 2),
-		)
-		const values = atomFamily((_key: string) => primitiveAtom(0))
-		const trigger = primitiveAtom(0, {
-			effect: (next, _last, _get, set) => {
-				if (next === undefined) return
-				set(target, 1)
-				set(doubled, 6)
-				set(values, 'key', (value) => value + 1)
-			},
-		})
-		const store = createStore()
-
-		store.subscribe(trigger, () => {})
-		await flushMicrotask()
-		expect(store.peek(target)).toBe(0)
-		expect(store.peek(values, 'key')).toBe(0)
-		await flushMicrotask()
-		expect(store.peek(doubled)).toBe(6)
-		expect(store.peek(values, 'key')).toBe(1)
-	})
-
-	it.each(['primitive', 'derived'] as const)(
-		'treats undefined as a real %s value and only cleans up on unmount',
-		async (kind) => {
-			const cleanup = vi.fn()
-			const effect = vi.fn(() => cleanup)
-			const source = primitiveAtom<number | undefined>(
-				undefined,
-				kind === 'primitive' ? { effect } : undefined,
-			)
-			const atom =
-				kind === 'primitive'
-					? source
-					: derivedAtom(
-							(get) => get(source),
-							(_get, set, value: SetStateWithReset<number | undefined>) =>
-								set(source, value),
-							{ effect },
-						)
-			const store = createStore()
-			const release = store.subscribe(atom, vi.fn())
-			await flushMicrotask()
-			expect(effect).toHaveBeenCalledOnce()
-			expect(effect.mock.calls[0]).toEqual([
-				undefined,
-				undefined,
-				expect.any(Function),
-				expect.any(Function),
-			])
-			store.send(atom, 1)
-			await flushMicrotask()
-			store.send(atom, undefined)
-			await flushMicrotask()
-			expect(effect).toHaveBeenCalledTimes(3)
-			expect(effect.mock.calls[2]).toEqual([
-				undefined,
-				1,
-				expect.any(Function),
-				expect.any(Function),
-			])
-			release()
-			release()
-			expect(effect).toHaveBeenCalledTimes(3)
-			expect(cleanup).toHaveBeenCalledTimes(3)
-			const releaseAgain = store.subscribe(atom, vi.fn())
-			await flushMicrotask()
-			expect(effect).toHaveBeenCalledTimes(4)
-			expect(effect.mock.calls[3]).toEqual([
-				undefined,
-				undefined,
-				expect.any(Function),
-				expect.any(Function),
-			])
-			releaseAgain()
-			expect(cleanup).toHaveBeenCalledTimes(4)
-		},
-	)
-
-	it.each(['source', 'consumer'] as const)(
-		'disposes the cleanup of an effect whose setup releases the %s',
-		async (target) => {
-			let release = () => {}
-			const cleanup = vi.fn()
-			const effect = vi.fn(() => {
-				release()
-				return cleanup
-			})
-			const source = primitiveAtom(0, { effect })
-			const consumer = derivedAtom<number>((read) => read(source))
-			const store = createStore()
-			release =
-				target === 'consumer'
-					? store.subscribe(consumer, () => {})
-					: store.subscribe(source, () => {})
-			await flushMicrotask()
-			expect(effect).toHaveBeenCalledOnce()
-			expect(cleanup).toHaveBeenCalledOnce()
-		},
-	)
-
-	it('disposes an old run and keeps the newer run cleanup when setup releases and remounts', async () => {
-		const store = createStore()
-		const cleanups: Mock<() => void>[] = []
-		let release = () => {}
-		let reenter = true
-		const atom = primitiveAtom(0, {
-			effect: () => {
-				if (reenter) {
-					reenter = false
-					release()
-					release = store.subscribe(atom, () => {})
-				}
-				const cleanup = vi.fn()
-				cleanups.push(cleanup)
-				return cleanup
-			},
-		})
-		release = store.subscribe(atom, () => {})
-		await flushMicrotask()
-		expect(cleanups).toHaveLength(1)
-		expect(cleanups[0]).toHaveBeenCalledOnce()
-		await flushMicrotask()
-		expect(cleanups).toHaveLength(2)
-		expect(cleanups[0]).toHaveBeenCalledOnce()
-		expect(cleanups[1]).not.toHaveBeenCalled()
-		release()
-		expect(cleanups[0]).toHaveBeenCalledOnce()
-		expect(cleanups[1]).toHaveBeenCalledOnce()
-	})
-
-	it('does not repeat cleanup or rerun effects when cleanup unsubscribes the consumer', async () => {
-		const events: string[] = []
-		let unsubscribe = () => {}
-		const source = primitiveAtom(0, {
-			effect: (next) => {
-				events.push(`run:source:${next}`)
-				return () => {
-					events.push(`cleanup:source:${next}`)
-				}
-			},
-		})
-		const consumer = derivedAtom<number>((read) => read(source), undefined, {
-			effect: (next) => {
-				events.push(`run:consumer:${next}`)
-				return () => {
-					events.push(`cleanup:consumer:${next}`)
-					unsubscribe()
-				}
-			},
-		})
-		const store = createStore()
-		unsubscribe = store.subscribe(consumer, () => {})
-		await flushMicrotask()
-		events.length = 0
-		store.send(source, 1)
-		await flushMicrotask()
-		expect(events).toEqual(['cleanup:consumer:0', 'cleanup:source:0'])
-	})
-
-	const remounting = (hooks: {
-		source?: (next: number, remount: () => void) => void
-		cleanup?: (remount: () => void) => void
-	}) => {
-		const events: string[] = []
-		const store = createStore()
-		let unsubscribe = () => {}
-		let remounted = false
-		const remount = () => {
-			if (remounted) return
-			remounted = true
-			unsubscribe()
-			unsubscribe = store.subscribe(consumer, () => {})
-		}
-		const source = primitiveAtom(0, {
-			effect: (next) => hooks.source?.(next, remount),
-		})
-		const consumer = derivedAtom((read) => read(source), undefined, {
-			onMount: () => {
-				events.push('mount')
-				return () => events.push('unmount')
-			},
-			effect: (next, last) => {
-				events.push(`setup:${last}->${next}`)
-				return () => {
-					events.push(`cleanup:${next}`)
-					hooks.cleanup?.(remount)
-				}
-			},
-		})
-		const unsubscribeSource = store.subscribe(source, () => {})
-		unsubscribe = store.subscribe(consumer, () => {})
-		return {
-			events,
-			store,
-			source,
-			release: () => {
-				unsubscribe()
-				unsubscribeSource()
-			},
-		}
-	}
-
-	const updatedTwice = [
-		'mount',
-		'setup:undefined->0',
-		'cleanup:0',
-		'unmount',
-		'mount',
-		'setup:undefined->1',
-		'cleanup:1',
-		'unmount',
-	]
-
-	it('defers initial setup if a dependency effect remounts its consumer', async () => {
-		const { events, release } = remounting({
-			source: (_next, remount) => remount(),
-		})
-		await flushMicrotask()
-		await flushMicrotask()
-		release()
-
-		expect(events).toEqual([
-			'mount',
-			'unmount',
-			'mount',
-			'setup:undefined->0',
-			'cleanup:0',
-			'unmount',
-		])
-	})
-
-	it('waits for a remounted consumer before setup when its cleanup remounts it', async () => {
-		const { events, store, source, release } = remounting({
-			cleanup: (remount) => remount(),
-		})
-		await flushMicrotask()
-		store.send(source, 1)
-		await flushMicrotask()
-		await flushMicrotask()
-		release()
-
-		expect(events).toEqual(updatedTwice)
-	})
-
-	it('waits for a remounted consumer before setup when a dependency setup remounts it', async () => {
-		const { events, store, source, release } = remounting({
-			source: (next, remount) => {
-				if (next === 1) remount()
-			},
-		})
-		await flushMicrotask()
-		store.send(source, 1)
-		await flushMicrotask()
-		await flushMicrotask()
-		release()
-
-		expect(events).toEqual(updatedTwice)
-	})
-
-	it('keeps dependency ownership balanced when cleanup remounts a consumer', async () => {
-		const cleanup = vi.fn()
-		const sourceEffect = vi.fn(() => cleanup)
-		const source = primitiveAtom(1, { effect: sourceEffect })
-		let remount = () => {}
-		const consumer = derivedAtom<number>((read) => read(source), undefined, {
-			effect: () => () => remount(),
-		})
-		const store = createStore()
-		const unsubscribe = store.subscribe(consumer, () => {})
-		let unsubscribeAgain = () => {}
-		const notifyAgain = vi.fn()
-		remount = () => {
-			remount = () => {}
-			unsubscribeAgain = store.subscribe(consumer, notifyAgain)
-		}
-		await flushMicrotask()
-		unsubscribe()
-		await flushMicrotask()
-		expect(sourceEffect).toHaveBeenCalledOnce()
-		store.send(source, 7)
-		await flushMicrotask()
-		expect(notifyAgain).toHaveBeenCalledOnce()
-		expect(store.peek(consumer)).toBe(7)
-		expect(sourceEffect).toHaveBeenCalledTimes(2)
-		expect(cleanup).toHaveBeenCalledOnce()
-		unsubscribeAgain()
-		expect(sourceEffect).toHaveBeenCalledTimes(2)
-		expect(cleanup).toHaveBeenCalledTimes(2)
 	})
 
 	describe('transitive mount order within a flush', () => {
@@ -777,14 +393,6 @@ describe('Store', () => {
 				return () => events.push('unmount')
 			},
 		})
-		const logEffect = (events: string[], name: string) => ({
-			effect: () => {
-				events.push(`${name} setup`)
-				return () => events.push(`${name} cleanup`)
-			},
-		})
-		const effectWithCleanup = { effect: () => () => {} }
-		const effectWithoutCleanup = { effect: () => {} }
 		const mountWriter = <T>(
 			target: ReturnType<typeof primitiveAtom<T>>,
 			value: T,
@@ -808,74 +416,6 @@ describe('Store', () => {
 			)
 			return { sel, mode, top }
 		}
-		const setupThenCleanupOrder = [
-			'top setup',
-			'resource setup',
-			'top cleanup',
-			'resource cleanup',
-		]
-
-		it('cleans up a late-linked dependency only after the consumer effects that read it', async () => {
-			const events: string[] = []
-			const sel = primitiveAtom(false)
-			const mode = primitiveAtom(0)
-			const resource = primitiveAtom(0, logEffect(events, 'resource'))
-			const middle = derivedAtom<number>(
-				(get) => (get(sel) ? get(resource) * 0 : 0),
-				undefined,
-				logEffect(events, 'middle'),
-			)
-			const top = derivedAtom<number>(
-				(get) => (get(mode) === 0 ? get(middle) : get(mode)),
-				undefined,
-				logEffect(events, 'top'),
-			)
-			const store = createStore()
-			store.subscribe(top, () => {})
-			await flushMicrotask()
-			store.send(sel, true)
-			await flushMicrotask()
-			events.length = 0
-			store.send(mode, 1)
-			store.send(resource, 5)
-			await flushMicrotask()
-
-			expect(events).toEqual([
-				'top cleanup',
-				'middle cleanup',
-				'resource cleanup',
-				'top setup',
-			])
-		})
-
-		it('releases a dependency of a retained dependency that the retaining effect never read', async () => {
-			const events: string[] = []
-			const sel = primitiveAtom(true)
-			const reads = primitiveAtom(false)
-			const resource = primitiveAtom(0, logMountCycle(events))
-			const middle = derivedAtom<number>((get) =>
-				get(reads) ? get(resource) * 0 : 0,
-			)
-			const inner = derivedAtom<number>((get) => (get(sel) ? get(middle) : 0))
-			const top = derivedAtom<number>(
-				(get) => get(inner),
-				undefined,
-				effectWithCleanup,
-			)
-			const store = createStore()
-			store.subscribe(top, () => {})
-			await flushMicrotask()
-			store.send(sel, false)
-			await flushMicrotask()
-			store.send(reads, true)
-			await flushMicrotask()
-			expect(events).toEqual(['mount'])
-			store.send(reads, false)
-			await flushMicrotask()
-
-			expect(events).toEqual(['mount', 'unmount'])
-		})
-
 		it('keeps a dependency mounted when a stale consumer is dropped and another path regains it in the same flush', async () => {
 			const events: string[] = []
 			const resource = primitiveAtom(0, logMountCycle(events))
@@ -946,361 +486,6 @@ describe('Store', () => {
 
 			expect(events).toEqual(['mount'])
 		})
-
-		it('defers the cleanup of a resource linked below an effect that did not rerun until that effect is cleaned up', async () => {
-			const events: string[] = []
-			const sel = primitiveAtom(false)
-			const resource = primitiveAtom(0, logEffect(events, 'resource'))
-			const inner = derivedAtom<number>((get) =>
-				get(sel) ? get(resource) * 0 : 0,
-			)
-			const middle = derivedAtom<number>((get) => get(inner))
-			const top = derivedAtom<number>(
-				(get) => get(middle),
-				undefined,
-				logEffect(events, 'top'),
-			)
-			const store = createStore()
-			const unsubscribe = store.subscribe(top, () => {})
-			await flushMicrotask()
-			store.send(sel, true)
-			await flushMicrotask()
-			store.send(sel, false)
-			await flushMicrotask()
-			expect(events).toEqual(['top setup', 'resource setup'])
-			unsubscribe()
-			await flushMicrotask()
-
-			expect(events).toEqual(setupThenCleanupOrder)
-		})
-
-		it('defers the cleanup of a resource linked below a retained orphan once an effect reads the orphan again', async () => {
-			const events: string[] = []
-			const gate = primitiveAtom(true)
-			const sel = primitiveAtom(false)
-			const resource = primitiveAtom(0, logEffect(events, 'resource'))
-			const middle = derivedAtom<number>((get) =>
-				get(sel) ? get(resource) * 0 : 0,
-			)
-			const top = derivedAtom<number>(
-				(get) => (get(gate) ? get(middle) : 0),
-				undefined,
-				logEffect(events, 'top'),
-			)
-			const store = createStore()
-			const unsubscribe = store.subscribe(top, () => {})
-			await flushMicrotask()
-			store.send(gate, false)
-			await flushMicrotask()
-			store.send(sel, true)
-			await flushMicrotask()
-			store.send(gate, true)
-			await flushMicrotask()
-			store.send(sel, false)
-			await flushMicrotask()
-			expect(events).toEqual(['top setup', 'resource setup'])
-			unsubscribe()
-			await flushMicrotask()
-
-			expect(events).toEqual(setupThenCleanupOrder)
-		})
-
-		const linkedAndUnlinkedInOneFlush = async ({
-			keepLinkedMounted,
-		}: {
-			keepLinkedMounted: boolean
-		}) => {
-			const branch = primitiveAtom(0)
-			const fallback = primitiveAtom(5)
-			const linked = primitiveAtom(7)
-			const writer = mountWriter(branch, 2)
-			const top = derivedAtom<number>(
-				(get) => (get(branch) === 1 ? get(linked) : get(fallback)),
-				undefined,
-				effectWithCleanup,
-			)
-			const store = createStore()
-			if (keepLinkedMounted) store.subscribe(linked, () => {})
-			store.subscribe(top, () => {})
-			await flushMicrotask()
-			store.send(branch, 1)
-			store.subscribe(writer, () => {})
-			await flushMicrotask()
-			return { store, branch, linked, top }
-		}
-
-		it('releases a dependency linked and unlinked in the same flush without waiting for the live effect above it', async () => {
-			const { store, linked } = await linkedAndUnlinkedInOneFlush({
-				keepLinkedMounted: false,
-			})
-
-			expect(mountCount(store, linked)).toBe(0)
-		})
-
-		it('keeps a dependency linked and unlinked in the same flush out of the read closure of the effect above it', async () => {
-			const { store, branch, linked, top } = await linkedAndUnlinkedInOneFlush({
-				keepLinkedMounted: true,
-			})
-			const closure = readClosure(store, top)
-
-			expect(closure).toContain(internalInstance(store, branch))
-			expect(closure).not.toContain(internalInstance(store, linked))
-		})
-
-		it('drops the instances of evicted family members from the read closure of an effect that does not rerun', async () => {
-			const key = primitiveAtom('a')
-			const created = new Map<
-				string,
-				ReturnType<typeof primitiveAtom<number>>
-			>()
-			const members = atomFamily((name: string) => {
-				const member = primitiveAtom(name.length)
-				created.set(name, member)
-				return member
-			})
-			const top = derivedAtom<number>(
-				(get) => (get(members, get(key)) > 0 ? 1 : 0),
-				undefined,
-				effectWithoutCleanup,
-			)
-			const store = createStore()
-			store.subscribe(top, () => {})
-			await flushMicrotask()
-			const keys = ['b', 'c', 'd', 'e']
-			for (const name of keys) {
-				store.send(key, name)
-				await flushMicrotask()
-			}
-			const closure = readClosure(store, top)
-			const latest = created.get(keys.at(-1)!)
-			assert(latest)
-
-			expect(closure).toContain(internalInstance(store, key))
-			expect(closure).toContain(internalInstance(store, latest))
-			expect([...closure].filter(({ mountCount }) => mountCount === 0)).toEqual(
-				[],
-			)
-		})
-	})
-
-	describe('conditional dependency cleanup ordering', () => {
-		const setup = (equal = false) => {
-			const events: string[] = []
-			const resource = (name: string, value: number) =>
-				primitiveAtom(value, {
-					effect: () => {
-						events.push(`${name} setup`)
-						return () => events.push(`${name} cleanup`)
-					},
-				})
-			const first = resource('first', 1)
-			const second = resource('second', equal ? 1 : 2)
-			const chooseFirst = primitiveAtom(true)
-			const store = createStore()
-			const consumer = derivedAtom<number>(
-				(read) => read(read(chooseFirst) ? first : second),
-				undefined,
-				{
-					effect: (value) => {
-						events.push(`consumer ${value} setup`)
-						return () => events.push(`consumer ${value} cleanup`)
-					},
-				},
-			)
-			return { events, first, second, chooseFirst, store, consumer }
-		}
-
-		const reversedPair = ({
-			onACleanup,
-		}: {
-			onACleanup?: (pair: {
-				store: Store
-				b: AtomSymbol<number, never>
-			}) => void
-		} = {}) => {
-			const events: string[] = []
-			const choice = primitiveAtom(true)
-			let resourceLive = false
-			let consumerSawLiveResource = false
-			const b: AtomSymbol<number, never> = derivedAtom<number>(
-				(read): number => (read(choice) ? 1 : read(a)),
-				undefined,
-				{
-					effect: () => {
-						events.push('B setup')
-						resourceLive = true
-						return () => {
-							events.push('B cleanup')
-							resourceLive = false
-						}
-					},
-				},
-			)
-			const a: AtomSymbol<number, never> = derivedAtom<number>(
-				(read): number => (read(choice) ? read(b) : 1),
-				undefined,
-				{
-					effect: () => {
-						events.push('A setup')
-						return () => {
-							events.push('A cleanup')
-							consumerSawLiveResource = resourceLive
-							onACleanup?.({ store, b })
-						}
-					},
-				},
-			)
-			const store = createStore()
-			const releases = {
-				B: store.subscribe(b, () => {}),
-				A: store.subscribe(a, () => {}),
-			}
-			return {
-				events,
-				choice,
-				a,
-				b,
-				store,
-				releases,
-				consumerSawLiveResource: () => consumerSawLiveResource,
-			}
-		}
-
-		it.each([
-			[['A', 'B'], [false]],
-			[['B', 'A'], [false]],
-			[
-				['A', 'B'],
-				[false, true],
-			],
-			[
-				['B', 'A'],
-				[false, true],
-			],
-		] as const)(
-			'releases equal-valued reversed dependencies in order %s after choices %s',
-			async (order, choices) => {
-				const {
-					events,
-					choice,
-					a,
-					b,
-					store,
-					releases,
-					consumerSawLiveResource,
-				} = reversedPair()
-				await flushMicrotask()
-				events.length = 0
-				for (const value of choices) {
-					store.send(choice, value)
-					await flushMicrotask()
-				}
-				expect(events).toEqual([])
-				releases[order[0]]()
-				expect(events).toEqual([])
-				releases[order[1]]()
-				expect(events).toEqual(['A cleanup', 'B cleanup'])
-				expect(consumerSawLiveResource()).toBe(true)
-				expect(mountCount(store, a)).toBe(0)
-				expect(mountCount(store, b)).toBe(0)
-			},
-		)
-
-		it.each([
-			['A', 'B'],
-			['B', 'A'],
-		] as const)(
-			'rebuilds the consumer when its cleanup remounts the dependency (%s released before %s)',
-			async (first, second) => {
-				let releaseAgain = () => {}
-				let remounted = false
-				const { events, choice, a, b, store, releases } = reversedPair({
-					onACleanup: ({ store, b }) => {
-						if (remounted) return
-						remounted = true
-						releaseAgain = store.subscribe(b, () => {})
-					},
-				})
-				await flushMicrotask()
-				events.length = 0
-				store.send(choice, false)
-				await flushMicrotask()
-				expect(events).toEqual([])
-				releases[first]()
-				expect(events).toEqual([])
-				releases[second]()
-				expect(events).toEqual(['A cleanup'])
-				await flushMicrotask()
-				expect(events).toEqual(['A cleanup', 'A setup'])
-				expect(mountCount(store, a)).toBe(1)
-				expect(mountCount(store, b)).toBe(1)
-				releaseAgain()
-				expect(events).toEqual([
-					'A cleanup',
-					'A setup',
-					'B cleanup',
-					'A cleanup',
-				])
-				expect(mountCount(store, a)).toBe(0)
-				expect(mountCount(store, b)).toBe(0)
-			},
-		)
-
-		it('keeps removed resources while equal values preserve the old effect', async () => {
-			const { events, chooseFirst, second, first, store, consumer } =
-				setup(true)
-			const release = store.subscribe(consumer, () => {})
-			await flushMicrotask()
-			events.length = 0
-			store.send(chooseFirst, false)
-			await flushMicrotask()
-			expect(events).toEqual(['second setup'])
-			const notify = vi.fn()
-			const releaseNotify = store.subscribe(consumer, notify)
-			store.send(first, 3)
-			await flushMicrotask()
-			expect(notify).not.toHaveBeenCalled()
-			events.length = 0
-			store.send(second, 2)
-			await flushMicrotask()
-			expect(events).toEqual([
-				'consumer 1 cleanup',
-				'first cleanup',
-				'second cleanup',
-				'second setup',
-				'consumer 2 setup',
-			])
-			releaseNotify()
-			release()
-		})
-
-		it('preserves ownership when old resource cleanup remounts the consumer', async () => {
-			const { events, chooseFirst, first, store, consumer } = setup()
-			let releaseAgain = () => {}
-			first.effect = () => () => {
-				events.push('first cleanup')
-				release()
-				releaseAgain = store.subscribe(consumer, () => {})
-			}
-			const release = store.subscribe(consumer, () => {})
-			await flushMicrotask()
-			events.length = 0
-			store.send(chooseFirst, false)
-			await flushMicrotask()
-			await flushMicrotask()
-			expect(events.indexOf('consumer 1 cleanup')).toBeLessThan(
-				events.indexOf('first cleanup'),
-			)
-			expect(mountCount(store, consumer)).toBe(1)
-			releaseAgain()
-			expect(mountCount(store, consumer)).toBe(0)
-			expect(events.filter((event) => event === 'first cleanup')).toHaveLength(
-				1,
-			)
-			expect(events.filter((event) => event === 'second cleanup')).toHaveLength(
-				1,
-			)
-		})
 	})
 
 	it('counts a nested subscribe made while an unmounted instance is being retained', async () => {
@@ -1337,72 +522,19 @@ describe('Store', () => {
 		expect(evaluate).toHaveBeenCalledTimes(4)
 	})
 
-	it('settles mount writes before dependent mounts and initial effects', async () => {
-		const order: string[] = []
-		const source = primitiveAtom(0, {
-			onMount: (_get, set) => {
-				order.push('source mount')
-				set(source, 2)
-				return () => {
-					order.push('source unmount')
-				}
-			},
-			effect: (next) => {
-				order.push(`source effect:${next}`)
-				return () => {
-					order.push('source effect cleanup')
-				}
-			},
-		})
-		const consumer = derivedAtom(
-			(get) => get(source) * 2,
-			() => {},
-			{
-				onMount: (get) => {
-					order.push(`consumer mount:${get(source)}`)
-					return () => {
-						order.push('consumer unmount')
-					}
-				},
-				effect: (next) => {
-					order.push(`consumer effect:${next}`)
-					return () => {
-						order.push('consumer effect cleanup')
-					}
-				},
-			},
-		)
-		const store = createStore()
-		const release = store.subscribe(consumer, vi.fn())
-		expect(order).toEqual([])
-		await flushMicrotask()
-		expect(order).toEqual([
-			'source mount',
-			'consumer mount:2',
-			'source effect:2',
-			'consumer effect:4',
-		])
-		order.length = 0
-		release()
-		expect(order).toEqual([
-			'consumer effect cleanup',
-			'consumer unmount',
-			'source effect cleanup',
-			'source unmount',
-		])
-	})
-
 	const swappable = () => {
 		const events: string[] = []
 		const resource = (name: string, value: number) =>
 			primitiveAtom(value, {
-				onMount: () => {
+				onMount: (_get, _set, mountEffect) => {
 					events.push(`${name} mount`)
+					mountEffect(
+						effectAtom(() => {
+							events.push(`${name} setup`)
+							return () => events.push(`${name} cleanup`)
+						}),
+					)
 					return () => events.push(`${name} unmount`)
-				},
-				effect: () => {
-					events.push(`${name} setup`)
-					return () => events.push(`${name} cleanup`)
 				},
 			})
 		const first = resource('first', 1)
@@ -1412,33 +544,6 @@ describe('Store', () => {
 			read(selectFirst) ? read(first) : read(second)
 		return { events, selectFirst, select }
 	}
-
-	it('swaps resources under a consumer whose effect returns no cleanup', async () => {
-		const { events, selectFirst, select } = swappable()
-		const consumer = derivedAtom(select, undefined, {
-			effect: (value) => {
-				events.push(`consumer ${value}`)
-			},
-		})
-		const store = createStore()
-		const unsubscribe = store.subscribe(consumer, () => {})
-		await flushMicrotask()
-		store.send(selectFirst, false)
-		await flushMicrotask()
-		unsubscribe()
-		expect(events).toEqual([
-			'first mount',
-			'first setup',
-			'consumer 1',
-			'first cleanup',
-			'first unmount',
-			'second mount',
-			'second setup',
-			'consumer 2',
-			'second cleanup',
-			'second unmount',
-		])
-	})
 
 	it('keeps reconciling when a later mount write switches a mounted consumer', async () => {
 		const { events, selectFirst, select } = swappable()
@@ -1476,7 +581,7 @@ describe('Store', () => {
 		const releaseDetail = vi.fn()
 		const detailGetter = vi.fn((read: Read) => read(items)[read(index)]?.name)
 		const detail = derivedAtom(detailGetter, () => {}, {
-			effect: () => releaseDetail,
+			onMount: () => releaseDetail,
 		})
 		const outer = derivedAtom(
 			(read) => (read(valid) ? read(detail) : null),
@@ -1521,12 +626,10 @@ describe('Store', () => {
 		const store = createStore()
 		const ephemeralCreate = vi.fn((_key: string) => primitiveAtom(0))
 		const ephemeral = atomFamily(ephemeralCreate)
-		const trigger = primitiveAtom(0, {
-			effect: () => {
-				store.peek(ephemeral, 'a')
-			},
+		const trigger = effectAtom(() => {
+			store.peek(ephemeral, 'a')
 		})
-		const release = store.subscribe(trigger, () => {})
+		const release = store.mountEffect(trigger)
 		await flushMicrotask()
 		store.peek(ephemeral, 'a')
 		expect(ephemeralCreate).toHaveBeenCalledOnce()
@@ -1537,7 +640,16 @@ describe('Store', () => {
 	})
 
 	it.each([
-		['effect', (write: () => void) => ({ effect: write })],
+		[
+			'effect',
+			(write: () => void) => ({
+				onMount: (
+					_get: Read,
+					_set: unknown,
+					mountEffect: (effect: import('../atoms').EffectAtom) => void,
+				) => mountEffect(effectAtom(write)),
+			}),
+		],
 		['onMount', (write: () => void) => ({ onMount: write })],
 	] as const)(
 		'keeps a released TTL-0 entry written by %s',

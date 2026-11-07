@@ -1,12 +1,12 @@
 import { isoAssert } from '../../functions'
-import type { DeferredRelease, Instance } from './types'
+import type { Instance } from './types'
 
 export function createLinks() {
 	return {
 		depVersions: new Map<Instance<any>, number>(),
 		mountedSubs: new Set<Instance<any>>(),
 		mountedDeps: new Set<Instance<any>>(),
-		deferredOwners: new Set<DeferredRelease>(),
+		owners: new Map<Instance<any>, number>(),
 	}
 }
 
@@ -42,20 +42,6 @@ export function mountedDependencies(
 	return instance.mountedDeps
 }
 
-/**
- * Adds `instance` and everything reachable from it through mounted
- * dependencies to `into`, skipping what `into` already holds.
- */
-export function collectMountedReach(
-	instance: Instance<any>,
-	into: Set<Instance<any>>,
-) {
-	if (into.has(instance)) return
-	into.add(instance)
-	for (const dep of mountedDependencies(instance))
-		collectMountedReach(dep, into)
-}
-
 export function hasMountedDependency(
 	instance: Instance<any>,
 	dep: Instance<any>,
@@ -65,16 +51,6 @@ export function hasMountedDependency(
 
 export function mountedDependencyCount(instance: Instance<any>) {
 	return instance.mountedDeps.size
-}
-
-export function deferredOwners(
-	instance: Instance<any>,
-): Iterable<DeferredRelease> {
-	return instance.deferredOwners
-}
-
-export function deferredOwnerCount(instance: Instance<any>) {
-	return instance.deferredOwners.size
 }
 
 export function clearDependencies(instance: Instance<any>) {
@@ -115,18 +91,4 @@ export function detachMountedEdges(
 	instance.mountedDeps = new Set()
 	for (const dep of mountedDeps) dep.mountedSubs.delete(instance)
 	return mountedDeps
-}
-
-export function addDeferredOwner(
-	instance: Instance<any>,
-	deferred: DeferredRelease,
-) {
-	instance.deferredOwners.add(deferred)
-}
-
-export function removeDeferredOwner(
-	instance: Instance<any>,
-	deferred: DeferredRelease,
-) {
-	instance.deferredOwners.delete(deferred)
 }

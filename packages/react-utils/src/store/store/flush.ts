@@ -1,15 +1,24 @@
 import { exhaustive, isoAssert } from '../../functions'
-import { type Effect } from '../atoms'
-import { getCleanupOrder } from './cleanupOrder'
-import { peekInstance, cleanupEffect, release, runCleanup } from './engine'
+import { type Read, type MountEffect } from '../atoms'
+import {
+	peekInstance,
+	retain,
+	release,
+	link,
+	syncMountedDeps,
+	releaseChildren,
+	runCleanup,
+	assertOwnershipEdge,
+} from './engine'
 import {
 	consumers,
-	mountedDependencies,
 	dependencies,
 	hasMountedDependency,
-	collectMountedReach,
+	resetDependencies,
+	recordDependency,
+	dependencyVersions,
 } from './graph'
-import { evict } from './registry'
+import { evict, getInstance, getEffectInstance } from './registry'
 import {
 	type StoreState,
 	queueReconcile,
@@ -17,13 +26,7 @@ import {
 	publishChange,
 	countOperation,
 } from './state'
-import {
-	type Delivery,
-	type EffectLifecycle,
-	type Instance,
-	type MountLifecycle,
-	type Transition,
-} from './types'
+import { type Delivery, type Instance, type MountLifecycle } from './types'
 
 function invalidate<S>(
 	state: StoreState,
@@ -63,53 +66,91 @@ function notify(state: StoreState, roots: Iterable<Instance<any>>) {
 		}
 }
 
+function mounting(
+	state: StoreState,
+	owner: Instance<any>,
+	lifecycle: MountLifecycle,
+) {
+	let calling = true
+	const mountEffect: MountEffect = (effect) => {
+		isoAssert(
+			calling && lifecycle.active,
+			'mountEffect must be called synchronously during its owner body',
+		)
+		const child = getEffectInstance(state, effect)
+		assertOwnershipEdge(owner, child)
+		lifecycle.children.push(child)
+		child.owners.set(owner, (child.owners.get(owner) ?? 0) + 1)
+		retain(state, child)
+	}
+	return {
+		mountEffect,
+		done: () => {
+			calling = false
+		},
+	}
+}
+
 function mount<S>(state: StoreState, instance: Instance<S>) {
 	if (instance.mountCount === 0 || instance.mountLifecycle) return
-	const lifecycle: MountLifecycle = {}
+	const lifecycle: MountLifecycle = { children: [], active: true }
 	instance.mountLifecycle = lifecycle
-	const cleanup = instance.symbol.onMount?.(state.read, state.write)
+	isoAssert(instance.symbol.type !== 'effect')
+	const scope = mounting(state, instance, lifecycle)
+	const cleanup = instance.symbol.onMount?.(
+		state.read,
+		state.write,
+		scope.mountEffect,
+	)
+	scope.done()
 	if (cleanup) {
 		if (instance.mountLifecycle === lifecycle) lifecycle.cleanup = cleanup
 		else runCleanup(state, instance, cleanup)
 	}
 }
 
-function runEffect<S>(
+function runEffect(
 	state: StoreState,
-	instance: Instance<S>,
-	effect: Effect<S>,
-	next: S,
-	last: S | undefined,
+	instance: Instance<any>,
+	mounts: Set<Instance<any>>,
+	reconciles: Set<Instance<any>>,
+	mountWrites: Map<Instance<any>, any>,
 ) {
-	const readClosure = new Set<Instance<any>>()
-	for (const dep of mountedDependencies(instance))
-		collectMountedReach(dep, readClosure)
-	const lifecycle: EffectLifecycle<S> = {
-		value: next,
-		instance,
-		cleaning: false,
-		deferredReleases: new Set(),
-		dependencies: new Set(),
-		readClosure,
-	}
-	const visited = new Set<Instance<any>>()
-	const collect = (dependency: Instance<any>) => {
-		if (visited.has(dependency)) return
-		visited.add(dependency)
-		if (dependency.effectLifecycle) {
-			lifecycle.dependencies.add(dependency)
+	isoAssert(instance.symbol.type === 'effect')
+	const previous = instance.effectLifecycle
+	if (previous) {
+		const cleanup = previous.cleanup
+		previous.cleanup = undefined
+		runCleanup(state, instance, cleanup)
+		releaseChildren(state, instance, previous)
+		if (instance.effectLifecycle !== previous || instance.mountCount === 0)
 			return
-		}
-		for (const dep of mountedDependencies(dependency)) collect(dep)
+		previous.active = false
 	}
-	for (const dep of mountedDependencies(instance)) collect(dep)
+	const lifecycle: MountLifecycle = { children: [], active: true }
 	instance.effectLifecycle = lifecycle
 	if (state.instrumentation) countOperation(state, 'effects', instance.symbol)
-	const cleanup = effect(next, last, state.read, state.write)
+	resetDependencies(instance)
+	const read: Read = ((symbol, key) => {
+		const dep = getInstance(state, symbol, key)
+		assertOwnershipEdge(instance, dep)
+		peekInstance(state, dep)
+		if (lifecycle.active) {
+			if (!hasMountedDependency(instance, dep)) link(state, instance, dep)
+			settle(state, new Map(), mounts, reconciles, mountWrites)
+		}
+		const value = peekInstance(state, dep)
+		if (lifecycle.active) recordDependency(instance, dep, dep.version)
+		return value
+	}) as Read
+	const scope = mounting(state, instance, lifecycle)
+	const cleanup = instance.symbol.body(read, state.write, scope.mountEffect)
+	scope.done()
 	if (cleanup) {
 		if (instance.effectLifecycle === lifecycle) lifecycle.cleanup = cleanup
 		else runCleanup(state, instance, cleanup)
 	}
+	if (instance.effectLifecycle === lifecycle) syncMountedDeps(state, instance)
 }
 
 export function flush(state: StoreState) {
@@ -124,48 +165,22 @@ export function flush(state: StoreState) {
 	state.phase.familyEvictions = pendingFamilyEvictions
 	state.phase.releases = []
 	settle(state, primitives, mounts, reconciles, mountWrites)
-	const transitions = collectTransitions(state, effects)
-	recordReads(state, new Set(transitions.map(({ instance }) => instance)))
-	runCleanups(state, transitions)
-	runTransitions(state, transitions)
-	scheduleEvictions(state, pendingFamilyEvictions)
-}
-
-/**
- * Extends the read closure of every live effect that is not about to rerun
- * with what the edges linked since the last flush, and still present, reach,
- * then drops the instances that are no longer mounted. Edges below consumers
- * with no such effect above are skipped without being walked again.
- */
-function recordReads(state: StoreState, retiring: Set<Instance<any>>) {
-	const touched = new Set<EffectLifecycle<any>>()
-	const withoutReader = new Set<Instance<any>>()
-	for (const [consumer, dependency] of state.linkedEdges.splice(0)) {
-		if (!hasMountedDependency(consumer, dependency)) continue
-		const visited = new Set<Instance<any>>()
-		const readers: EffectLifecycle<any>[] = []
-		const collectReaders = (current: Instance<any>) => {
-			if (visited.has(current) || withoutReader.has(current)) return
-			visited.add(current)
-			const lifecycle = current.effectLifecycle
-			if (lifecycle && !retiring.has(current)) readers.push(lifecycle)
-			for (const sub of consumers(current)) collectReaders(sub)
+	for (const instance of effects) {
+		effects.delete(instance)
+		if (instance.mountCount === 0) continue
+		let changed = !instance.effectLifecycle
+		for (const [dep, version] of dependencyVersions(instance)) {
+			peekInstance(state, dep)
+			if (dep.version !== version) changed = true
 		}
-		collectReaders(consumer)
-		if (readers.length === 0) {
-			for (const instance of visited) withoutReader.add(instance)
-			continue
-		}
-		const reached = new Set<Instance<any>>()
-		collectMountedReach(dependency, reached)
-		for (const lifecycle of readers) {
-			for (const instance of reached) lifecycle.readClosure.add(instance)
-			touched.add(lifecycle)
-		}
+		if (changed) runEffect(state, instance, mounts, reconciles, mountWrites)
+		settle(state, new Map(), mounts, reconciles, mountWrites)
 	}
-	for (const { readClosure } of touched)
-		for (const instance of readClosure)
-			if (instance.mountCount === 0) readClosure.delete(instance)
+	state.phase.effects = undefined
+	state.phase.releases = undefined
+	state.phase.mounts = undefined
+	state.phase.reconciles = undefined
+	scheduleEvictions(state, pendingFamilyEvictions)
 }
 
 function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
@@ -205,7 +220,7 @@ function settleMount(
 	const walk = (node: Instance<any>): boolean => {
 		if (visited.has(node)) return false
 		visited.add(node)
-		if (node.mountCount === 0) {
+		if (node.mountCount === 0 || node.symbol.type === 'effect') {
 			mounts.delete(node)
 			return false
 		}
@@ -262,71 +277,6 @@ function settle(
 			settleMount(state, instance, mounts, mountWrites)
 		if (idle()) for (const dep of releases.splice(0)) release(state, dep)
 	} while (!idle() || releases.length > 0)
-	state.phase.releases = undefined
-	state.phase.mounts = undefined
-	state.phase.reconciles = undefined
-}
-
-function collectTransitions(
-	state: StoreState,
-	effects: Set<Instance<any>>,
-): Transition[] {
-	const visited = new Set<Instance<any>>()
-	const transitions: Transition[] = []
-	const collect = (instance: Instance<any>) => {
-		if (visited.has(instance) || instance.mountCount === 0) return
-		visited.add(instance)
-		const next = peekInstance(state, instance)
-		for (const dep of dependencies(instance)) collect(dep)
-		if (
-			effects.has(instance) &&
-			(!instance.effectLifecycle ||
-				!Object.is(next, instance.effectLifecycle.value))
-		) {
-			const effect = instance.symbol.effect
-			isoAssert(effect)
-			transitions.push({
-				instance,
-				effect,
-				next,
-				previous: instance.effectLifecycle,
-				mountLifecycle: instance.mountLifecycle,
-			})
-		}
-	}
-	for (const instance of effects) collect(instance)
-	state.phase.effects = undefined
-	return transitions
-}
-
-function runCleanups(state: StoreState, transitions: Transition[]) {
-	const cleanupOrder = getCleanupOrder(
-		transitions.map(({ instance }) => instance),
-	)
-	// Release consumers before the resources provided by their dependencies.
-	for (let index = cleanupOrder.length - 1; index >= 0; index--) {
-		const instance = cleanupOrder[index]!
-		if (instance.mountCount === 0) continue
-		const lifecycle = instance.effectLifecycle
-		if (lifecycle) cleanupEffect(state, lifecycle)
-	}
-}
-
-function runTransitions(state: StoreState, transitions: Transition[]) {
-	// Recreate dependency resources before their consumers run.
-	for (const {
-		instance,
-		effect,
-		next,
-		previous,
-		mountLifecycle,
-	} of transitions)
-		if (
-			instance.mountCount > 0 &&
-			instance.mountLifecycle === mountLifecycle &&
-			instance.effectLifecycle === previous
-		)
-			runEffect(state, instance, effect, next, previous?.value)
 }
 
 function scheduleEvictions(

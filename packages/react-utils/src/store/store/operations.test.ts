@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { derivedAtom, primitiveAtom, type AtomSymbol } from '.'
+import { derivedAtom, effectAtom, primitiveAtom, type AtomSymbol } from '.'
 import {
 	countOperations,
 	createOperationCounts,
@@ -66,8 +66,10 @@ describe('operation counts', () => {
 		const source = primitiveAtom(0, { name: 'source' })
 		const doubled = derivedAtom((read) => read(source) * 2, null, {
 			name: 'doubled',
-			onMount: () => () => {},
-			effect: () => () => {},
+			onMount: (_read, _write, mountEffect) => {
+				mountEffect(effectAtom((get) => get(source), () => () => {}))
+				return () => {}
+			},
 		})
 		const unmounted = derivedAtom((read) => read(source) + 1, null, {
 			name: 'unmounted',
@@ -91,10 +93,10 @@ describe('operation counts', () => {
 			counts({
 				getters: 3,
 				pendingGetters: 1,
-				invalidations: 2,
+				invalidations: 3,
 				validations: 1,
 				notifications: 1,
-				effects: 2,
+				effects: 3,
 				cleanups: 3,
 			}),
 		)
@@ -104,8 +106,7 @@ describe('operation counts', () => {
 				getters: 2,
 				invalidations: 1,
 				notifications: 1,
-				effects: 2,
-				cleanups: 3,
+				cleanups: 1,
 			},
 			unmounted: { getters: 1, pendingGetters: 1, validations: 1 },
 		})

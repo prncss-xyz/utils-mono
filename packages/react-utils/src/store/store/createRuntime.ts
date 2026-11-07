@@ -11,7 +11,7 @@ import {
 } from '../atoms'
 import { peekInstance, retain, release } from './engine'
 import { flush } from './flush'
-import { getInstance } from './registry'
+import { getInstance, getEffectInstance } from './registry'
 import { type StoreState, createState } from './state'
 import { type Instance } from './types'
 import { readPending, sendInstance, dispatch } from './write'
@@ -39,6 +39,16 @@ export function createRuntime(hydrate: Hydrate = []): {
 	if (state.tasks) flush(state)
 	state.hydrating = false
 	const store: Store = {
+		mountEffect: (effect) => {
+			const instance = getEffectInstance(state, effect)
+			retain(state, instance)
+			let active = true
+			return () => {
+				if (!active) return
+				active = false
+				release(state, instance)
+			}
+		},
 		peek: state.read,
 		send: state.write,
 		resolve: ((symbol, key) => resolve(state, symbol, key)) as Resolve,

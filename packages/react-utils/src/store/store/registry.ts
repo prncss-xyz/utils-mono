@@ -1,5 +1,5 @@
 import { exhaustive, fromInit, isoAssert } from '../../functions'
-import { type AtomFamily, type AtomSymbol } from '../atoms'
+import { type AtomFamily, type AtomSymbol, type EffectAtom } from '../atoms'
 import { createLinks, consumerCount, clearDependencies } from './graph'
 import { type StoreState, queueEviction, publishChange } from './state'
 import { type FamilySlot, type FamilyStorage, type Instance } from './types'
@@ -9,6 +9,12 @@ export function getInstance<S, Key, Args extends unknown[]>(
 	symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
 	key?: Key,
 ): Instance<S> {
+	isoAssert(
+		symbol.type === 'primitive' ||
+			symbol.type === 'derived' ||
+			symbol.type === 'family',
+		'effect atoms have no value',
+	)
 	if (symbol.type === 'family') return getFamilyInstance(state, symbol, key!)
 	let res = state.instances.get(symbol) as Instance<S> | undefined
 	if (res === undefined) {
@@ -16,6 +22,19 @@ export function getInstance<S, Key, Args extends unknown[]>(
 		state.instances.set(symbol, res)
 	}
 	return res
+}
+
+export function getEffectInstance(
+	state: StoreState,
+	symbol: EffectAtom,
+): Instance<any> {
+	isoAssert(symbol.type === 'effect', 'mountEffect requires an effect atom')
+	let instance = state.instances.get(symbol)
+	if (!instance) {
+		instance = createInstance(state, symbol)
+		state.instances.set(symbol, instance)
+	}
+	return instance
 }
 
 function getFamilyInstance<S, Key, Args extends unknown[]>(
@@ -116,8 +135,8 @@ function createFreshInstance<S, Key, Args extends unknown[]>(
 }
 
 function createInstance<S, Args extends unknown[]>(
-	state: StoreState,
-	symbol: AtomSymbol<S, Args>,
+	_state: StoreState,
+	symbol: AtomSymbol<S, Args> | EffectAtom,
 ): Instance<S> {
 	return {
 		handle: undefined,

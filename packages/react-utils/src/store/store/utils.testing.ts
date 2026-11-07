@@ -54,11 +54,7 @@ export function stopCountingOperations(store: Store) {
 	inspect(store).instrumentation = undefined
 }
 
-export {
-	consumerCount,
-	deferredOwnerCount,
-	mountedDependencyCount,
-} from './graph'
+export { consumerCount, mountedDependencyCount } from './graph'
 
 /** A state whose wiring is inert, for unit tests of registry and graph primitives. */
 export function createStubState(): StoreState {

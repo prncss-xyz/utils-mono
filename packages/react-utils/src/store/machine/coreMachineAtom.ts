@@ -7,10 +7,11 @@ import {
 	primitiveAtom,
 	derivedAtom,
 	type AtomSymbol,
-	type Effect,
+	effectAtom,
 	type Read,
 	type Write,
 } from '../store'
+import type { MachineEffect } from './machineEffect'
 
 export type PreviewAtom<Value, Args extends [unknown]> = AtomSymbol<
 	Value,
@@ -89,7 +90,7 @@ export function coreMachineAtom<E, S, R = S>(
 	opts?: {
 		result?: (state: S, read: Read) => R
 		factory?: (value: S) => AtomSymbol<S, any>
-		effect?: Effect<R>
+		effect?: MachineEffect<R>
 	},
 ): MachineAtom<E, R> {
 	const result = opts?.result ?? (id as (state: S, read: Read) => R)
@@ -114,7 +115,39 @@ export function coreMachineAtom<E, S, R = S>(
 		(read) => result(read(state), read),
 		(read, write, event: Sendable<E> | Reset) =>
 			write(state, advance(event, read(state), read, write)),
-		{ effect: opts?.effect },
+		{
+			onMount: opts?.effect
+				? (_get, _set, mountEffect) => {
+						const effect = opts.effect!
+						let initialized = false
+						let active = true
+						let cleanup: void | (() => void)
+						const clean = () => {
+							const previous = cleanup
+							cleanup = undefined
+							previous?.()
+						}
+						mountEffect(
+							effectAtom(
+								(get) => result(get(state), get),
+								(next, last, get, set) => {
+									if (initialized && Object.is(next, last)) return
+									clean()
+									if (!active) return
+									const nextCleanup = effect(next, last, get, set)
+									if (active) cleanup = nextCleanup
+									else nextCleanup?.()
+									initialized = true
+								},
+							),
+						)
+						return () => {
+							active = false
+							clean()
+						}
+					}
+				: undefined,
+		},
 	)
 	return Object.assign(output, {
 		can: canAtom(state, advance, output),
