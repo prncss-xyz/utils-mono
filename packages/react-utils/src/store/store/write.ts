@@ -46,8 +46,7 @@ export function sendInstance<S>(
 ) {
 	const { symbol } = instance
 	isoAssert(symbol.type !== 'effect', 'effect atoms have no value')
-	if (symbol.type === 'primitive' || symbol.getter !== noread)
-		cancelEviction(state, instance)
+	if (symbol.getter !== noread) cancelEviction(state, instance)
 	switch (symbol.type) {
 		case 'primitive': {
 			const event = args[0]
@@ -74,7 +73,7 @@ export function dispatch(
 	symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
 	rest: readonly unknown[],
 ) {
-	const key = symbol.type === 'family' ? rest[0] : undefined
+	const key = rest[0]
 	const args = symbol.type === 'family' ? rest.slice(1) : rest
 	sendInstance(state, getInstance(state, symbol, key), args)
 }

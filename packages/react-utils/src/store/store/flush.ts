@@ -271,7 +271,6 @@ function settle(
 		mountWrites.size === 0 && mounts.size === 0 && reconciles.size === 0
 	applyUpdates(state, primitives)
 	do {
-		applyUpdates(state, mountWrites)
 		for (const instance of reconciles) reconcile(state, instance, reconciles)
 		for (const instance of mounts)
 			settleMount(state, instance, mounts, mountWrites)

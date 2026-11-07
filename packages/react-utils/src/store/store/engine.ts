@@ -40,7 +40,7 @@ export function retain<S>(state: StoreState, instance: Instance<S>) {
 	}
 	if (instance.mountCount++ > 0) return
 	syncMountedDeps(state, instance)
-	if (instance.mountCount === 0) return
+	isoAssert(instance.mountCount > 0)
 	queueMount(state, instance)
 	queueEffect(state, instance)
 }
@@ -56,7 +56,7 @@ export function release<S>(state: StoreState, instance: Instance<S>) {
 export function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
 	let linked = false
 	for (const dep of dependencies(instance)) {
-		if (instance.mountCount === 0) return
+		isoAssert(instance.mountCount > 0)
 		if (hasMountedDependency(instance, dep)) continue
 		link(state, instance, dep)
 		linked = true
@@ -223,7 +223,7 @@ function isFresh<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function revalidateUnmounted<S>(state: StoreState, instance: Instance<S>) {
-	if (instance.freshness.type === 'dirty' || isFresh(state, instance)) return
+	isoAssert(instance.freshness.type === 'clean')
 	const current = depsAreCurrent(state, instance)
 	if (isFresh(state, instance)) return
 	if (current) instance.freshness = { type: 'clean', validatedAt: state.epoch }
