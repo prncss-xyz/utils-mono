@@ -8,6 +8,7 @@ import {
 	type Read,
 	type AtomSymbol,
 	type Store,
+	type EffectAtom,
 } from '.'
 import { flush } from './flush'
 import {
@@ -35,11 +36,11 @@ describe('runtime lifecycle scenarios', () => {
 	it('does not mount an ancestor released by a dependency mount', async () => {
 		const events: string[] = []
 		const flag = primitiveAtom(false)
-		let release = () => {}
+		let unsubscribe = () => {}
 		const child = primitiveAtom(1, {
 			onMount: () => {
 				events.push('child')
-				release()
+				unsubscribe()
 				return () => events.push('child cleanup')
 			},
 		})
@@ -54,7 +55,7 @@ describe('runtime lifecycle scenarios', () => {
 			},
 		)
 		const store = createStore()
-		release = store.subscribe(parent, () => {})
+		unsubscribe = store.subscribe(parent, () => {})
 		store.send(flag, true)
 		await flushMicrotask()
 
@@ -69,8 +70,8 @@ describe('runtime lifecycle scenarios', () => {
 		const getter = vi.fn((read: Read) => read(source))
 		const root = derivedAtom(getter)
 		const store = createStore()
-		const release = store.subscribe(root, () => {})
-		release()
+		const unsubscribe = store.subscribe(root, () => {})
+		unsubscribe()
 		store.send(source, 1)
 
 		await flushMicrotask()
@@ -96,8 +97,8 @@ describe('runtime lifecycle scenarios', () => {
 				store.subscribe(consumer, () => {})
 			},
 		})
-		const release = store.subscribe(dependency, () => {})
-		release()
+		const unsubscribe = store.subscribe(dependency, () => {})
+		unsubscribe()
 		store.subscribe(writer, () => {})
 
 		await flushMicrotask()
@@ -111,7 +112,7 @@ describe('runtime lifecycle scenarios', () => {
 		const getter = vi.fn((read: Read) => read(source))
 		const cached = derivedAtom(getter)
 		const store = createStore()
-		const release = store.subscribe(cached, () => {})
+		const unsubscribe = store.subscribe(cached, () => {})
 		await flushMicrotask()
 		const validations = validationCount(store)
 		store.send(unrelated, 1)
@@ -120,7 +121,7 @@ describe('runtime lifecycle scenarios', () => {
 		expect(store.peek(cached)).toBe(1)
 		expect(validationCount(store)).toBe(validations)
 		expect(getter).toHaveBeenCalledOnce()
-		release()
+		unsubscribe()
 	})
 
 	it('validates an unmounted cache once per epoch without evaluating unchanged dependencies', async () => {
@@ -186,25 +187,25 @@ describe('runtime lifecycle scenarios', () => {
 	it('keeps a family member remounted by its own cleanup', async () => {
 		const store = createStore()
 		let remounted = false
-		let releaseAgain = () => {}
+		let unsubscribeAgain = () => {}
 		const create = vi.fn((key: string) =>
 			primitiveAtom(key, {
 				onMount: () => () => {
 					if (remounted) return
 					remounted = true
-					releaseAgain = store.subscribe(family, key, () => {})
+					unsubscribeAgain = store.subscribe(family, key, () => {})
 				},
 			}),
 		)
 		const family = atomFamily(create)
-		const release = store.subscribe(family, 'first', () => {})
+		const unsubscribe = store.subscribe(family, 'first', () => {})
 		await flushMicrotask()
-		release()
+		unsubscribe()
 		await flushMicrotask()
 
 		expect(store.peek(family, 'first')).toBe('first')
 		expect(create).toHaveBeenCalledOnce()
-		releaseAgain()
+		unsubscribeAgain()
 		await flushMicrotask()
 	})
 
@@ -239,7 +240,7 @@ describe('runtime lifecycle scenarios', () => {
 	it('mounts resources retained by a deferred cleanup before leaving settle', async () => {
 		const events: string[] = []
 		const store = createStore()
-		let releaseNewcomer = () => {}
+		let unsubscribeNewcomer = () => {}
 		const newcomer = primitiveAtom(2, {
 			onMount: () => {
 				events.push('newcomer')
@@ -248,33 +249,33 @@ describe('runtime lifecycle scenarios', () => {
 		const resource = primitiveAtom(1, {
 			onMount: () => () => {
 				events.push('cleanup')
-				releaseNewcomer = store.subscribe(newcomer, () => {})
+				unsubscribeNewcomer = store.subscribe(newcomer, () => {})
 			},
 		})
 		const flag = primitiveAtom(true)
 		const middle = derivedAtom((read) => (read(flag) ? read(resource) : 0))
 		const parent = derivedAtom((read) => read(middle))
-		const release = store.subscribe(parent, () => {})
+		const unsubscribe = store.subscribe(parent, () => {})
 		await flushMicrotask()
 		store.send(flag, false)
 		await flushMicrotask()
 
 		expect(events).toEqual(['cleanup', 'newcomer'])
-		releaseNewcomer()
-		release()
+		unsubscribeNewcomer()
+		unsubscribe()
 	})
 
 	it('does not release an old dependency twice when cleanup remounts its consumer', async () => {
 		const store = createStore()
 		const flag = primitiveAtom(true)
-		let release = () => {}
+		let unsubscribe = () => {}
 		let remounted = false
 		const first = primitiveAtom(1, {
 			onMount: () => () => {
 				if (remounted) return
 				remounted = true
-				release()
-				release = store.subscribe(parent, () => {})
+				unsubscribe()
+				unsubscribe = store.subscribe(parent, () => {})
 			},
 		})
 		const secondMount = vi.fn()
@@ -282,17 +283,17 @@ describe('runtime lifecycle scenarios', () => {
 		const parent = derivedAtom((read) =>
 			read(flag) ? read(first) + read(second) : 0,
 		)
-		release = store.subscribe(parent, () => {})
+		unsubscribe = store.subscribe(parent, () => {})
 		await flushMicrotask()
 		store.send(flag, false)
 		await flushMicrotask()
 
 		expect(inspect(store).instances.get(second)?.mountCount).toBe(0)
-		const releaseSecond = store.subscribe(second, () => {})
+		const unsubscribeSecond = store.subscribe(second, () => {})
 		await flushMicrotask()
 		expect(secondMount).toHaveBeenCalledTimes(2)
-		releaseSecond()
-		release()
+		unsubscribeSecond()
+		unsubscribe()
 	})
 
 	it('does not schedule a flush when a command only reads committed values', async () => {
@@ -329,13 +330,13 @@ describe('runtime lifecycle scenarios', () => {
 	})
 
 	it('allows an onMount without cleanup to release itself', () => {
-		let release = () => {}
-		const mount = vi.fn(() => release())
+		let unsubscribe = () => {}
+		const mount = vi.fn(() => unsubscribe())
 		const resource = primitiveAtom(1, { onMount: mount })
 		const store = createStore()
 		const state = inspect(store)
 		state.scheduleFlush = vi.fn()
-		release = store.subscribe(resource, () => {})
+		unsubscribe = store.subscribe(resource, () => {})
 		flush(state)
 
 		expect(mount).toHaveBeenCalledOnce()
@@ -348,10 +349,10 @@ describe('runtime lifecycle scenarios', () => {
 		const store = createStore()
 		const state = inspect(store)
 		state.scheduleFlush = vi.fn()
-		const release = store.subscribe(resource, () => {})
+		const unsubscribe = store.subscribe(resource, () => {})
 		flush(state)
 
-		release()
+		unsubscribe()
 		expect(cleanup).toHaveBeenCalledOnce()
 		expect(state.instances.get(resource)?.mountCount).toBe(0)
 		expect(state.tasks).toBeUndefined()
@@ -360,16 +361,16 @@ describe('runtime lifecycle scenarios', () => {
 	it('releases the dependencies of an effect that releases itself', () => {
 		const cleanup = vi.fn()
 		const resource = primitiveAtom(1, { onMount: () => cleanup })
-		let release = () => {}
+		let unmount = () => {}
 		const body = vi.fn((read: Read) => {
 			read(resource)
-			release()
+			unmount()
 		})
 		const effect = effectAtom(body)
 		const store = createStore()
 		const state = inspect(store)
 		state.scheduleFlush = vi.fn()
-		release = store.mountEffect(effect)
+		unmount = store.mountEffect(effect)
 
 		flush(state)
 		expect(body).toHaveBeenCalledOnce()
@@ -404,5 +405,212 @@ describe('runtime lifecycle scenarios', () => {
 
 		expect(store.peek(member)).toBe(2)
 		expect(store.peek(consumer)).toBe(12)
+	})
+
+	it('does not remount dependencies of a previous mount when an effect remounts', async () => {
+		const mounts: string[] = []
+		const flag = primitiveAtom(true)
+		const recordedResource = (name: string) =>
+			primitiveAtom(0, {
+				onMount: () => {
+					mounts.push(name)
+				},
+			})
+		const first = recordedResource('first')
+		const second = recordedResource('second')
+		const effect = effectAtom((get) => {
+			get(get(flag) ? first : second)
+		})
+		const store = createStore()
+		const unmount = store.mountEffect(effect)
+		await flushMicrotask()
+		unmount()
+		store.send(flag, false)
+		const unmountAgain = store.mountEffect(effect)
+		await flushMicrotask()
+
+		expect(mounts).toEqual(['first', 'second'])
+		expect(inspect(store).instances.get(first)?.mountCount).toBe(0)
+		unmountAgain()
+	})
+
+	it('releases a resource dropped below an effect before mounting a new subscription', async () => {
+		const events: string[] = []
+		const flag = primitiveAtom(true)
+		const dropped = primitiveAtom(0, {
+			onMount: () => () => events.push('dropped cleanup'),
+		})
+		const newcomer = primitiveAtom(0, {
+			onMount: () => {
+				events.push('newcomer mount')
+			},
+		})
+		const middle = derivedAtom((read) => (read(flag) ? read(dropped) : 0))
+		const store = createStore()
+		const unmount = store.mountEffect(
+			effectAtom((get) => {
+				get(middle)
+			}),
+		)
+		await flushMicrotask()
+		store.send(flag, false)
+		const unsubscribeNewcomer = store.subscribe(newcomer, () => {})
+		await flushMicrotask()
+
+		expect(events).toEqual(['dropped cleanup', 'newcomer mount'])
+		unsubscribeNewcomer()
+		unmount()
+	})
+
+	it.each([1, 2])(
+		'allows reversing ownership after an owner drops %i references to its child',
+		(references) => {
+			const stage = primitiveAtom(0)
+			const parent: EffectAtom = effectAtom(
+				(get) => get(stage),
+				(value, _last, _get, _set, mountEffect) => {
+					if (value === 0)
+						for (let i = 0; i < references; i++) mountEffect(child)
+				},
+			)
+			const child: EffectAtom = effectAtom(
+				(get) => get(stage),
+				(value, _last, _get, _set, mountEffect) => {
+					if (value === 1) mountEffect(parent)
+				},
+			)
+			const store = createStore()
+			const state = inspect(store)
+			state.scheduleFlush = vi.fn()
+			const unmountParent = store.mountEffect(parent)
+			const unmountChild = store.mountEffect(child)
+			flush(state)
+			store.send(stage, 1)
+
+			expect(() => flush(state)).not.toThrow()
+			expect(state.instances.get(parent)?.owners.size).toBe(1)
+			expect(state.instances.get(child)?.owners.size).toBe(0)
+			unmountChild()
+			unmountParent()
+		},
+	)
+
+	it('keeps a partially released owner reference visible to cycle checks', () => {
+		const ownerRetained = primitiveAtom(true)
+		const closeCycle = primitiveAtom(false)
+		const base = primitiveAtom(0)
+		const middle = derivedAtom((read): number =>
+			read(closeCycle) ? read(owner) : read(base),
+		)
+		const reader = effectAtom((get) => {
+			get(middle)
+		})
+		const store = createStore()
+		const probeDuringRelease = effectAtom(() => () => {
+			store.peek(middle)
+		})
+		const owner = primitiveAtom(0, {
+			onMount: (_get, _set, mountEffect) => {
+				mountEffect(reader)
+				mountEffect(probeDuringRelease)
+				mountEffect(reader)
+			},
+		})
+		const ownerConsumer = derivedAtom((read) =>
+			read(ownerRetained) ? read(owner) : 0,
+		)
+		const state = inspect(store)
+		state.scheduleFlush = vi.fn()
+		store.subscribe(ownerConsumer, () => {})
+		flush(state)
+		store.send(ownerRetained, false)
+		store.send(closeCycle, true)
+
+		expect(() => flush(state)).toThrow('cyclic effect ownership')
+	})
+
+	it('does not track a read made after an effect releases itself during its body', async () => {
+		const mount = vi.fn()
+		const resource = primitiveAtom(4, { onMount: mount })
+		const values: number[] = []
+		let unmount = () => {}
+		const store = createStore()
+		unmount = store.mountEffect(
+			effectAtom((get) => {
+				unmount()
+				values.push(get(resource))
+			}),
+		)
+		await flushMicrotask()
+
+		expect(values).toEqual([4])
+		expect(mount).not.toHaveBeenCalled()
+		expect(inspect(store).instances.get(resource)?.mountCount).toBe(0)
+	})
+
+	it('runs an effect remounted by its own cleanup after the effects already queued', async () => {
+		const source = primitiveAtom(0)
+		const events: string[] = []
+		const store = createStore()
+		let unmount = () => {}
+		let remount = false
+		const first: EffectAtom = effectAtom((get) => {
+			events.push(`first ${get(source)}`)
+			return () => {
+				if (!remount) return
+				remount = false
+				unmount()
+				unmount = store.mountEffect(first)
+			}
+		})
+		unmount = store.mountEffect(first)
+		const unmountSecond = store.mountEffect(
+			effectAtom((get) => {
+				events.push(`second ${get(source)}`)
+			}),
+		)
+		await flushMicrotask()
+		remount = true
+		store.send(source, 1)
+		await flushMicrotask()
+
+		expect(events).toEqual(['first 0', 'second 0', 'second 1', 'first 1'])
+		unmountSecond()
+		unmount()
+	})
+
+	it('does not track reads through the getter of a previous run', async () => {
+		const source = primitiveAtom(0)
+		const mount = vi.fn()
+		const resource = primitiveAtom(5, { onMount: mount })
+		const getters: Read[] = []
+		const values: number[] = []
+		const store = createStore()
+		const unmount = store.mountEffect(
+			effectAtom((get) => {
+				getters.push(get)
+				if (get(source) === 1) values.push(getters[0]!(resource))
+			}),
+		)
+		await flushMicrotask()
+		store.send(source, 1)
+		await flushMicrotask()
+
+		expect(values).toEqual([5])
+		expect(mount).not.toHaveBeenCalled()
+		unmount()
+	})
+
+	it('mounts a subscription created by an effect body in the same flush', async () => {
+		const mount = vi.fn()
+		const resource = primitiveAtom(0, { onMount: mount })
+		const store = createStore()
+		const unmount = store.mountEffect(
+			effectAtom(() => store.subscribe(resource, () => {})),
+		)
+		await flushMicrotask()
+
+		expect(mount).toHaveBeenCalledOnce()
+		unmount()
 	})
 })

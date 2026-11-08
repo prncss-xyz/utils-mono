@@ -14,6 +14,7 @@ export default {
 				'src/index.ts!',
 				'stryker.vitest.config.ts!',
 				'stryker.setup.testing.ts!',
+				'scripts/**!',
 			],
 			project: [
 				'**/*.{js,cjs,mjs,jsx,ts,cts,mts,tsx,mdx,css}!',

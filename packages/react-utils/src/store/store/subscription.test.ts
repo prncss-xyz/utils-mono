@@ -151,7 +151,7 @@ async function run(
 
 	const calls: number[] = []
 	const expected: number[] = []
-	const releases: (() => void)[] = []
+	const disposers: (() => void)[] = []
 	const history: string[] = []
 	const report = (label: string) =>
 		`${label}\nsteps:\n${history.join('\n')}\nevents:\n${events.join('\n')}`
@@ -168,14 +168,14 @@ async function run(
 	})
 	const applyReal = (step: Action) => {
 		if (step.type === 'subscribe') {
-			releases.push(
+			disposers.push(
 				(step.other ? subscribeOther : target.subscribe)(
 					callbacks[step.callback]!,
 				),
 			)
 			return
 		}
-		if (releases.length > 0) releases[step.handle % releases.length]!()
+		if (disposers.length > 0) disposers[step.handle % disposers.length]!()
 	}
 	const applyModel = (step: Action) => {
 		if (step.type === 'subscribe') {
@@ -234,13 +234,13 @@ async function run(
 				applyModel(step)
 		}
 	}
-	const releaseAll = () => {
-		for (const release of releases) release()
+	const disposeAll = () => {
+		for (const dispose of disposers) dispose()
 	}
-	releaseAll()
-	releaseAll()
+	disposeAll()
+	disposeAll()
 	expect(violations, report('after releasing twice')).toEqual([])
-	expect([...live], report('resources outliving all releases')).toEqual([])
+	expect([...live], report('resources outliving all disposals')).toEqual([])
 }
 
 describe.each(modes)('%s subscription references', (mode) => {

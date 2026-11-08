@@ -103,7 +103,7 @@ async function run(
 	const subscriptions: {
 		entry: Entry
 		subscriber: Subscriber
-		release: () => void
+		dispose: () => void
 	}[] = []
 	let counter = 0
 
@@ -197,13 +197,13 @@ async function run(
 					const { entry, real, key } = resolveTarget(step)
 					const subscriber = { calls: 0, expected: 0 }
 					const notify = () => subscriber.calls++
-					const release = real
+					const dispose = real
 						? real.subscribe(notify)
 						: store.subscribe(family, { id: key }, notify)
 					if (entry.references === 0) entry.eviction = 'none'
 					entry.references++
 					entry.subscribers.push(subscriber)
-					subscriptions.push({ entry, subscriber, release })
+					subscriptions.push({ entry, subscriber, dispose })
 					break
 				}
 				case 'resolve': {
@@ -230,11 +230,11 @@ async function run(
 				}
 				case 'unsubscribe': {
 					if (subscriptions.length === 0) break
-					const [{ entry, subscriber, release }] = subscriptions.splice(
+					const [{ entry, subscriber, dispose }] = subscriptions.splice(
 						step.slot % subscriptions.length,
 						1,
 					) as [(typeof subscriptions)[number]]
-					release()
+					dispose()
 					entry.references--
 					entry.subscribers.splice(entry.subscribers.indexOf(subscriber), 1)
 					if (entry.references === 0 && !transient && TTL !== Infinity)

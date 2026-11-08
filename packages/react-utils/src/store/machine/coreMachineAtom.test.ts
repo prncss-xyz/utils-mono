@@ -194,8 +194,8 @@ describe('coreMachineAtom', () => {
 		)
 		const first = createStore()
 		const second = createStore()
-		const releaseFirst = first.subscribe(machine, () => {})
-		const releaseSecond = second.subscribe(machine, () => {})
+		const unsubscribeFirst = first.subscribe(machine, () => {})
+		const unsubscribeSecond = second.subscribe(machine, () => {})
 		await flushMicrotask()
 		first.send(machine, tag('set', 1))
 		await flushMicrotask()
@@ -207,35 +207,35 @@ describe('coreMachineAtom', () => {
 			['cleanup', false],
 			['effect', true, false],
 		])
-		releaseFirst()
-		releaseSecond()
+		unsubscribeFirst()
+		unsubscribeSecond()
 		expect(events.slice(-2)).toEqual([
 			['cleanup', true],
 			['cleanup', false],
 		])
-		const again = first.subscribe(machine, () => {})
+		const unsubscribeAgain = first.subscribe(machine, () => {})
 		await flushMicrotask()
 		expect(events.at(-1)).toEqual(['effect', true, undefined])
-		again()
+		unsubscribeAgain()
 	})
 	it('cleans a machine effect whose first setup releases the output', async () => {
-		let release = () => {}
+		let unsubscribe = () => {}
 		const cleanup = vi.fn()
 		const machine = coreMachineAtom<{}, number>(0, (_event, value) => value, {
 			effect: () => {
-				release()
+				unsubscribe()
 				return cleanup
 			},
 		})
 		const store = createStore()
-		release = store.subscribe(machine, () => {})
+		unsubscribe = store.subscribe(machine, () => {})
 		await flushMicrotask()
 		expect(cleanup).toHaveBeenCalledOnce()
 	})
 
 	it('does not repeat machine cleanup when it releases the output on a transition', async () => {
-		let release = () => {}
-		const cleanup = vi.fn(() => release())
+		let unsubscribe = () => {}
+		const cleanup = vi.fn(() => unsubscribe())
 		const effect = vi.fn(() => cleanup)
 		const machine = coreMachineAtom<{ set: number }, number>(
 			0,
@@ -243,7 +243,7 @@ describe('coreMachineAtom', () => {
 			{ effect },
 		)
 		const store = createStore()
-		release = store.subscribe(machine, () => {})
+		unsubscribe = store.subscribe(machine, () => {})
 		await flushMicrotask()
 		store.send(machine, tag('set', 1))
 		await flushMicrotask()

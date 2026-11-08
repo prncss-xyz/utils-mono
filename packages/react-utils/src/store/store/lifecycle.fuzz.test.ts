@@ -100,7 +100,7 @@ async function run(
 	const committed = graph.primitives.map(({ initial }) => initial)
 	let prior = [...committed]
 	const pending = new Map<number, number>()
-	const subscriptions: { node: number; release: () => void }[] = []
+	const subscriptions: { node: number; dispose: () => void }[] = []
 	const log: string[] = []
 	const steps: string[] = []
 	const liveMounts = new Set<number>()
@@ -279,7 +279,7 @@ async function run(
 			case 'subscribe':
 				subscriptions.push({
 					node: operation.node,
-					release: spec(operation.node).effect
+					dispose: spec(operation.node).effect
 						? store.mountEffect(effects[operation.node]!)
 						: store.subscribe(nodes[operation.node]!, () => {}),
 				})
@@ -288,7 +288,7 @@ async function run(
 				if (subscriptions.length > 0)
 					subscriptions
 						.splice(operation.slot % subscriptions.length, 1)[0]!
-						.release()
+						.dispose()
 				break
 			case 'peek': {
 				const before = log.length
@@ -304,7 +304,7 @@ async function run(
 		}
 		check(operation.type === 'yield', label)
 	}
-	for (const { release } of subscriptions.splice(0)) release()
+	for (const { dispose } of subscriptions.splice(0)) dispose()
 	expect(
 		[...liveMounts, ...liveEffects.keys(), ...liveChildren],
 		report('last release'),
@@ -357,7 +357,7 @@ const mountOrderExample: Value<typeof scenario> = {
  * Stored release-order graph: P1 relinks n3 and n5 away from n2. Leaf
  * observers hold their direct value nodes, while n2 follows current value reachability.
  */
-const releaseOrderExample: Value<typeof scenario> = {
+const disposeOrderExample: Value<typeof scenario> = {
 	graph: {
 		primitives: [
 			{ initial: 1, effect: false, mount: false },
@@ -513,7 +513,7 @@ it('keeps effect and mount lifecycles balanced and ordered across random graphs'
 			numRuns: 1000,
 			examples: [
 				[mountOrderExample],
-				[releaseOrderExample],
+				[disposeOrderExample],
 				[danglingMountExample],
 				[unmountOrderExample],
 				[lateLinkedOwnerExample],

@@ -569,10 +569,10 @@ describe('Store', () => {
 			const inner = derivedAtom<number>((get) => get(resource))
 			const { sel, mode, top } = diamond(inner)
 			const store = createStore()
-			const releaseResource = store.subscribe(resource, () => {})
+			const unsubscribeResource = store.subscribe(resource, () => {})
 			await flushMicrotask()
 			store.subscribe(top, () => {})
-			releaseResource()
+			unsubscribeResource()
 			store.send(sel, true)
 			store.send(mode, true)
 			await flushMicrotask()
@@ -671,10 +671,10 @@ describe('Store', () => {
 		const items = primitiveAtom([{ name: 'a' }])
 		const index = primitiveAtom(0)
 		const valid = primitiveAtom(true)
-		const releaseDetail = vi.fn()
+		const cleanupDetail = vi.fn()
 		const detailGetter = vi.fn((read: Read) => read(items)[read(index)]?.name)
 		const detail = derivedAtom(detailGetter, () => {}, {
-			onMount: () => releaseDetail,
+			onMount: () => cleanupDetail,
 		})
 		const outer = derivedAtom(
 			(read) => (read(valid) ? read(detail) : null),
@@ -688,7 +688,7 @@ describe('Store', () => {
 		store.send(valid, false)
 		await flushMicrotask()
 		expect(detailGetter).toHaveBeenCalledOnce()
-		expect(releaseDetail).toHaveBeenCalledOnce()
+		expect(cleanupDetail).toHaveBeenCalledOnce()
 		expect(store.peek(outer)).toBeNull()
 		unsubscribe()
 	})
@@ -722,14 +722,14 @@ describe('Store', () => {
 		const trigger = effectAtom(() => {
 			store.peek(ephemeral, 'a')
 		})
-		const release = store.mountEffect(trigger)
+		const unmount = store.mountEffect(trigger)
 		await flushMicrotask()
 		store.peek(ephemeral, 'a')
 		expect(ephemeralCreate).toHaveBeenCalledOnce()
 		await flushMicrotask()
 		store.peek(ephemeral, 'a')
 		expect(ephemeralCreate).toHaveBeenCalledTimes(2)
-		release()
+		unmount()
 	})
 
 	it.each([
@@ -750,19 +750,19 @@ describe('Store', () => {
 			const create = vi.fn((key: string) => primitiveAtom(key))
 			const names = atomFamily(create)
 			const store = createStore()
-			const release = store.subscribe(names, 'first', () => {})
+			const unsubscribe = store.subscribe(names, 'first', () => {})
 			await flushMicrotask()
-			release()
+			unsubscribe()
 			const trigger = primitiveAtom(
 				0,
 				options(() => store.send(names, 'first', 'saved')),
 			)
-			const releaseTrigger = store.subscribe(trigger, () => {})
+			const unsubscribeTrigger = store.subscribe(trigger, () => {})
 			await flushMicrotask()
 			await flushMicrotask()
 			expect(store.peek(names, 'first')).toBe('saved')
 			expect(create).toHaveBeenCalledOnce()
-			releaseTrigger()
+			unsubscribeTrigger()
 		},
 	)
 

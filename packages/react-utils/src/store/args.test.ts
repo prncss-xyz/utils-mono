@@ -177,13 +177,13 @@ describe('setter argument tuples', () => {
 			},
 		})
 		const store = createStore()
-		const release = store.subscribe(source, () => {})
+		const unsubscribe = store.subscribe(source, () => {})
 		await flushMicrotask()
 		expect(calls).toEqual([
 			['mount', 1],
 			['effect', 2],
 		])
-		release()
+		unsubscribe()
 	})
 
 	it('forwards command arguments without changing their length', () => {

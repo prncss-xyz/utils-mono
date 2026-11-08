@@ -285,7 +285,7 @@ async function run(
 	const subscriptions: {
 		primitive: number
 		bumps: number
-		release: () => void
+		dispose: () => void
 	}[] = []
 	const history: string[] = []
 	const report = (label: string) => `${label}\n${history.join('\n')}`
@@ -317,7 +317,7 @@ async function run(
 					subscriptions.push({
 						primitive: watched,
 						bumps,
-						release: store.subscribe(primitives[watched]!, () => {
+						dispose: store.subscribe(primitives[watched]!, () => {
 							store.send(primitives[bumps]!, (value) => value + 1)
 						}),
 					})
@@ -327,7 +327,7 @@ async function run(
 					if (subscriptions.length === 0) break
 					subscriptions
 						.splice(operation.slot % subscriptions.length, 1)[0]!
-						.release()
+						.dispose()
 					break
 				}
 				case 'peek':
@@ -348,7 +348,7 @@ async function run(
 			}
 		}
 	} finally {
-		for (const { release } of subscriptions) release()
+		for (const { dispose } of subscriptions) dispose()
 	}
 }
 

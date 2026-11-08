@@ -8,6 +8,14 @@ const lintConfig: OxlintConfig = {
 		builtin: true,
 	},
 	ignorePatterns: ['.*', '**/*.gen.*'],
+	overrides: [
+		{
+			files: ['packages/react-utils/scripts/**'],
+			rules: {
+				'no-console': 'off',
+			},
+		},
+	],
 	plugins: ['import', 'react', 'jsx-a11y', 'typescript'],
 	options: {
 		denyWarnings: true,

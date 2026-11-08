@@ -33,8 +33,8 @@ describe('effect atoms', () => {
 			},
 		)
 		const store = createStore()
-		const first = store.mountEffect(effect)
-		const second = store.mountEffect(effect)
+		const unmountFirst = store.mountEffect(effect)
+		const unmountSecond = store.mountEffect(effect)
 		expect(runs).not.toHaveBeenCalled()
 		await flushMicrotask()
 		expect(runs.mock.calls).toEqual([[0, undefined]])
@@ -46,9 +46,9 @@ describe('effect atoms', () => {
 			[2, 0],
 		])
 		expect(cleanup).toHaveBeenCalledOnce()
-		first()
+		unmountFirst()
 		expect(cleanup).toHaveBeenCalledOnce()
-		second()
+		unmountSecond()
 		expect(cleanup).toHaveBeenCalledTimes(2)
 	})
 
@@ -61,13 +61,13 @@ describe('effect atoms', () => {
 		)
 		const first = createStore()
 		const second = createStore([[source, 10]])
-		const releaseFirst = first.mountEffect(effect)
-		const releaseSecond = second.mountEffect(effect)
+		const unmountFirst = first.mountEffect(effect)
+		const unmountSecond = second.mountEffect(effect)
 		await flushMicrotask()
 		first.send(source, 1)
 		await flushMicrotask()
-		releaseFirst()
-		const releaseRemount = first.mountEffect(effect)
+		unmountFirst()
+		const unmountRemount = first.mountEffect(effect)
 		await flushMicrotask()
 		second.send(source, 11)
 		await flushMicrotask()
@@ -78,8 +78,8 @@ describe('effect atoms', () => {
 			[1, undefined],
 			[11, 10],
 		])
-		releaseRemount()
-		releaseSecond()
+		unmountRemount()
+		unmountSecond()
 	})
 
 	it('tracks selected callbacks and preserves child and cleanup ordering', async () => {
@@ -99,11 +99,11 @@ describe('effect atoms', () => {
 			},
 		)
 		const store = createStore()
-		const release = store.mountEffect(effect)
+		const unmount = store.mountEffect(effect)
 		await flushMicrotask()
 		store.send(detail, 3)
 		await flushMicrotask()
-		release()
+		unmount()
 		expect(events).toEqual([
 			'1/undefined/2',
 			'child',
@@ -126,7 +126,7 @@ describe('effect atoms', () => {
 			runs(get(source), get(observed), get(values, 'key'))
 		})
 		const store = createStore()
-		const release = store.mountEffect(effect)
+		const unmount = store.mountEffect(effect)
 		expect(runs).not.toHaveBeenCalled()
 		await flushMicrotask()
 		expect(runs.mock.calls).toEqual([[1, 2, 3]])
@@ -141,7 +141,7 @@ describe('effect atoms', () => {
 			[1, 2, 3],
 			[3, 6, 4],
 		])
-		release()
+		unmount()
 	})
 
 	it('cleans up before reversing old children and releases dropped direct reads after the body', async () => {
@@ -173,7 +173,7 @@ describe('effect atoms', () => {
 			},
 		)
 		const store = createStore()
-		const release = store.mountEffect(effect)
+		const unmount = store.mountEffect(effect)
 		await flushMicrotask()
 		expect(events).toEqual(['mount first', 'body', 'child a', 'child b'])
 		events.length = 0
@@ -190,7 +190,7 @@ describe('effect atoms', () => {
 			'child b',
 		])
 		events.length = 0
-		release()
+		unmount()
 		expect(events).toEqual([
 			'release b',
 			'release a',
@@ -214,10 +214,10 @@ describe('effect atoms', () => {
 			},
 		})
 		const store = createStore()
-		const release = store.subscribe(owner, () => {})
+		const unsubscribe = store.subscribe(owner, () => {})
 		await flushMicrotask()
 		expect(events).toEqual(['a', 'b'])
-		release()
+		unsubscribe()
 		expect(events).toEqual(['a', 'b', '~b', '~a', 'owner cleanup'])
 	})
 
@@ -236,25 +236,25 @@ describe('effect atoms', () => {
 			},
 		})
 		const store = createStore()
-		const first = store.mountEffect(effect)
+		const unmountFirst = store.mountEffect(effect)
 		await flushMicrotask()
 		expect(body).toHaveBeenCalledOnce()
 		expect(body).toHaveBeenCalledWith(expect.any(Function))
-		const second = store.mountEffect(effect)
-		const third = store.subscribe(owner, () => {})
+		const unmountSecond = store.mountEffect(effect)
+		const unsubscribeSubscription = store.subscribe(owner, () => {})
 		await flushMicrotask()
 		expect(body).toHaveBeenCalledOnce()
 		store.send(count, 1)
 		await flushMicrotask()
 		expect(body).toHaveBeenCalledTimes(2)
 		expect(cleanup).toHaveBeenCalledOnce()
-		first()
-		first()
-		second()
-		second()
+		unmountFirst()
+		unmountFirst()
+		unmountSecond()
+		unmountSecond()
 		expect(cleanup).toHaveBeenCalledOnce()
-		third()
-		third()
+		unsubscribeSubscription()
+		unsubscribeSubscription()
 		expect(cleanup).toHaveBeenCalledTimes(2)
 	})
 
@@ -268,7 +268,7 @@ describe('effect atoms', () => {
 				return () => expect(() => mountEffect(child)).toThrow('synchronously')
 			}
 			const store = createStore()
-			const release =
+			const dispose =
 				kind === 'effect'
 					? store.mountEffect(
 							effectAtom(
@@ -280,7 +280,7 @@ describe('effect atoms', () => {
 					: store.subscribe(primitiveAtom(0, { onMount: body }), () => {})
 			await flushMicrotask()
 			expect(() => captured(child)).toThrow('synchronously')
-			release()
+			dispose()
 		},
 	)
 
@@ -346,13 +346,13 @@ describe('effect atoms', () => {
 			return () => events.push('effect cleanup')
 		})
 		const store = createStore()
-		const release = store.mountEffect(effectAtom(body))
+		const unmount = store.mountEffect(effectAtom(body))
 		await flushMicrotask()
 		store.send(flag, false)
 		await flushMicrotask()
 		expect(body).toHaveBeenCalledOnce()
 		expect(events).toEqual(['resource', 'resource cleanup'])
-		release()
+		unmount()
 		expect(events).toEqual(['resource', 'resource cleanup', 'effect cleanup'])
 	})
 
@@ -373,7 +373,7 @@ describe('effect atoms', () => {
 			return () => events.push('effect cleanup')
 		})
 		const store = createStore()
-		const release = store.mountEffect(effectAtom(body))
+		const unmount = store.mountEffect(effectAtom(body))
 		await flushMicrotask()
 		store.send(gate, false)
 		await flushMicrotask()
@@ -385,7 +385,7 @@ describe('effect atoms', () => {
 		await flushMicrotask()
 		expect(body).toHaveBeenCalledOnce()
 		expect(events).toEqual(['resource', 'resource cleanup'])
-		release()
+		unmount()
 		expect(events).toEqual(['resource', 'resource cleanup', 'effect cleanup'])
 	})
 
@@ -457,7 +457,7 @@ describe('effect atoms', () => {
 		)
 		const values = atomFamily((_key: string) => primitiveAtom(0))
 		const store = createStore()
-		const release = store.mountEffect(
+		const unmount = store.mountEffect(
 			effectAtom(
 				() => undefined,
 				(_next, _last, _get, set) => {
@@ -472,7 +472,7 @@ describe('effect atoms', () => {
 		await flushMicrotask()
 		expect(store.peek(doubled)).toBe(6)
 		expect(store.peek(values, 'key')).toBe(1)
-		release()
+		unmount()
 	})
 
 	it('keeps undefined reads real and resets dependency tracking after remount', async () => {
@@ -484,30 +484,30 @@ describe('effect atoms', () => {
 			return cleanup
 		})
 		const store = createStore()
-		const release = store.mountEffect(effect)
+		const unmount = store.mountEffect(effect)
 		await flushMicrotask()
 		store.send(count, 1)
 		await flushMicrotask()
 		store.send(count, undefined)
 		await flushMicrotask()
 		expect(runs.mock.calls).toEqual([[undefined], [1], [undefined]])
-		release()
-		release()
+		unmount()
+		unmount()
 		expect(cleanup).toHaveBeenCalledTimes(3)
-		const again = store.mountEffect(effect)
+		const unmountAgain = store.mountEffect(effect)
 		await flushMicrotask()
 		expect(runs).toHaveBeenCalledTimes(4)
-		again()
+		unmountAgain()
 		expect(cleanup).toHaveBeenCalledTimes(4)
 	})
 
 	it('disposes a setup released during its own body', async () => {
-		let release = () => {}
+		let unmount = () => {}
 		const cleanup = vi.fn()
 		const store = createStore()
-		release = store.mountEffect(
+		unmount = store.mountEffect(
 			effectAtom(() => {
-				release()
+				unmount()
 				return cleanup
 			}),
 		)
@@ -518,9 +518,9 @@ describe('effect atoms', () => {
 	it('does not repeat a cleanup that releases its effect during rerun', async () => {
 		const source = primitiveAtom(0)
 		const body = vi.fn()
-		const cleanup = vi.fn(() => release())
+		const cleanup = vi.fn(() => unmount())
 		const store = createStore()
-		const release = store.mountEffect(
+		const unmount = store.mountEffect(
 			effectAtom((get) => {
 				get(source)
 				body()
@@ -537,24 +537,24 @@ describe('effect atoms', () => {
 	it('retains the new run cleanup when the old body releases and remounts itself', async () => {
 		const store = createStore()
 		const cleanups: ReturnType<typeof vi.fn>[] = []
-		let release = () => {}
+		let unmount = () => {}
 		let reenter = true
 		const effect: EffectAtom = effectAtom(() => {
 			if (reenter) {
 				reenter = false
-				release()
-				release = store.mountEffect(effect)
+				unmount()
+				unmount = store.mountEffect(effect)
 			}
 			const cleanup = vi.fn()
 			cleanups.push(cleanup)
 			return cleanup
 		})
-		release = store.mountEffect(effect)
+		unmount = store.mountEffect(effect)
 		await flushMicrotask()
 		expect(cleanups).toHaveLength(2)
 		expect(cleanups[0]).toHaveBeenCalledOnce()
 		expect(cleanups[1]).not.toHaveBeenCalled()
-		release()
+		unmount()
 		expect(cleanups[1]).toHaveBeenCalledOnce()
 	})
 	it('settles mount writes before the first tracked read returns', async () => {
@@ -573,7 +573,7 @@ describe('effect atoms', () => {
 			},
 		})
 		const store = createStore()
-		const release = store.mountEffect(
+		const unmount = store.mountEffect(
 			effectAtom((get) => {
 				events.push(`effect:${get(consumer)}`)
 				return () => events.push('effect cleanup')
@@ -581,7 +581,7 @@ describe('effect atoms', () => {
 		)
 		await flushMicrotask()
 		expect(events).toEqual(['source mount', 'consumer mount:2', 'effect:4'])
-		release()
+		unmount()
 		expect(events).toEqual([
 			'source mount',
 			'consumer mount:2',
@@ -599,7 +599,7 @@ describe('effect atoms', () => {
 		const leaf = derivedAtom((get) => get(left) + get(right))
 		const runs = vi.fn()
 		const store = createStore()
-		const release = store.mountEffect(
+		const unmount = store.mountEffect(
 			effectAtom((get) => {
 				runs(get(leaf), get(source))
 			}),
@@ -612,6 +612,6 @@ describe('effect atoms', () => {
 			[3, 0],
 			[7, 2],
 		])
-		release()
+		unmount()
 	})
 })

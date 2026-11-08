@@ -95,24 +95,19 @@ function unlink<S>(
 	dep: Instance<any>,
 ) {
 	if (!hasMountedDependency(instance, dep)) return
-	const visited = new Set<Instance<any>>()
-	const staleConsumer = (consumer: Instance<any>): boolean => {
-		if (visited.has(consumer)) return false
-		visited.add(consumer)
-		if (
-			consumer.symbol.type === 'derived' &&
-			consumer.freshness.type !== 'clean'
-		)
-			return true
-		for (const sub of consumers(consumer)) if (staleConsumer(sub)) return true
-		return false
-	}
-	const stale = staleConsumer(instance)
+	const stale = hasStaleConsumer(instance)
 	removeMountedEdge(instance, dep)
 	if (stale && hasLiveResource(dep)) {
 		isoAssert(state.phase.releases, 'stale consumer outside settle')
 		state.phase.releases.push(dep)
 	} else release(state, dep)
+}
+
+function hasStaleConsumer(instance: Instance<any>): boolean {
+	if (instance.symbol.type === 'derived' && instance.freshness.type !== 'clean')
+		return true
+	for (const sub of consumers(instance)) if (hasStaleConsumer(sub)) return true
+	return false
 }
 
 function hasLiveResource(
