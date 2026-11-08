@@ -7,10 +7,20 @@ Stryker mutates `packages/react-utils/src/store/store/` to check that the test s
 Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vitest project of `packages/react-utils`. Settings are shared through `packages/react-utils/unit.testing.ts`; `vp test` and the pre-commit hook run the projects defined in the root `vite.config.ts`, which spreads the same settings. The run uses a fixed fast-check seed (`packages/react-utils/stryker.setup.testing.ts`, loaded only by `packages/react-utils/stryker.vitest.config.ts`).
 
 - The HTML report is written to `packages/react-utils/reports/mutation/index.html`.
+- A Markdown summary is written to `packages/react-utils/reports/mutation/report.md`: status counts and every surviving or uncovered mutant, with its source text. `scripts/mutation-report.mjs` generates it from `mutation.json`. Run it with `--out <file>` to write a copy, or with `--check <file>` to confirm that a record still contains the generated output. Copy counts and locations from the generated output; do not retype them.
 - Incremental state is kept in `packages/react-utils/reports/stryker-incremental.json`, so a rerun on unchanged code finishes in seconds.
 - After a config-only change, the incremental run is enough. Compare its `mutation.json` with the previous one using the store task notes' `cmp.mjs`.
 - Pass `--force` for a full rerun only when the test set or the runner settings change.
 - After a run, `pgrep -af '[v]itest|[s]tryker-mutator|[s]tryker run'` must print nothing.
+
+## Report counts and survivors
+
+Quote mutation counts and survivor locations from `reports/mutation/report.md`, or from `scripts/mutation-report.mjs` output, copied verbatim. Do not restate them from memory: a handoff once said 807 mutants where the JSON held 813 and 809.
+
+- `node scripts/mutation-report.mjs <mutation.json> --out <file>` writes the table for a run.
+- `node scripts/mutation-report.mjs <mutation.json> --check <file>` exits non-zero when a record does not contain the generated table for that run.
+
+Prose that cites source lines is not checked by these commands. Keep such citations to lines the survivor table already lists, or re-verify them after each edit.
 
 ## Reuse evidence
 

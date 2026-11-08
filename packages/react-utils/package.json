@@ -22,7 +22,7 @@
 		"prepublishOnly": "vp run build",
 		"storybook": "storybook dev",
 		"build-storybook": "storybook build",
-		"mutate": "stryker run"
+		"mutate": "stryker run && node scripts/mutation-report.mjs reports/mutation/mutation.json --out reports/mutation/report.md"
 	},
 	"devDependencies": {
 		"@storybook/addon-a11y": "catalog:",
