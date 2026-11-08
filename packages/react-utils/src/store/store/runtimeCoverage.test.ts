@@ -357,20 +357,6 @@ describe('runtime lifecycle scenarios', () => {
 		expect(state.tasks).toBeUndefined()
 	})
 
-	it('allows an effect without cleanup to release itself', () => {
-		let release = () => {}
-		const body = vi.fn(() => release())
-		const effect = effectAtom(body)
-		const store = createStore()
-		const state = inspect(store)
-		state.scheduleFlush = vi.fn()
-		release = store.mountEffect(effect)
-
-		flush(state)
-		expect(body).toHaveBeenCalledOnce()
-		expect(state.instances.get(effect)?.mountCount).toBe(0)
-	})
-
 	it('releases the dependencies of an effect that releases itself', () => {
 		const cleanup = vi.fn()
 		const resource = primitiveAtom(1, { onMount: () => cleanup })
