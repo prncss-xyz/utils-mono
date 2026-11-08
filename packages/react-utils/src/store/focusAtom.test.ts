@@ -5,6 +5,7 @@ import { tag } from '../tags'
 import { focusAtom } from './focusAtom'
 import { coreMachineAtom } from './machine/coreMachineAtom'
 import { createStore, primitiveAtom } from './store'
+import { flushMicrotask } from './store/utils.testing'
 
 function setup() {
 	const sideEffect = primitiveAtom(0)
@@ -35,7 +36,7 @@ describe('focusAtom', () => {
 		expect(store.peek(focused.can, 4)).toBe(true)
 		expect(store.peek(focused.can, -1)).toBe(false)
 		store.send(focused, 4)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBe(4)
 		expect(store.peek(machine)).toEqual({ count: 4 })
 		expect(store.peek(sideEffect)).toBe(4)
@@ -44,21 +45,21 @@ describe('focusAtom', () => {
 	it('supports removal and ignores updates to nullish sources', async () => {
 		const { store, focused } = setup()
 		store.send(focused, null)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBeNull()
 		expect(store.peek(focused.can, 2)).toBe(false)
 		store.send(focused, 2)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBeNull()
 	})
 
 	it('dispatches focused previews without setter arguments', async () => {
 		const { store, focused } = setup()
 		store.send(focused.can, 4)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBe(4)
 		store.resolve(focused.can, 5).send()
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBe(5)
 	})
 
@@ -74,7 +75,7 @@ describe('focusAtom', () => {
 		})
 		expect(store.peek(nested.can, '5')).toBe(true)
 		store.send(nested, '5')
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(nested)).toBe('5')
 	})
 
@@ -85,7 +86,7 @@ describe('focusAtom', () => {
 		})
 		const store = createStore()
 		store.send(focused, (count) => count + 1)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(focused)).toBe(2)
 	})
 })

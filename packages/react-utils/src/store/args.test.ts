@@ -17,6 +17,7 @@ import {
 	type ResolvedAtom,
 	type Write,
 } from './store'
+import { flushMicrotask } from './store/utils.testing'
 
 describe('setter argument tuples', () => {
 	it('forwards multiple arguments through direct, resolved, and nested writes', async () => {
@@ -37,7 +38,7 @@ describe('setter argument tuples', () => {
 		store.resolve(update).send(3, 4)
 		store.send(nested, 1, 5)
 		expect(store.peek(count)).toBe(1)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(count)).toBe(24)
 		expect(notify).toHaveBeenCalledOnce()
 	})
@@ -59,7 +60,7 @@ describe('setter argument tuples', () => {
 		store.resolve(members, undefined).send(3, 4)
 		store.send(nested)
 		store.send(members, 'other', 4, 5)
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(store.peek(members, undefined)).toBe(20)
 		expect(store.peek(members, 'other')).toBe(25)
 	})
@@ -177,7 +178,7 @@ describe('setter argument tuples', () => {
 		})
 		const store = createStore()
 		const release = store.subscribe(source, () => {})
-		await Promise.resolve()
+		await flushMicrotask()
 		expect(calls).toEqual([
 			['mount', 1],
 			['effect', 2],
