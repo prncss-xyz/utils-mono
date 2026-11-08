@@ -2,8 +2,9 @@ import type fc from 'fast-check'
 
 import type { createStore as publicCreateStore } from '.'
 import { isoAssert } from '../../functions'
-import type { Hydrate, Store } from '../atoms'
+import type { AtomSymbol, Hydrate, Store } from '../atoms'
 import { createRuntime } from './createRuntime'
+import { consumerCount, mountedDependencyCount } from './graph'
 import { createState, type Operation, type StoreState } from './state'
 
 const states = new WeakMap<Store, StoreState>()
@@ -54,7 +55,7 @@ export function stopCountingOperations(store: Store) {
 	inspect(store).instrumentation = undefined
 }
 
-export { consumerCount, mountedDependencyCount } from './graph'
+export { consumerCount, mountedDependencyCount }
 
 /** A state whose wiring is inert, for unit tests of registry and graph primitives. */
 export function createStubState(): StoreState {
@@ -69,3 +70,22 @@ export function createStubState(): StoreState {
 export type Value<A> = A extends fc.Arbitrary<infer V> ? V : never
 
 export { flushMicrotask } from '../../utils.testing'
+
+export const internalInstance = <S, Args extends unknown[]>(
+	store: Store,
+	symbol: AtomSymbol<S, Args>,
+) => {
+	const instance = inspect(store).instances.get(symbol as AtomSymbol<any, any>)
+	isoAssert(instance)
+	return instance
+}
+
+export const mountedSubCount = <S, Args extends unknown[]>(
+	store: Store,
+	symbol: AtomSymbol<S, Args>,
+) => consumerCount(internalInstance(store, symbol))
+
+export const mountCount = <S, Args extends unknown[]>(
+	store: Store,
+	symbol: AtomSymbol<S, Args>,
+) => internalInstance(store, symbol).mountCount
