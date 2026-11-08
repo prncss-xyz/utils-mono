@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { RESET } from '../../functions'
 import { tag } from '../../tags'
+import { flushMicrotask } from '../../utils.testing'
 import { createStore, primitiveAtom } from '../store'
-import { flushMicrotask } from '../utils.testing'
 import { directMachineAtom } from './directMachineAtom'
 
 describe('directMachineAtom', () => {

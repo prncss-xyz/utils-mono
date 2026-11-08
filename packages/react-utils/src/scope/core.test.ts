@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { flushMicrotask } from '../utils.testing'
 import { derivedScope, primitiveScope, ScopeContext, ScopeStore } from './core'
-
-const flushMicrotask = () => Promise.resolve()
 
 describe('ScopeStore', () => {
 	it('caches conditional dependencies declared before the branch selector', () => {

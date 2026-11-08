@@ -2,6 +2,7 @@ import { Suspense, useState } from 'react'
 import { expect, waitFor } from 'storybook/test'
 
 import preview from '../../.storybook/preview'
+import { flushMicrotask } from '../utils.testing'
 import {
 	StoreProvider,
 	useAtom,
@@ -16,7 +17,6 @@ import {
 	primitiveAtom,
 	TRANSIENT,
 } from './store'
-import { flushMicrotask } from './utils.testing'
 
 const members = atomFamily(
 	(_key: string | undefined) => {

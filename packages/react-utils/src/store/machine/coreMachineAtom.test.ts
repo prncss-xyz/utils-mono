@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { isReset, RESET } from '../../functions'
 import { tag, type Sendable } from '../../tags'
+import { flushMicrotask } from '../../utils.testing'
 import { createStore, primitiveAtom } from '../store'
-import { flushMicrotask } from '../utils.testing'
 import { coreMachineAtom } from './coreMachineAtom'
 
 describe('coreMachineAtom', () => {

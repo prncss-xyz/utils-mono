@@ -68,4 +68,4 @@ export function createStubState(): StoreState {
 
 export type Value<A> = A extends fc.Arbitrary<infer V> ? V : never
 
-export { flushMicrotask } from '../utils.testing'
+export { flushMicrotask } from '../../utils.testing'
