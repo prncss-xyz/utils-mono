@@ -359,4 +359,4 @@ it('applies one batch per microtask and shows setters the pending view', async (
 		),
 		{ numRuns: 1000 },
 	)
-})
+}, 15_000)

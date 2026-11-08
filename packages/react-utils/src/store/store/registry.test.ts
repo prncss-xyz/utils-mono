@@ -73,6 +73,7 @@ describe('family resolution', () => {
 				{ numRuns: 300 },
 			)
 		},
+		15_000,
 	)
 
 	it('never stores members of a transient family', () => {

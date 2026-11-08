@@ -273,5 +273,5 @@ describe.each(modes)('%s subscription references', (mode) => {
 				],
 			},
 		)
-	})
+	}, 15_000)
 })

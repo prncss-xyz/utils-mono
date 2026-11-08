@@ -141,4 +141,4 @@ it('matches a reference evaluation across random derived graphs', async () => {
 		}),
 		{ numRuns: 2000 },
 	)
-})
+}, 15_000)

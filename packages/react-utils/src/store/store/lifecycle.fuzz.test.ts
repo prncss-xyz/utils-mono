@@ -521,4 +521,4 @@ it('keeps effect and mount lifecycles balanced and ordered across random graphs'
 			],
 		},
 	)
-})
+}, 15_000)

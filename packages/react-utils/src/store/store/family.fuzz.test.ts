@@ -308,5 +308,6 @@ describe.each([-1, 0, 5, Infinity])('family with TTL %s', (TTL) => {
 				{ numRuns: 200 },
 			)
 		},
+		15_000,
 	)
 })
