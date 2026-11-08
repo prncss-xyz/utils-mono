@@ -371,6 +371,27 @@ describe('runtime lifecycle scenarios', () => {
 		expect(state.instances.get(effect)?.mountCount).toBe(0)
 	})
 
+	it('releases the dependencies of an effect that releases itself', () => {
+		const cleanup = vi.fn()
+		const resource = primitiveAtom(1, { onMount: () => cleanup })
+		let release = () => {}
+		const body = vi.fn((read: Read) => {
+			read(resource)
+			release()
+		})
+		const effect = effectAtom(body)
+		const store = createStore()
+		const state = inspect(store)
+		state.scheduleFlush = vi.fn()
+		release = store.mountEffect(effect)
+
+		flush(state)
+		expect(body).toHaveBeenCalledOnce()
+		expect(cleanup).toHaveBeenCalledOnce()
+		expect(state.instances.get(effect)?.mountCount).toBe(0)
+		expect(state.instances.get(resource)?.mountCount).toBe(0)
+	})
+
 	it('hydrates pending values without scheduling a second flush', () => {
 		const source = primitiveAtom(0)
 		const state = createStubState()
