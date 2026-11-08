@@ -202,7 +202,10 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
  * Mounts retained dependencies before their consumers, including dependencies
  * below already-mounted nodes. Completed walks are shared until a write or
  * retention change invalidates them. A later root can still unlink and clean up
- * a dependency mounted earlier in the same flush.
+ * a dependency mounted earlier in the same flush. Revision changes made by
+ * `peekInstance` need no re-walk: the dependencies it links are walked
+ * immediately after, and the ones it unlinks no longer need a walk from this
+ * node.
  */
 function settleMount(
 	state: StoreState,
@@ -228,10 +231,9 @@ function settleMount(
 			return false
 		}
 		const walkDependencies = () => {
-			const before = state.mountRevision
 			peekInstance(state, node)
 			for (const dep of dependencies(node)) if (walk(dep)) return true
-			return before !== state.mountRevision
+			return false
 		}
 		let dependencyRequestedRewalk = false
 		while (walkDependencies()) dependencyRequestedRewalk = true
