@@ -246,6 +246,68 @@ describe('Store', () => {
 			expect(order).toEqual(['B', 'E', 'A'])
 		})
 
+		it('invalidates a completed walk when a later root relinks a mounted intermediate', async () => {
+			const order: string[] = []
+			const flag = primitiveAtom(false)
+			const dependency = primitiveAtom(1, logMount(order, 'dependency'))
+			const middle = derivedAtom((read) => (read(flag) ? read(dependency) : 0))
+			const first = derivedAtom(
+				(read) => read(middle),
+				undefined,
+				logMount(order, 'first'),
+			)
+			const writer = primitiveAtom(0, {
+				onMount: (_read, write) => {
+					order.push('writer')
+					write(flag, true)
+				},
+			})
+			const last = derivedAtom(
+				(read) => read(middle) + read(writer),
+				undefined,
+				logMount(order, 'last'),
+			)
+			const store = createStore()
+			store.subscribe(middle, () => {})
+			await flushMicrotask()
+			store.subscribe(first, () => {})
+			store.subscribe(last, () => {})
+
+			await flushMicrotask()
+
+			expect(order).toEqual(['first', 'writer', 'dependency', 'last'])
+		})
+
+		it('mounts reversed dependencies before their new consumer after an onMount write', async () => {
+			const order: string[] = []
+			const store = createStore()
+			const enabled = primitiveAtom(false)
+			const reversed = primitiveAtom(false)
+			const writer = primitiveAtom(1, {
+				onMount: (_read, write) => {
+					order.push('writer')
+					store.subscribe(middle, () => {})
+					write(reversed, true)
+				},
+			})
+			const middle: AtomSymbol<number, never> = derivedAtom(
+				(read) => (read(reversed) ? read(root) : read(writer)),
+				undefined,
+				logMount(order, 'middle'),
+			)
+			const root: AtomSymbol<number, never> = derivedAtom(
+				(read) => (!read(enabled) ? 0 : read(reversed) ? 100 : read(middle)),
+				undefined,
+				logMount(order, 'root'),
+			)
+			store.subscribe(root, () => {})
+			store.send(enabled, true)
+
+			await flushMicrotask()
+
+			expect(order).toEqual(['writer', 'root', 'middle'])
+		})
+
 		it('does not mount a sibling that an onMount write unlinked', async () => {
 			const order: string[] = []
 			const flag = primitiveAtom(false)
@@ -283,6 +345,37 @@ describe('Store', () => {
 			await flushMicrotask()
 
 			expect(order).toEqual(['A', 'I', 'C'])
+		})
+
+		it('does not mount a sibling unlinked by a write below an intermediate', async () => {
+			const order: string[] = []
+			const enabled = primitiveAtom(false)
+			const keep = primitiveAtom(true)
+			const writer = primitiveAtom(1, {
+				onMount: (_read, write) => {
+					order.push('writer')
+					write(keep, false)
+				},
+			})
+			const middle = derivedAtom(
+				(read) => read(writer),
+				undefined,
+				logMount(order, 'middle'),
+			)
+			const sibling = primitiveAtom(2, logMount(order, 'sibling'))
+			const parent = derivedAtom(
+				(read) =>
+					read(enabled) ? read(middle) + (read(keep) ? read(sibling) : 0) : 0,
+				undefined,
+				logMount(order, 'parent'),
+			)
+			const store = createStore()
+			store.subscribe(parent, () => {})
+			store.send(enabled, true)
+
+			await flushMicrotask()
+
+			expect(order).toEqual(['writer', 'middle', 'parent'])
 		})
 
 		it('mounts a dependency gained through an unmounted intermediate before the consumer', async () => {

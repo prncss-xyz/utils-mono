@@ -39,6 +39,7 @@ export function retain<S>(state: StoreState, instance: Instance<S>) {
 		else peekInstance(state, instance)
 	}
 	if (instance.mountCount++ > 0) return
+	state.mountRevision++
 	syncMountedDeps(state, instance)
 	isoAssert(instance.mountCount > 0)
 	queueMount(state, instance)
@@ -47,6 +48,7 @@ export function retain<S>(state: StoreState, instance: Instance<S>) {
 
 export function release<S>(state: StoreState, instance: Instance<S>) {
 	if (--instance.mountCount > 0) return
+	state.mountRevision++
 	const mountedDeps = detachMountedEdges(instance)
 	teardown(state, instance)
 	if (instance.familyEntry) queueEviction(state, instance)

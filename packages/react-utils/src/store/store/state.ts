@@ -50,6 +50,10 @@ export type StoreState = {
 				byName: Map<string, Partial<OperationCounts>>
 		  }
 		| undefined
+	/** Invalidates completed mount walks after writes or retention changes. */
+	mountRevision: number
+	/** Test instrumentation counting mount traversal calls, including cache hits. */
+	mountWalks: number
 	tasks: Tasks | undefined
 	phase: FlushPhase
 	hydrating: boolean
@@ -72,6 +76,8 @@ export function createState(
 		pendingEvaluations: new Set(),
 		epoch: 0,
 		instrumentation: undefined,
+		mountRevision: 0,
+		mountWalks: 0,
 		tasks: undefined,
 		phase: {
 			mounts: undefined,
@@ -152,6 +158,7 @@ export function cancelEviction<S>(state: StoreState, instance: Instance<S>) {
 export function publishChange<S>(state: StoreState, instance: Instance<S>) {
 	instance.version++
 	state.epoch++
+	state.mountRevision++
 }
 
 export function advanceDerivedVersion<S>(

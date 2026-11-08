@@ -199,52 +199,57 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
 }
 
 /**
- * Mounts, dependencies first, every retained instance reachable from
- * `instance` through retained dependencies that is not mounted yet, whether or
- * not it is queued in `mounts`. After each mount, every ancestor on the current
- * path re-walks its dependencies, since `onMount` may change the graph. A
- * dependency mounted for one root can be cleaned up in the same flush if a later
- * root's `onMount` write unlinks it.
+ * Mounts retained dependencies before their consumers, including dependencies
+ * below already-mounted nodes. Completed walks are shared until a write or
+ * retention change invalidates them. A later root can still unlink and clean up
+ * a dependency mounted earlier in the same flush.
  */
 function settleMount(
 	state: StoreState,
-	instance: Instance<any>,
 	mounts: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
 ) {
 	const visited = new Set<Instance<any>>()
-	/**
-	 * Returns whether the caller must re-walk because a mount ran (user code
-	 * may have changed the graph).
-	 */
+	const visiting = new Set<Instance<any>>()
+	let revision = state.mountRevision
+	/** Returns whether a graph change requires the caller to re-walk. */
 	const walk = (node: Instance<any>): boolean => {
-		if (visited.has(node)) return false
-		visited.add(node)
+		state.mountWalks++
+		if (revision !== state.mountRevision) {
+			visited.clear()
+			visiting.clear()
+			revision = state.mountRevision
+		}
+		if (visited.has(node) || visiting.has(node)) return false
+		visiting.add(node)
 		if (node.mountCount === 0 || node.symbol.type === 'effect') {
 			mounts.delete(node)
+			visiting.delete(node)
 			return false
 		}
 		const walkDependencies = () => {
+			const before = state.mountRevision
 			peekInstance(state, node)
 			for (const dep of dependencies(node)) if (walk(dep)) return true
-			return false
+			return before !== state.mountRevision
 		}
 		let dependencyRequestedRewalk = false
-		while (walkDependencies()) {
-			dependencyRequestedRewalk = true
-			visited.clear()
-			visited.add(node)
-		}
+		while (walkDependencies()) dependencyRequestedRewalk = true
 		mounts.delete(node)
-		if (node.mountLifecycle) return dependencyRequestedRewalk
-		isoAssert(mountWrites.size === 0)
-		state.phase.mountWrites = mountWrites
-		mount(state, node)
-		state.phase.mountWrites = undefined
-		applyUpdates(state, mountWrites)
-		return true
+		const before = state.mountRevision
+		if (!node.mountLifecycle) {
+			isoAssert(mountWrites.size === 0)
+			state.phase.mountWrites = mountWrites
+			mount(state, node)
+			state.phase.mountWrites = undefined
+			applyUpdates(state, mountWrites)
+		}
+		visiting.delete(node)
+		if (before !== state.mountRevision) return true
+		visited.add(node)
+		return dependencyRequestedRewalk
 	}
-	walk(instance)
+	for (const instance of mounts) walk(instance)
 }
 
 function reconcile(
@@ -272,8 +277,7 @@ function settle(
 	applyUpdates(state, primitives)
 	do {
 		for (const instance of reconciles) reconcile(state, instance, reconciles)
-		for (const instance of mounts)
-			settleMount(state, instance, mounts, mountWrites)
+		settleMount(state, mounts, mountWrites)
 		if (idle()) for (const dep of releases.splice(0)) release(state, dep)
 	} while (!idle() || releases.length > 0)
 }

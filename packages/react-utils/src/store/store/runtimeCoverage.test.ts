@@ -7,15 +7,29 @@ import {
 	primitiveAtom,
 	type Read,
 	type AtomSymbol,
+	type Store,
 } from '.'
 import { flush } from './flush'
 import {
+	countOperations,
 	createStore,
 	createStubState,
 	flushMicrotask,
 	inspect,
+	type Instrumentation,
 } from './utils.testing'
 import { dispatch } from './write'
+
+const instrumented = new WeakMap<Store, Instrumentation>()
+
+function validationCount(store: Store) {
+	let instrumentation = instrumented.get(store)
+	if (!instrumentation) {
+		instrumentation = countOperations(store)
+		instrumented.set(store, instrumentation)
+	}
+	return instrumentation.totals.validations
+}
 
 describe('runtime lifecycle scenarios', () => {
 	it('does not mount an ancestor released by a dependency mount', async () => {
@@ -50,6 +64,47 @@ describe('runtime lifecycle scenarios', () => {
 		).toBe(0)
 	})
 
+	it('does not evaluate a released queued root after a commit', async () => {
+		const source = primitiveAtom(0)
+		const getter = vi.fn((read: Read) => read(source))
+		const root = derivedAtom(getter)
+		const store = createStore()
+		const release = store.subscribe(root, () => {})
+		release()
+		store.send(source, 1)
+
+		await flushMicrotask()
+
+		expect(getter).toHaveBeenCalledOnce()
+	})
+
+	it('remounts a released queued dependency before a later consumer', async () => {
+		const events: string[] = []
+		const store = createStore()
+		const dependency = primitiveAtom(1, {
+			onMount: () => {
+				events.push('dependency')
+			},
+		})
+		const consumer = derivedAtom((read) => read(dependency), undefined, {
+			onMount: () => {
+				events.push('consumer')
+			},
+		})
+		const writer = primitiveAtom(0, {
+			onMount: () => {
+				store.subscribe(consumer, () => {})
+			},
+		})
+		const release = store.subscribe(dependency, () => {})
+		release()
+		store.subscribe(writer, () => {})
+
+		await flushMicrotask()
+
+		expect(events).toEqual(['dependency', 'consumer'])
+	})
+
 	it('keeps a clean mounted cache fresh across unrelated commits', async () => {
 		const source = primitiveAtom(1)
 		const unrelated = primitiveAtom(0)
@@ -58,12 +113,12 @@ describe('runtime lifecycle scenarios', () => {
 		const store = createStore()
 		const release = store.subscribe(cached, () => {})
 		await flushMicrotask()
-		const validations = inspect(store).validations
+		const validations = validationCount(store)
 		store.send(unrelated, 1)
 		await flushMicrotask()
 
 		expect(store.peek(cached)).toBe(1)
-		expect(inspect(store).validations).toBe(validations)
+		expect(validationCount(store)).toBe(validations)
 		expect(getter).toHaveBeenCalledOnce()
 		release()
 	})
@@ -75,14 +130,14 @@ describe('runtime lifecycle scenarios', () => {
 		const cached = derivedAtom(getter)
 		const store = createStore()
 		expect(store.peek(cached)).toBe(1)
-		const validations = inspect(store).validations
+		const validations = validationCount(store)
 		store.send(unrelated, 1)
 		await flushMicrotask()
 
 		expect(store.peek(cached)).toBe(1)
-		expect(inspect(store).validations - validations).toBe(1)
+		expect(validationCount(store) - validations).toBe(1)
 		expect(store.peek(cached)).toBe(1)
-		expect(inspect(store).validations - validations).toBe(1)
+		expect(validationCount(store) - validations).toBe(1)
 		expect(getter).toHaveBeenCalledOnce()
 	})
 
@@ -98,10 +153,10 @@ describe('runtime lifecycle scenarios', () => {
 		expect(store.peek(cached)).toBe(4)
 		store.send(first, 3)
 		await flushMicrotask()
-		const validations = inspect(store).validations
+		const validations = validationCount(store)
 
 		expect(store.peek(cached)).toBe(8)
-		expect(inspect(store).validations - validations).toBe(2)
+		expect(validationCount(store) - validations).toBe(2)
 		expect(getter).toHaveBeenCalledTimes(2)
 	})
 
@@ -267,10 +322,10 @@ describe('runtime lifecycle scenarios', () => {
 		store.send(unrelated, 1)
 		await flushMicrotask()
 		useDependency = false
-		const validations = inspect(store).validations
+		const validations = validationCount(store)
 
 		expect(store.peek(cached)).toBe(0)
-		expect(inspect(store).validations - validations).toBe(1)
+		expect(validationCount(store) - validations).toBe(1)
 	})
 
 	it('allows an onMount without cleanup to release itself', () => {
