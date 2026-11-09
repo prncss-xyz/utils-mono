@@ -17,6 +17,7 @@ import {
 	createStubState,
 	flushMicrotask,
 	inspect,
+	mountCount,
 	type Instrumentation,
 } from './utils.testing'
 import { dispatch } from './write'
@@ -60,9 +61,7 @@ describe('runtime lifecycle scenarios', () => {
 		await flushMicrotask()
 
 		expect(events).toEqual(['child', 'child cleanup'])
-		expect(
-			inspect(store).instances.get(parent as AtomSymbol<any, any>)?.mountCount,
-		).toBe(0)
+		expect(mountCount(store, parent)).toBe(0)
 	})
 
 	it('does not evaluate a released queued root after a commit', async () => {
@@ -170,7 +169,7 @@ describe('runtime lifecycle scenarios', () => {
 		expect(store.peek(cached)).toBe(2)
 		await flushMicrotask()
 		expect(mount).not.toHaveBeenCalled()
-		expect(inspect(store).instances.get(resource)?.mountCount).toBe(0)
+		expect(mountCount(store, resource)).toBe(0)
 	})
 
 	it('stores short string keys in equality families', async () => {
@@ -288,7 +287,7 @@ describe('runtime lifecycle scenarios', () => {
 		store.send(flag, false)
 		await flushMicrotask()
 
-		expect(inspect(store).instances.get(second)?.mountCount).toBe(0)
+		expect(mountCount(store, second)).toBe(0)
 		const unsubscribeSecond = store.subscribe(second, () => {})
 		await flushMicrotask()
 		expect(secondMount).toHaveBeenCalledTimes(2)
@@ -340,7 +339,7 @@ describe('runtime lifecycle scenarios', () => {
 		flush(state)
 
 		expect(mount).toHaveBeenCalledOnce()
-		expect(inspect(store).instances.get(resource)?.mountCount).toBe(0)
+		expect(mountCount(store, resource)).toBe(0)
 	})
 
 	it('releases the final retained resource synchronously', () => {
@@ -354,7 +353,7 @@ describe('runtime lifecycle scenarios', () => {
 
 		unsubscribe()
 		expect(cleanup).toHaveBeenCalledOnce()
-		expect(state.instances.get(resource)?.mountCount).toBe(0)
+		expect(mountCount(store, resource)).toBe(0)
 		expect(state.tasks).toBeUndefined()
 	})
 
@@ -376,7 +375,7 @@ describe('runtime lifecycle scenarios', () => {
 		expect(body).toHaveBeenCalledOnce()
 		expect(cleanup).toHaveBeenCalledOnce()
 		expect(state.instances.get(effect)?.mountCount).toBe(0)
-		expect(state.instances.get(resource)?.mountCount).toBe(0)
+		expect(mountCount(store, resource)).toBe(0)
 	})
 
 	it('hydrates pending values without scheduling a second flush', () => {
@@ -430,7 +429,7 @@ describe('runtime lifecycle scenarios', () => {
 		await flushMicrotask()
 
 		expect(mounts).toEqual(['first', 'second'])
-		expect(inspect(store).instances.get(first)?.mountCount).toBe(0)
+		expect(mountCount(store, first)).toBe(0)
 		unmountAgain()
 	})
 
@@ -545,7 +544,7 @@ describe('runtime lifecycle scenarios', () => {
 
 		expect(values).toEqual([4])
 		expect(mount).not.toHaveBeenCalled()
-		expect(inspect(store).instances.get(resource)?.mountCount).toBe(0)
+		expect(mountCount(store, resource)).toBe(0)
 	})
 
 	it('runs an effect remounted by its own cleanup after the effects already queued', async () => {
