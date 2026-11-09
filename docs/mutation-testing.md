@@ -11,6 +11,7 @@ Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vit
 - Incremental state is kept in `packages/react-utils/reports/stryker-incremental.json`, so a rerun on unchanged code finishes in seconds.
 - After a config-only change, the incremental run is enough. Compare its `mutation.json` with the previous one using the store task notes' `cmp.mjs`.
 - Pass `--force` for a full rerun only when the test set or the runner settings change.
+- `--force` reruns every mutant but does not drop stale test entries. The incremental differ copies forward tests recorded in the incremental file that no longer exist (`@stryker-mutator/core` `incremental-differ.js`, the loop under "Make sure that tests that didn't run this time around aren't forgotten"), and `--force` only affects mutants. Renamed or deleted tests therefore stay in `mutation.json` under their old names, referenced by no mutant. Delete `packages/react-utils/reports/stryker-incremental.json` before the run to clear them.
 - After a run, `pgrep -af '[v]itest|[s]tryker-mutator|[s]tryker run'` must print nothing.
 
 ## Report counts and survivors

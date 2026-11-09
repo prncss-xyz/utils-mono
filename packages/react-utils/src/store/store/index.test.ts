@@ -7,12 +7,7 @@ import {
 	primitiveAtom,
 	type AtomSymbol,
 } from '.'
-import {
-	countOperations,
-	createStore,
-	flushMicrotask,
-	inspect,
-} from './utils.testing'
+import { countOperations, createStore, flushMicrotask } from './utils.testing'
 
 describe('Store', () => {
 	it('hydrates atoms and family members before the store is returned', () => {

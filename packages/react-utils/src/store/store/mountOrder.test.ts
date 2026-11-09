@@ -10,7 +10,7 @@ import {
 import { createStore, flushMicrotask, mountCount } from './utils.testing'
 
 describe('mount order within a flush', () => {
-	describe('transitive mount order within a flush', () => {
+	describe('transitive', () => {
 		const logMount = (order: string[], name: string) => ({
 			onMount: () => {
 				order.push(name)

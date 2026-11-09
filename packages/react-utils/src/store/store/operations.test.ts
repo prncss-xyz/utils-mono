@@ -67,7 +67,12 @@ describe('operation counts', () => {
 		const doubled = derivedAtom((read) => read(source) * 2, null, {
 			name: 'doubled',
 			onMount: (_read, _write, mountEffect) => {
-				mountEffect(effectAtom((get) => get(source), () => () => {}))
+				mountEffect(
+					effectAtom(
+						(get) => get(source),
+						() => () => {},
+					),
+				)
 				return () => {}
 			},
 		})
