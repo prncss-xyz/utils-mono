@@ -11,6 +11,8 @@ export type FamilyRetention =
 export type AtomOptions<S> = {
 	effect?: Effect<S>
 	onMount?: OnMount
+	/** Label under which opt-in operation counters report this atom's work. */
+	name?: string
 }
 
 export type PrimitiveSymbol<S, Args extends unknown[]> = AtomOptions<S> & {

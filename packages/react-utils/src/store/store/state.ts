@@ -12,13 +12,43 @@ import {
 	type Tasks,
 } from './types'
 
+/**
+ * Work counted by opt-in instrumentation:
+ * - `getters`: derived getter runs for the committed view.
+ * - `pendingGetters`: derived getter runs for the pending view read by setters.
+ * - `invalidations`: instances reached by change propagation in a flush.
+ * - `validations`: dependency validations of unmounted derived instances.
+ * - `notifications`: subscription callback calls.
+ * - `effects`: effect calls.
+ * - `cleanups`: calls of cleanups returned by `onMount` or effects.
+ */
+export type Operation =
+	| 'getters'
+	| 'pendingGetters'
+	| 'invalidations'
+	| 'validations'
+	| 'notifications'
+	| 'effects'
+	| 'cleanups'
+
+type OperationCounts = Record<Operation, number>
+
 export type StoreState = {
 	instances: WeakMap<AtomSymbol<any, any>, Instance<any>>
 	families: WeakMap<AtomFamily<any, any, any>, FamilyStorage<any, any>>
 	pendingEvaluations: Set<Instance<any>>
 	epoch: number
-	/** Test instrumentation counting every dependency validation call. */
-	validations: number
+	/**
+	 * Opt-in operation counters, in total and by atom name; `undefined`
+	 * disables counting. They hold only numbers and strings, so they never keep
+	 * an instance or a symbol alive.
+	 */
+	instrumentation:
+		| {
+				totals: OperationCounts
+				byName: Map<string, Partial<OperationCounts>>
+		  }
+		| undefined
 	tasks: Tasks | undefined
 	phase: FlushPhase
 	hydrating: boolean
@@ -40,7 +70,7 @@ export function createState(
 		families: new WeakMap(),
 		pendingEvaluations: new Set(),
 		epoch: 0,
-		validations: 0,
+		instrumentation: undefined,
 		tasks: undefined,
 		phase: {
 			mounts: undefined,
@@ -127,4 +157,23 @@ export function advanceDerivedVersion<S>(
 	instance: Instance<S>,
 ) {
 	instance.version++
+}
+
+/** Callers check `state.instrumentation` first, keeping disabled counting to a field read. */
+export function countOperation(
+	state: StoreState,
+	operation: Operation,
+	symbol: AtomSymbol<any, any>,
+) {
+	const instrumentation = state.instrumentation
+	isoAssert(instrumentation)
+	instrumentation.totals[operation]++
+	const { name } = symbol
+	if (name === undefined) return
+	let named = instrumentation.byName.get(name)
+	if (named === undefined) {
+		named = {}
+		instrumentation.byName.set(name, named)
+	}
+	named[operation] = (named[operation] ?? 0) + 1
 }

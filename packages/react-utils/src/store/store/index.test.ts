@@ -12,7 +12,12 @@ import {
 } from '.'
 import { isoAssert, type SetStateWithReset } from '../../functions'
 import { createCommands } from '../commandAtoms'
-import { consumerCount, createStore, inspect } from './utils.testing'
+import {
+	consumerCount,
+	countOperations,
+	createStore,
+	inspect,
+} from './utils.testing'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -1176,19 +1181,20 @@ describe('Store', () => {
 			layer.reduce((sum, atom) => sum + read(atom), 0),
 		)
 		const store = createStore()
+		const { totals } = countOperations(store)
 		const initial = store.peek(top)
 		const derivedCount = depth * width
 		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
-		const validations = inspect(store).validations
+		const validations = totals.validations
 		expect(store.peek(top)).toBe(initial)
 		expect(store.peek(top)).toBe(initial)
-		expect(inspect(store).validations).toBe(validations)
+		expect(totals.validations).toBe(validations)
 		expect(evaluate).toHaveBeenCalledTimes(derivedCount)
 		store.send(leaf, 2)
 		await flushMicrotask()
 		expect(store.peek(top)).toBe(2 * initial)
 		expect(evaluate).toHaveBeenCalledTimes(2 * derivedCount)
-		expect(inspect(store).validations - validations).toBeLessThanOrEqual(
+		expect(totals.validations - validations).toBeLessThanOrEqual(
 			derivedCount + 1,
 		)
 	})

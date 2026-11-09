@@ -8,7 +8,12 @@ import {
 import { noread, type AtomFamily, type AtomSymbol } from '../atoms'
 import { peekInstance } from './engine'
 import { getInstance } from './registry'
-import { type StoreState, cancelEviction, pendingWrites } from './state'
+import {
+	type StoreState,
+	cancelEviction,
+	countOperation,
+	pendingWrites,
+} from './state'
 import { type Instance } from './types'
 
 /** Setters read the pending state; public reads keep the committed snapshot. */
@@ -26,6 +31,8 @@ export function readPending<S, Key, Args extends unknown[]>(
 			: peekInstance(state, instance)
 	isoAssert(!state.pendingEvaluations.has(instance), 'cyclic atom dependency')
 	state.pendingEvaluations.add(instance)
+	if (state.instrumentation)
+		countOperation(state, 'pendingGetters', instance.symbol)
 	const value = instance.symbol.getter(state.readPending)
 	state.pendingEvaluations.delete(instance)
 	return value

@@ -1,7 +1,7 @@
 import { exhaustive, isoAssert } from '../../functions'
 import { type Effect } from '../atoms'
 import { getCleanupOrder } from './cleanupOrder'
-import { peekInstance, cleanupEffect } from './engine'
+import { peekInstance, cleanupEffect, runCleanup } from './engine'
 import { consumers, mountedDependencies, dependencies } from './graph'
 import { evict } from './registry'
 import {
@@ -9,6 +9,7 @@ import {
 	queueReconcile,
 	queueEffect,
 	publishChange,
+	countOperation,
 } from './state'
 import {
 	type Delivery,
@@ -25,6 +26,8 @@ function invalidate<S>(
 ) {
 	if (affected.has(instance)) return
 	affected.add(instance)
+	if (state.instrumentation)
+		countOperation(state, 'invalidations', instance.symbol)
 	if (instance.symbol.type === 'derived') instance.freshness = { type: 'dirty' }
 	if (instance.mountCount > 0) {
 		queueReconcile(state, instance)
@@ -47,7 +50,11 @@ function notify(state: StoreState, roots: Iterable<Instance<any>>) {
 		for (const [callback, registration] of instance.subscriptions)
 			deliveries.push({ instance, callback, registration })
 	for (const { instance, callback, registration } of deliveries)
-		if (instance.subscriptions.get(callback) === registration) callback()
+		if (instance.subscriptions.get(callback) === registration) {
+			if (state.instrumentation)
+				countOperation(state, 'notifications', instance.symbol)
+			callback()
+		}
 }
 
 function mount<S>(state: StoreState, instance: Instance<S>) {
@@ -57,7 +64,7 @@ function mount<S>(state: StoreState, instance: Instance<S>) {
 	const cleanup = instance.symbol.onMount?.(state.read, state.write)
 	if (cleanup) {
 		if (instance.mountLifecycle === lifecycle) lifecycle.cleanup = cleanup
-		else cleanup()
+		else runCleanup(state, instance, cleanup)
 	}
 }
 
@@ -87,10 +94,11 @@ function runEffect<S>(
 	}
 	for (const dep of mountedDependencies(instance)) collect(dep)
 	instance.effectLifecycle = lifecycle
+	if (state.instrumentation) countOperation(state, 'effects', instance.symbol)
 	const cleanup = effect(next, last, state.read, state.write)
 	if (cleanup) {
 		if (instance.effectLifecycle === lifecycle) lifecycle.cleanup = cleanup
-		else cleanup()
+		else runCleanup(state, instance, cleanup)
 	}
 }
 

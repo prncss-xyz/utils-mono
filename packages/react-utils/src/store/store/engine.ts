@@ -27,6 +27,7 @@ import {
 	queueEviction,
 	cancelEviction,
 	advanceDerivedVersion,
+	countOperation,
 } from './state'
 import {
 	type DeferredRelease,
@@ -142,7 +143,17 @@ function teardown(state: StoreState, instance: Instance<any>) {
 	instance.effectLifecycle = undefined
 	instance.mountLifecycle = undefined
 	if (effectLifecycle) cleanupEffect(state, effectLifecycle, mountLifecycle)
-	else mountLifecycle?.cleanup?.()
+	else runCleanup(state, instance, mountLifecycle?.cleanup)
+}
+
+export function runCleanup(
+	state: StoreState,
+	instance: Instance<any>,
+	cleanup: (() => void) | undefined,
+) {
+	if (cleanup === undefined) return
+	if (state.instrumentation) countOperation(state, 'cleanups', instance.symbol)
+	cleanup()
 }
 
 export function cleanupEffect(
@@ -151,14 +162,14 @@ export function cleanupEffect(
 	mountLifecycle?: MountLifecycle,
 ) {
 	if (lifecycle.cleaning) {
-		mountLifecycle?.cleanup?.()
+		runCleanup(state, lifecycle.instance, mountLifecycle?.cleanup)
 		return
 	}
 	const cleanup = lifecycle.cleanup
 	lifecycle.cleanup = undefined
 	lifecycle.cleaning = true
-	cleanup?.()
-	mountLifecycle?.cleanup?.()
+	runCleanup(state, lifecycle.instance, cleanup)
+	runCleanup(state, lifecycle.instance, mountLifecycle?.cleanup)
 	for (const deferred of lifecycle.deferredReleases) {
 		lifecycle.deferredReleases.delete(deferred)
 		deferred.owners.delete(lifecycle)
@@ -192,6 +203,7 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 			return value
 		}) as Read
 		const previous = instance.value
+		if (state.instrumentation) countOperation(state, 'getters', symbol)
 		const next = symbol.getter(read)
 		instance.value = next
 		if (!Object.is(next, previous)) advanceDerivedVersion(state, instance)
@@ -224,7 +236,8 @@ function revalidateUnmounted<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function depsAreCurrent<S>(state: StoreState, instance: Instance<S>) {
-	state.validations++
+	if (state.instrumentation)
+		countOperation(state, 'validations', instance.symbol)
 	for (const [dep, version] of dependencyVersions(instance)) {
 		if (dep.version !== version) return false
 		peekInstance(state, dep)

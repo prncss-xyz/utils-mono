@@ -2,11 +2,18 @@ import { expect, test } from 'vite-plus/test'
 
 import {
 	atomFamily,
-	createStore,
 	derivedAtom,
 	primitiveAtom,
 	type AtomSymbol,
+	type Store,
 } from '.'
+import {
+	countOperations,
+	createOperationCounts,
+	createStore,
+	stopCountingOperations,
+	type OperationCounts,
+} from './utils.testing'
 
 type Counters = {
 	getters: number
@@ -17,10 +24,21 @@ type Counters = {
 }
 
 type Scenario = {
+	stores: Store[]
 	update: () => void
 	read: () => number
 	verify: (value: number) => void
 	dispose: () => void
+	/** Operations of one iteration, summed over `stores`. */
+	operations: Partial<OperationCounts>
+}
+
+function sumOperations(counts: OperationCounts[]): OperationCounts {
+	const sum = createOperationCounts()
+	for (const count of counts)
+		for (const operation of Object.keys(sum) as (keyof OperationCounts)[])
+			sum[operation] += count[operation]
+	return sum
 }
 
 function scenario(name: string, setup: (counts: Counters) => Scenario) {
@@ -44,7 +62,16 @@ function scenario(name: string, setup: (counts: Counters) => Scenario) {
 			await Promise.resolve()
 			await Promise.resolve()
 			await iterate()
+			const operations = graph.stores.map(
+				(store) => countOperations(store).totals,
+			)
+			await iterate()
 			graph.verify(value)
+			expect(sumOperations(operations)).toEqual({
+				...createOperationCounts(),
+				...graph.operations,
+			})
+			for (const store of graph.stores) stopCountingOperations(store)
 			const settled = { ...counts }
 			await Promise.resolve()
 			await Promise.resolve()
@@ -69,6 +96,7 @@ for (const resolved of [false, true]) {
 		const handle = store.resolve(cached)
 		store.peek(cached)
 		return {
+			stores: [store],
 			update: () => {},
 			read: () => (resolved ? handle.peek() : store.peek(cached)),
 			verify: (value) => {
@@ -76,6 +104,7 @@ for (const resolved of [false, true]) {
 				expect(counts.getters).toBe(1)
 			},
 			dispose: () => {},
+			operations: {},
 		}
 	})
 }
@@ -97,6 +126,7 @@ function deepChain(counts: Counters, storeCount: number): Scenario {
 	for (const store of stores) store.peek(tip)
 	let next = 0
 	return {
+		stores,
 		update: () => {
 			next++
 			for (const store of stores) store.send(root, next)
@@ -104,6 +134,11 @@ function deepChain(counts: Counters, storeCount: number): Scenario {
 		read: () => stores.reduce((sum, store) => sum + store.peek(tip), 0),
 		verify: (value) => expect(value).toBe((next + 1_000) * storeCount),
 		dispose: () => {},
+		operations: {
+			getters: 1_000 * storeCount,
+			invalidations: storeCount,
+			validations: 1_000 * storeCount,
+		},
 	}
 }
 
@@ -127,6 +162,7 @@ function diamond(counts: Counters, storeCount: number): Scenario {
 	)
 	let next = 0
 	return {
+		stores,
 		update: () => {
 			next++
 			for (const store of stores) store.send(root, next)
@@ -136,6 +172,11 @@ function diamond(counts: Counters, storeCount: number): Scenario {
 			expect(value).toBe((next * 1_000 + 499_500) * storeCount),
 		dispose: () => {
 			for (const dispose of disposers) dispose()
+		},
+		operations: {
+			getters: 1_001 * storeCount,
+			invalidations: 1_002 * storeCount,
+			notifications: storeCount,
 		},
 	}
 }
@@ -162,6 +203,7 @@ scenario('conditional dependencies', (counts) => {
 	})
 	let enabled = false
 	return {
+		stores: [store],
 		update: () => {
 			enabled = !enabled
 			store.send(flag, enabled)
@@ -169,6 +211,12 @@ scenario('conditional dependencies', (counts) => {
 		read: () => store.peek(conditional),
 		verify: (value) => expect(value).toBe(enabled ? 40 : 20),
 		dispose,
+		operations: {
+			getters: 1,
+			invalidations: 2,
+			validations: 1,
+			notifications: 1,
+		},
 	}
 })
 
@@ -192,6 +240,7 @@ scenario('equal-valued derived: 1,000 consumers', (counts) => {
 	)
 	let next = 0
 	return {
+		stores: [store],
 		update: () => {
 			next += 2
 			store.send(root, next)
@@ -202,6 +251,7 @@ scenario('equal-valued derived: 1,000 consumers', (counts) => {
 		dispose: () => {
 			for (const dispose of disposers) dispose()
 		},
+		operations: { getters: 1_001, invalidations: 1_002, notifications: 1_000 },
 	}
 })
 
@@ -225,10 +275,12 @@ scenario('pending reads: 10 derived atoms', (counts) => {
 	for (const atom of derived) store.peek(atom)
 	let next = 0
 	return {
+		stores: [store],
 		update: () => store.send(setter, ++next),
 		read: () => store.peek(result),
 		verify: (value) => expect(value).toBe(next * 20),
 		dispose: () => {},
+		operations: { pendingGetters: 10, invalidations: 11 },
 	}
 })
 
@@ -265,6 +317,7 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 	)
 	let next = 0
 	return {
+		stores: [store],
 		update: () => store.send(root, ++next),
 		read: () => atoms.reduce((sum, atom) => sum + store.peek(atom), 0),
 		verify: (value) => {
@@ -275,6 +328,13 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 		},
 		dispose: () => {
 			for (const dispose of disposers) dispose()
+		},
+		operations: {
+			getters: 100,
+			invalidations: 101,
+			notifications: 100,
+			effects: 100,
+			cleanups: 100,
 		},
 	}
 })
@@ -293,11 +353,13 @@ for (const TTL of [0, Infinity]) {
 		const keys = Array.from({ length: 1_000 }, (_, key) => key)
 		for (const key of keys) store.resolve(family, key).peek()
 		return {
+			stores: [store],
 			update: () => {},
 			read: () =>
 				keys.reduce((sum, key) => sum + store.resolve(family, key).peek(), 0),
 			verify: (value) => expect(value).toBe(499_500),
 			dispose: () => {},
+			operations: { getters: TTL === 0 ? 1_000 : 0 },
 		}
 	})
 }
@@ -308,3 +370,72 @@ scenario('many stores: deep chain over 100 stores', (counts) =>
 scenario('many stores: diamond over 100 stores', (counts) =>
 	diamond(counts, 100),
 )
+
+function layeredGraph(counts: Counters, source: AtomSymbol<number, any>) {
+	let layer: AtomSymbol<number, never>[] = [source as AtomSymbol<number, never>]
+	for (let level = 0; level < 10; level++) {
+		const previous = layer
+		layer = Array.from({ length: 2 }, () =>
+			derivedAtom((read) => {
+				counts.getters++
+				return previous.reduce((sum, atom) => sum + read(atom), 0)
+			}),
+		)
+	}
+	const tip = layer
+	return derivedAtom((read) => {
+		counts.getters++
+		return tip.reduce((sum, atom) => sum + read(atom), 0)
+	})
+}
+
+scenario('pending reads: 21-node layered graph, read twice', (counts) => {
+	const store = createStore()
+	const root = primitiveAtom(0)
+	const top = layeredGraph(counts, root)
+	const result = primitiveAtom(0)
+	const setter = derivedAtom(null, (read, write, next: number) => {
+		write(root, next)
+		write(result, read(top) + read(top))
+	})
+	store.peek(top)
+	let next = 0
+	return {
+		stores: [store],
+		update: () => store.send(setter, ++next),
+		read: () => store.peek(result),
+		verify: (value) => expect(value).toBe(next * 2_048),
+		dispose: () => {},
+		operations: { pendingGetters: 2 * 2_047, invalidations: 2 },
+	}
+})
+
+scenario('unrelated write: 100-node unmounted chain', (counts) => {
+	const store = createStore()
+	const root = primitiveAtom(0)
+	const unrelated = primitiveAtom(0)
+	let tip = derivedAtom((read) => {
+		counts.getters++
+		return read(root) + 1
+	})
+	for (let index = 1; index < 100; index++) {
+		const previous = tip
+		tip = derivedAtom((read) => {
+			counts.getters++
+			return read(previous) + 1
+		})
+	}
+	store.peek(tip)
+	let next = 0
+	return {
+		stores: [store],
+		update: () => store.send(unrelated, ++next),
+		read: () => store.peek(tip),
+		verify: (value) => {
+			expect(value).toBe(100)
+			expect(counts.getters).toBe(100)
+		},
+		dispose: () => {},
+		operations: { invalidations: 1, validations: 100 },
+	}
+})
