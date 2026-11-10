@@ -6,7 +6,6 @@ import {
 	effectAtom,
 	primitiveAtom,
 	type Read,
-	type AtomSymbol,
 	type Store,
 	type EffectAtom,
 } from '.'
@@ -17,6 +16,7 @@ import {
 	createStubState,
 	flushMicrotask,
 	inspect,
+	internalInstance,
 	mountCount,
 	type Instrumentation,
 } from './utils.testing'
@@ -226,9 +226,7 @@ describe('runtime lifecycle scenarios', () => {
 		const family = atomFamily((_key: string) => member)
 		const store = createStore()
 		expect(store.peek(family, 'first')).toBe(3)
-		const instance = inspect(store).instances.get(
-			member as AtomSymbol<any, any>,
-		)!
+		const instance = internalInstance(store, member)
 		expect(instance.depVersions.size).toBe(1)
 		await flushMicrotask()
 
