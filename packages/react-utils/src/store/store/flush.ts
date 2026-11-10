@@ -28,6 +28,11 @@ import {
 } from './state'
 import { type Delivery, type Instance, type MountLifecycle } from './types'
 
+/**
+ * Marks derived consumers of a changed primitive dirty and the other reachable
+ * derived instances `check`, so they rerun only if a dependency's version
+ * changed. A `check` instance reached again from a primitive becomes dirty.
+ */
 function invalidate<S>(
 	state: StoreState,
 	instance: Instance<S>,
@@ -37,12 +42,18 @@ function invalidate<S>(
 	affected.add(instance)
 	if (state.instrumentation)
 		countOperation(state, 'invalidations', instance.symbol)
-	if (instance.symbol.type === 'derived') instance.freshness = { type: 'dirty' }
 	if (instance.mountCount > 0) {
 		queueReconcile(state, instance)
 		queueEffect(state, instance)
 	}
-	for (const sub of consumers(instance)) invalidate(state, sub, affected)
+	const isSource = instance.symbol.type === 'primitive'
+	for (const sub of consumers(instance)) {
+		if (sub.symbol.type === 'derived') {
+			if (isSource) sub.freshness = { type: 'dirty' }
+			else if (sub.freshness.type === 'clean') sub.freshness = { type: 'check' }
+		}
+		invalidate(state, sub, affected)
+	}
 }
 
 /**

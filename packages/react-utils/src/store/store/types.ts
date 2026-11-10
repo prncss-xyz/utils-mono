@@ -36,8 +36,17 @@ export type Delivery = {
 	registration: Registration
 }
 
+/**
+ * - `dirty`: the getter must run.
+ * - `check`: a transitive dependency changed; the getter runs only if a
+ *   dependency's version changed.
+ * - `evaluating`: the getter is running; reading the instance is a cycle.
+ * - `clean`: the value is current while mounted, or was validated at
+ *   `validatedAt` while unmounted.
+ */
 type Freshness =
 	| { type: 'dirty' }
+	| { type: 'check' }
 	| { type: 'evaluating' }
 	| { type: 'clean'; validatedAt: number }
 

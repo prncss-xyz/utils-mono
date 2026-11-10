@@ -150,23 +150,112 @@ describe('operation counts', () => {
 		}
 	})
 
-	it('runs 1,001 getters and 1,000 callbacks when an equal-parity fanout keeps its values', async () => {
+	it('runs only the intermediate getter when an equal-parity fanout keeps its values', async () => {
 		const source = primitiveAtom(0)
-		const parity = derivedAtom((read) => read(source) % 2)
+		const parity = derivedAtom((read) => read(source) % 2, null, {
+			name: 'parity',
+		})
 		const consumers = Array.from({ length: 1_000 }, () =>
 			derivedAtom((read) => read(parity) + 1),
 		)
 		const store = createStore()
 		for (const consumer of consumers) store.subscribe(consumer, () => {})
 		await flushMicrotask()
-		const { totals } = countOperations(store)
+		const instrumentation = countOperations(store)
 		store.send(source, 2)
 		await flushMicrotask()
 		expect(consumers.every((consumer) => store.peek(consumer) === 1)).toBe(true)
-		expect(totals).toEqual(
-			counts({ getters: 1_001, invalidations: 1_002, notifications: 1_000 }),
+		expect(countsByName(instrumentation, 'getters')).toEqual({ parity: 1 })
+		expect(instrumentation.totals).toEqual(
+			counts({
+				getters: 1,
+				invalidations: 1_002,
+				validations: 1_000,
+				notifications: 1_000,
+			}),
 		)
 	})
+
+	it.each([
+		{
+			title: 'reads the source first',
+			sum: (source: () => number, doubled: () => number) =>
+				source() + doubled(),
+		},
+		{
+			title: 'reads the derived dependency first',
+			sum: (source: () => number, doubled: () => number) =>
+				doubled() + source(),
+		},
+	])(
+		'reruns a direct consumer without validating it when it $title',
+		async ({ sum }) => {
+			const source = primitiveAtom(0)
+			const doubled = derivedAtom((read) => read(source) * 2)
+			const consumer = derivedAtom((read) =>
+				sum(
+					() => read(source),
+					() => read(doubled),
+				),
+			)
+			const store = createStore()
+			store.subscribe(consumer, () => {})
+			await flushMicrotask()
+			const { totals } = countOperations(store)
+			store.send(source, 1)
+			await flushMicrotask()
+			expect(store.peek(consumer)).toBe(3)
+			expect(totals).toEqual(
+				counts({ getters: 2, invalidations: 3, notifications: 1 }),
+			)
+		},
+	)
+
+	it.each([
+		{
+			title: 'NaN to NaN',
+			map: (input: number) => Math.sqrt(-input),
+			from: 1,
+			to: 2,
+			value: NaN,
+			getters: { intermediate: 1 },
+		},
+		{
+			title: '0 to -0',
+			map: (input: number) => input * 0,
+			from: 1,
+			to: -1,
+			value: -Infinity,
+			getters: { intermediate: 1, sink: 1 },
+		},
+		{
+			title: '-0 to 0',
+			map: (input: number) => input * 0,
+			from: -1,
+			to: 1,
+			value: Infinity,
+			getters: { intermediate: 1, sink: 1 },
+		},
+	])(
+		'compares a mounted intermediate value with Object.is from $title',
+		async ({ map, from, to, value, getters }) => {
+			const source = primitiveAtom(from)
+			const intermediate = derivedAtom((read) => map(read(source)), null, {
+				name: 'intermediate',
+			})
+			const sink = derivedAtom((read) => 1 / read(intermediate), null, {
+				name: 'sink',
+			})
+			const store = createStore()
+			store.subscribe(sink, () => {})
+			await flushMicrotask()
+			const instrumentation = countOperations(store)
+			store.send(source, to)
+			await flushMicrotask()
+			expect(store.peek(sink)).toBe(value)
+			expect(countsByName(instrumentation, 'getters')).toEqual(getters)
+		},
+	)
 
 	it('runs each getter of a 21-node layered graph once per pending read', async () => {
 		const source = primitiveAtom(0)

@@ -28,8 +28,8 @@ type Case = {
 	title: string
 	graph: () => Graph
 	values: unknown[]
-	peeked: Runs
-	subscribed: { getters: Runs; notifications: number }
+	getters: Runs
+	notifications: number
 }
 
 const once = (...names: string[]): Runs =>
@@ -39,8 +39,8 @@ const once = (...names: string[]): Runs =>
  * Cases adapted from the reactive-framework-test-suite used by Alien Signals'
  * conformance spec. Each write batch commits at the next microtask, so a
  * synchronous write followed by a read becomes a write, a flush, then a read.
- * `peeked` counts getter runs when the sinks are only read, `subscribed` when
- * each sink has one subscription.
+ * `getters` counts getter runs, the same whether the sinks are only read or
+ * each has one subscription; `notifications` counts callbacks when subscribed.
  */
 const cases: Case[] = [
 	{
@@ -53,8 +53,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['aa aa'],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#2 diamond + tail',
@@ -67,8 +67,8 @@ const cases: Case[] = [
 			return { sinks: [e], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['aa aa'],
-		peeked: once('b', 'c', 'd', 'e'),
-		subscribed: { getters: once('b', 'c', 'd', 'e'), notifications: 1 },
+		getters: once('b', 'c', 'd', 'e'),
+		notifications: 1,
 	},
 	{
 		title: '#3 jagged diamond + tails',
@@ -83,11 +83,8 @@ const cases: Case[] = [
 			return { sinks: [e, f, g], update: (store) => store.send(a, 'b') }
 		},
 		values: ['b b', 'b b', 'b b'],
-		peeked: once('b', 'c', 'd', 'e', 'f', 'g'),
-		subscribed: {
-			getters: once('b', 'c', 'd', 'e', 'f', 'g'),
-			notifications: 3,
-		},
+		getters: once('b', 'c', 'd', 'e', 'f', 'g'),
+		notifications: 3,
 	},
 	{
 		title: '#5 drop A→B→A updates',
@@ -99,8 +96,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 4) }
 		},
 		values: ['d: 7'],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#6 one unchanged dep does not block update from changed dep',
@@ -115,8 +112,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['aa c'],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#7 unchanged computed values stop propagation to downstream',
@@ -134,8 +131,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['b c'],
-		peeked: once('b', 'c'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c'),
+		notifications: 1,
 	},
 	{
 		title: '#9 linear convergence',
@@ -147,8 +144,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 1) }
 		},
 		values: [3],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#10 exponential convergence',
@@ -161,8 +158,8 @@ const cases: Case[] = [
 			return { sinks: [e], update: (store) => store.send(a, 1) }
 		},
 		values: [5],
-		peeked: once('b', 'c', 'd', 'e'),
-		subscribed: { getters: once('b', 'c', 'd', 'e'), notifications: 1 },
+		getters: once('b', 'c', 'd', 'e'),
+		notifications: 1,
 	},
 	{
 		title: '#157 three-way diamond: sub updates when two of three deps unmark',
@@ -181,8 +178,8 @@ const cases: Case[] = [
 			return { sinks: [e], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['aa c d'],
-		peeked: once('b', 'c', 'd', 'e'),
-		subscribed: { getters: once('b', 'c', 'd', 'e'), notifications: 1 },
+		getters: once('b', 'c', 'd', 'e'),
+		notifications: 1,
 	},
 	{
 		title: '#188 batch + dynamic deps: unnecessary recompute avoided',
@@ -200,8 +197,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [-1],
-		peeked: once('d'),
-		subscribed: { getters: once('d'), notifications: 1 },
+		getters: once('d'),
+		notifications: 1,
 	},
 	{
 		title: '#189 multi-signal change: topological ordering preserved',
@@ -223,8 +220,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [4],
-		peeked: once('d', 'e'),
-		subscribed: { getters: once('d', 'e'), notifications: 1 },
+		getters: once('d', 'e'),
+		notifications: 1,
 	},
 	{
 		title: '#189 multi-signal change: unreachable computed skipped',
@@ -248,8 +245,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [-1],
-		peeked: once('e'),
-		subscribed: { getters: once('e'), notifications: 1 },
+		getters: once('e'),
+		notifications: 1,
 	},
 	{
 		title: '#192 effect not re-run when computed dep value unchanged',
@@ -262,8 +259,8 @@ const cases: Case[] = [
 			return { sinks: [c], update: (store) => store.send(s, 1) }
 		},
 		values: [0],
-		peeked: once('c'),
-		subscribed: { getters: once('c'), notifications: 1 },
+		getters: once('c'),
+		notifications: 1,
 	},
 	{
 		title: '#204 multi-source fan-in',
@@ -280,8 +277,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [22],
-		peeked: once('c'),
-		subscribed: { getters: once('c'), notifications: 1 },
+		getters: once('c'),
+		notifications: 1,
 	},
 	{
 		title: '#205 multi-source cross-diamond',
@@ -300,8 +297,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [62],
-		peeked: once('c', 'd', 'e'),
-		subscribed: { getters: once('c', 'd', 'e'), notifications: 1 },
+		getters: once('c', 'd', 'e'),
+		notifications: 1,
 	},
 	{
 		title: '#206 stacked diamonds',
@@ -316,11 +313,8 @@ const cases: Case[] = [
 			return { sinks: [g], update: (store) => store.send(a, 2) }
 		},
 		values: [8],
-		peeked: once('b', 'c', 'd', 'e', 'f', 'g'),
-		subscribed: {
-			getters: once('b', 'c', 'd', 'e', 'f', 'g'),
-			notifications: 1,
-		},
+		getters: once('b', 'c', 'd', 'e', 'f', 'g'),
+		notifications: 1,
 	},
 	{
 		title: '#207 wide fan-out: all effects fire once',
@@ -332,11 +326,8 @@ const cases: Case[] = [
 			return { sinks, update: (store) => store.send(a, 1) }
 		},
 		values: [1, 2, 3, 4, 5, 6],
-		peeked: once('c0', 'c1', 'c2', 'c3', 'c4', 'c5'),
-		subscribed: {
-			getters: once('c0', 'c1', 'c2', 'c3', 'c4', 'c5'),
-			notifications: 6,
-		},
+		getters: once('c0', 'c1', 'c2', 'c3', 'c4', 'c5'),
+		notifications: 6,
 	},
 	{
 		title: '#208 deep asymmetric join (depth 3 vs 1)',
@@ -350,8 +341,8 @@ const cases: Case[] = [
 			return { sinks: [f], update: (store) => store.send(a, 2) }
 		},
 		values: [4],
-		peeked: once('b', 'c', 'd', 'e', 'f'),
-		subscribed: { getters: once('b', 'c', 'd', 'e', 'f'), notifications: 1 },
+		getters: once('b', 'c', 'd', 'e', 'f'),
+		notifications: 1,
 	},
 	{
 		title: '#28 same primitive value — no propagation',
@@ -361,8 +352,8 @@ const cases: Case[] = [
 			return { sinks: [c], update: (store) => store.send(a, 1) }
 		},
 		values: [1],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#34 pruning stops at first unchanged node',
@@ -378,8 +369,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [1],
-		peeked: once('b'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b'),
+		notifications: 1,
 	},
 	{
 		title:
@@ -394,8 +385,8 @@ const cases: Case[] = [
 			return { sinks: [c2], update: (store) => store.send(s, 1) }
 		},
 		values: [5],
-		peeked: once('c1', 'c2'),
-		subscribed: { getters: once('c1', 'c2'), notifications: 1 },
+		getters: once('c1', 'c2'),
+		notifications: 1,
 	},
 	{
 		title: '#220 computed same object reference — no downstream propagation',
@@ -410,8 +401,8 @@ const cases: Case[] = [
 			return { sinks: [c], update: (store) => store.send(a, 1) }
 		},
 		values: [{ x: 1 }],
-		peeked: once('b'),
-		subscribed: { getters: once('b', 'c'), notifications: 1 },
+		getters: once('b'),
+		notifications: 1,
 	},
 	{
 		title: '#18 cached — not re-evaluated if deps unchanged',
@@ -421,8 +412,8 @@ const cases: Case[] = [
 			return { sinks: [b], update: () => {} }
 		},
 		values: [0],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#22 chained computed avoids redundant re-compute',
@@ -434,8 +425,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 1) }
 		},
 		values: [1],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#25 no re-compute if zero dependencies',
@@ -444,8 +435,8 @@ const cases: Case[] = [
 			return { sinks: [a], update: () => {} }
 		},
 		values: [42],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#145 undefined is a valid computed value (not uninitialized)',
@@ -459,8 +450,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [undefined],
-		peeked: once('c'),
-		subscribed: { getters: once('c'), notifications: 1 },
+		getters: once('c'),
+		notifications: 1,
 	},
 	{
 		title: '#147 computed not recomputed in batch if dep reverts',
@@ -476,8 +467,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [0],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#94 stale invocation does not trigger pending computations',
@@ -492,8 +483,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 1) }
 		},
 		values: ['1 c'],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#97 flags indirectly updated during dirty-checking',
@@ -505,8 +496,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, 1) }
 		},
 		values: [2],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 1 },
+		getters: once('b', 'c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#158 stale chained computed accessed after update: values fresh',
@@ -518,8 +509,8 @@ const cases: Case[] = [
 			return { sinks: [b, c, d], update: (store) => store.send(a, 10) }
 		},
 		values: [11, 12, 13],
-		peeked: once('b', 'c', 'd'),
-		subscribed: { getters: once('b', 'c', 'd'), notifications: 3 },
+		getters: once('b', 'c', 'd'),
+		notifications: 3,
 	},
 	{
 		title: '#12 inactive dep does not trigger',
@@ -531,8 +522,8 @@ const cases: Case[] = [
 			return { sinks: [c], update: (store) => store.send(b, 'bb') }
 		},
 		values: ['a'],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#12 active dep triggers',
@@ -544,8 +535,8 @@ const cases: Case[] = [
 			return { sinks: [c], update: (store) => store.send(a, 'aa') }
 		},
 		values: ['aa'],
-		peeked: once('c'),
-		subscribed: { getters: once('c'), notifications: 1 },
+		getters: once('c'),
+		notifications: 1,
 	},
 	{
 		title: '#13 switching branches deactivates old deps',
@@ -561,8 +552,8 @@ const cases: Case[] = [
 			}
 		},
 		values: ['b'],
-		peeked: {},
-		subscribed: { getters: {}, notifications: 0 },
+		getters: {},
+		notifications: 0,
 	},
 	{
 		title: '#13 switching branches activates new deps',
@@ -578,8 +569,8 @@ const cases: Case[] = [
 			}
 		},
 		values: ['bb'],
-		peeked: once('c'),
-		subscribed: { getters: once('c'), notifications: 1 },
+		getters: once('c'),
+		notifications: 1,
 	},
 	{
 		title: '#14 new deps updated before dependee',
@@ -598,8 +589,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [2],
-		peeked: once('c', 'd'),
-		subscribed: { getters: once('c', 'd'), notifications: 1 },
+		getters: once('c', 'd'),
+		notifications: 1,
 	},
 	{
 		title: '#16 lazy branch',
@@ -614,8 +605,8 @@ const cases: Case[] = [
 			}
 		},
 		values: [0],
-		peeked: once('b', 'c'),
-		subscribed: { getters: once('b', 'c'), notifications: 1 },
+		getters: once('b', 'c'),
+		notifications: 1,
 	},
 	{
 		title:
@@ -628,8 +619,8 @@ const cases: Case[] = [
 			return { sinks: [d], update: (store) => store.send(a, null) }
 		},
 		values: [0],
-		peeked: once('b', 'd'),
-		subscribed: { getters: once('b', 'd'), notifications: 1 },
+		getters: once('b', 'd'),
+		notifications: 1,
 	},
 	{
 		title:
@@ -643,8 +634,8 @@ const cases: Case[] = [
 			return { sinks: [c3], update: (store) => store.send(src1, 2) }
 		},
 		values: [2],
-		peeked: once('c1', 'c2', 'c3'),
-		subscribed: { getters: once('c1', 'c2', 'c3'), notifications: 1 },
+		getters: once('c1', 'c2', 'c3'),
+		notifications: 1,
 	},
 	{
 		title:
@@ -663,13 +654,13 @@ const cases: Case[] = [
 			}
 		},
 		values: [1],
-		peeked: once('c1'),
-		subscribed: { getters: once('c1', 'c2'), notifications: 1 },
+		getters: once('c1'),
+		notifications: 1,
 	},
 ]
 
 describe('Alien Signals conformance', () => {
-	it.each(cases)('$title (peeked)', async ({ graph, values, peeked }) => {
+	it.each(cases)('$title (peeked)', async ({ graph, values, getters }) => {
 		const { sinks, warmup, update } = graph()
 		const store = createStore()
 		for (const sink of sinks) store.peek(sink)
@@ -680,12 +671,12 @@ describe('Alien Signals conformance', () => {
 		update(store)
 		await flushMicrotask()
 		expect(sinks.map((sink) => store.peek(sink))).toEqual(values)
-		expect(countsByName(instrumentation, 'getters')).toEqual(peeked)
+		expect(countsByName(instrumentation, 'getters')).toEqual(getters)
 	})
 
 	it.each(cases)(
 		'$title (subscribed)',
-		async ({ graph, values, subscribed }) => {
+		async ({ graph, values, getters, notifications }) => {
 			const { sinks, warmup, update } = graph()
 			const store = createStore()
 			for (const sink of sinks) store.subscribe(sink, () => {})
@@ -699,7 +690,7 @@ describe('Alien Signals conformance', () => {
 			expect({
 				getters: countsByName(instrumentation, 'getters'),
 				notifications: instrumentation.totals.notifications,
-			}).toEqual(subscribed)
+			}).toEqual({ getters, notifications })
 		},
 	)
 })

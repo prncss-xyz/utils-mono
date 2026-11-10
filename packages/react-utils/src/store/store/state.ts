@@ -18,7 +18,8 @@ import {
  * - `getters`: derived getter runs for the committed view.
  * - `pendingGetters`: derived getter runs for the pending view read by setters.
  * - `invalidations`: instances reached by change propagation in a flush.
- * - `validations`: dependency validations of unmounted derived instances.
+ * - `validations`: dependency validations of derived instances marked
+ *   `check`, or unmounted and not yet validated at the current epoch.
  * - `notifications`: subscription callback calls.
  * - `effects`: effect calls.
  * - `cleanups`: calls of cleanups returned by `onMount` or effects.

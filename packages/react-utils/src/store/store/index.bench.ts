@@ -178,6 +178,7 @@ function diamond(counts: Counters, storeCount: number): Scenario {
 		operations: {
 			getters: 1_001 * storeCount,
 			invalidations: 1_002 * storeCount,
+			validations: storeCount,
 			notifications: storeCount,
 		},
 	}
@@ -253,7 +254,12 @@ scenario('equal-valued derived: 1,000 consumers', (counts) => {
 		dispose: () => {
 			for (const dispose of disposers) dispose()
 		},
-		operations: { getters: 1_001, invalidations: 1_002, notifications: 1_000 },
+		operations: {
+			getters: 1,
+			invalidations: 1_002,
+			validations: 1_000,
+			notifications: 1_000,
+		},
 	}
 })
 

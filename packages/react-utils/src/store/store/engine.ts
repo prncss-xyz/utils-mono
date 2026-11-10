@@ -104,9 +104,9 @@ function unlink<S>(
 }
 
 /**
- * Checks direct consumers only. Invalidation dirties every transitive
- * consumer, so through tracked reads a stale transitive consumer implies a
- * stale direct one. Effects have no consumers.
+ * Checks direct consumers only. Invalidation marks every transitive
+ * consumer dirty or `check`, so through tracked reads a stale transitive
+ * consumer implies a stale direct one. Effects have no consumers.
  */
 function hasStaleConsumer(instance: Instance<any>): boolean {
 	isoAssert(instance.freshness.type === 'clean')
@@ -184,7 +184,7 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 	isoAssert(symbol.type !== 'effect', 'effect atoms have no value')
 	if (symbol.type === 'derived' && instance.freshness.type !== 'dirty') {
 		if (isFresh(state, instance)) return instance.value
-		revalidateUnmounted(state, instance)
+		revalidate(state, instance)
 	}
 	if (instance.freshness.type === 'dirty') {
 		isoAssert(symbol.type === 'derived')
@@ -212,20 +212,22 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 }
 
 /**
- * Whether the instance is mounted or already validated at the current
- * epoch. It must be re-checked after `depsAreCurrent`, because nested
- * peeks can mount or revalidate the instance.
+ * Whether the instance is clean and either mounted or already validated at
+ * the current epoch. It must be re-checked after `depsAreCurrent`, because
+ * nested peeks can mount or revalidate the instance.
  */
 function isFresh<S>(state: StoreState, instance: Instance<S>) {
 	return (
-		instance.mountCount > 0 ||
-		(instance.freshness.type === 'clean' &&
-			instance.freshness.validatedAt === state.epoch)
+		instance.freshness.type === 'clean' &&
+		(instance.mountCount > 0 || instance.freshness.validatedAt === state.epoch)
 	)
 }
 
-function revalidateUnmounted<S>(state: StoreState, instance: Instance<S>) {
-	isoAssert(instance.freshness.type === 'clean')
+/** Settles a `check` instance, or an unmounted one not validated this epoch. */
+function revalidate<S>(state: StoreState, instance: Instance<S>) {
+	isoAssert(
+		instance.freshness.type === 'clean' || instance.freshness.type === 'check',
+	)
 	const current = depsAreCurrent(state, instance)
 	if (isFresh(state, instance)) return
 	if (current) instance.freshness = { type: 'clean', validatedAt: state.epoch }
