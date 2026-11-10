@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { derivedAtom, effectAtom, primitiveAtom, type AtomSymbol } from '.'
+import { derivedAtom, effectAtom, primitiveAtom } from '.'
 import {
+	chain,
 	countOperations,
 	countsByName,
 	createOperationCounts,
 	createStore,
 	inspect,
+	layeredGraph,
 	stopCountingOperations,
 	type Instrumentation,
 	type OperationCounts,
@@ -21,35 +23,6 @@ const counts = (overrides: Partial<OperationCounts>): OperationCounts => ({
 
 const named = (instrumentation: Instrumentation) =>
 	Object.fromEntries(instrumentation.byName)
-
-function layeredGraph(source: AtomSymbol<number, any>) {
-	let layer: AtomSymbol<number, never>[] = [source as AtomSymbol<number, never>]
-	for (let level = 0; level < 10; level++) {
-		const previous = layer
-		layer = Array.from({ length: 2 }, (_, index) =>
-			derivedAtom(
-				(read) => previous.reduce((sum, atom) => sum + read(atom), 0),
-				null,
-				{ name: `layer ${level} node ${index}` },
-			),
-		)
-	}
-	const tip = layer
-	return derivedAtom(
-		(read) => tip.reduce((sum, atom) => sum + read(atom), 0),
-		null,
-		{ name: 'top' },
-	)
-}
-
-function chain(source: AtomSymbol<number, any>, length: number) {
-	let tip = derivedAtom((read) => read(source) + 1)
-	for (let index = 1; index < length; index++) {
-		const previous = tip
-		tip = derivedAtom((read) => read(previous) + 1)
-	}
-	return tip
-}
 
 describe('operation counts', () => {
 	it('counts nothing until enabled and stops when disabled', async () => {

@@ -5,14 +5,15 @@ import {
 	derivedAtom,
 	effectAtom,
 	primitiveAtom,
-	type AtomSymbol,
 	type Store,
 } from '.'
 import {
+	chain,
 	countOperations,
 	createOperationCounts,
 	createStore,
 	flushMicrotask,
+	layeredGraph,
 	stopCountingOperations,
 	type OperationCounts,
 } from './utils.testing'
@@ -111,19 +112,9 @@ for (const resolved of [false, true]) {
 	})
 }
 
-function deepChain(counts: Counters, storeCount: number): Scenario {
+function deepChain(storeCount: number): Scenario {
 	const root = primitiveAtom(0)
-	let tip: AtomSymbol<number, never> = derivedAtom((read) => {
-		counts.getters++
-		return read(root) + 1
-	})
-	for (let index = 1; index < 1_000; index++) {
-		const previous = tip
-		tip = derivedAtom((read) => {
-			counts.getters++
-			return read(previous) + 1
-		})
-	}
+	const tip = chain(root, 1_000)
 	const stores = Array.from({ length: storeCount }, () => createStore())
 	for (const store of stores) store.peek(tip)
 	let next = 0
@@ -184,7 +175,7 @@ function diamond(counts: Counters, storeCount: number): Scenario {
 	}
 }
 
-scenario('deep chain: 1,000 nodes', (counts) => deepChain(counts, 1))
+scenario('deep chain: 1,000 nodes', () => deepChain(1))
 scenario('wide diamond: 1,000 middles', (counts) => diamond(counts, 1))
 
 scenario('conditional dependencies', (counts) => {
@@ -378,35 +369,15 @@ for (const TTL of [0, Infinity]) {
 	})
 }
 
-scenario('many stores: deep chain over 100 stores', (counts) =>
-	deepChain(counts, 100),
-)
+scenario('many stores: deep chain over 100 stores', () => deepChain(100))
 scenario('many stores: diamond over 100 stores', (counts) =>
 	diamond(counts, 100),
 )
 
-function layeredGraph(counts: Counters, source: AtomSymbol<number, any>) {
-	let layer: AtomSymbol<number, never>[] = [source as AtomSymbol<number, never>]
-	for (let level = 0; level < 10; level++) {
-		const previous = layer
-		layer = Array.from({ length: 2 }, () =>
-			derivedAtom((read) => {
-				counts.getters++
-				return previous.reduce((sum, atom) => sum + read(atom), 0)
-			}),
-		)
-	}
-	const tip = layer
-	return derivedAtom((read) => {
-		counts.getters++
-		return tip.reduce((sum, atom) => sum + read(atom), 0)
-	})
-}
-
-scenario('pending reads: 21-node layered graph, read twice', (counts) => {
+scenario('pending reads: 21-node layered graph, read twice', () => {
 	const store = createStore()
 	const root = primitiveAtom(0)
-	const top = layeredGraph(counts, root)
+	const top = layeredGraph(root)
 	const result = primitiveAtom(0)
 	const setter = derivedAtom(null, (read, write, next: number) => {
 		write(root, next)
@@ -424,31 +395,18 @@ scenario('pending reads: 21-node layered graph, read twice', (counts) => {
 	}
 })
 
-scenario('unrelated write: 100-node unmounted chain', (counts) => {
+scenario('unrelated write: 100-node unmounted chain', () => {
 	const store = createStore()
 	const root = primitiveAtom(0)
 	const unrelated = primitiveAtom(0)
-	let tip = derivedAtom((read) => {
-		counts.getters++
-		return read(root) + 1
-	})
-	for (let index = 1; index < 100; index++) {
-		const previous = tip
-		tip = derivedAtom((read) => {
-			counts.getters++
-			return read(previous) + 1
-		})
-	}
+	const tip = chain(root, 100)
 	store.peek(tip)
 	let next = 0
 	return {
 		stores: [store],
 		update: () => store.send(unrelated, ++next),
 		read: () => store.peek(tip),
-		verify: (value) => {
-			expect(value).toBe(100)
-			expect(counts.getters).toBe(100)
-		},
+		verify: (value) => expect(value).toBe(100),
 		dispose: () => {},
 		operations: { invalidations: 1, validations: 100 },
 	}

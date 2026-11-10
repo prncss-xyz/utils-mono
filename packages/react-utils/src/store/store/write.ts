@@ -66,8 +66,7 @@ function readPendingInstance<S>(
 	isoAssert(!state.pendingEvaluations.has(instance), 'cyclic atom dependency')
 	if (memo.has(instance)) return memo.get(instance) as S
 	state.pendingEvaluations.add(instance)
-	if (state.instrumentation)
-		countOperation(state, 'pendingGetters', instance.symbol)
+	countOperation(state, 'pendingGetters', instance.symbol)
 	state.evaluatingGetters++
 	const value = instance.symbol.getter(read)
 	state.evaluatingGetters--

@@ -176,14 +176,13 @@ export function advanceDerivedVersion<S>(
 	instance.version++
 }
 
-/** Callers check `state.instrumentation` first, keeping disabled counting to a field read. */
 export function countOperation(
 	state: StoreState,
 	operation: Operation,
 	symbol: AtomSymbol<any, any> | EffectAtom,
 ) {
 	const instrumentation = state.instrumentation
-	isoAssert(instrumentation)
+	if (instrumentation === undefined) return
 	instrumentation.totals[operation]++
 	const name = symbol.type === 'effect' ? undefined : symbol.name
 	if (name === undefined) return

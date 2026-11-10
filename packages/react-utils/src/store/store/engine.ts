@@ -174,7 +174,7 @@ export function runCleanup(
 	cleanup: (() => void) | undefined,
 ) {
 	if (cleanup === undefined) return
-	if (state.instrumentation) countOperation(state, 'cleanups', instance.symbol)
+	countOperation(state, 'cleanups', instance.symbol)
 	cleanup()
 }
 
@@ -200,7 +200,7 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 			return value
 		}) as Read
 		const previous = instance.value
-		if (state.instrumentation) countOperation(state, 'getters', symbol)
+		countOperation(state, 'getters', symbol)
 		state.evaluatingGetters++
 		const next = symbol.getter(read)
 		state.evaluatingGetters--
@@ -237,8 +237,7 @@ function revalidate<S>(state: StoreState, instance: Instance<S>) {
 }
 
 function depsAreCurrent<S>(state: StoreState, instance: Instance<S>) {
-	if (state.instrumentation)
-		countOperation(state, 'validations', instance.symbol)
+	countOperation(state, 'validations', instance.symbol)
 	for (const [dep, version] of dependencyVersions(instance)) {
 		if (dep.version !== version) return false
 		peekInstance(state, dep)

@@ -40,8 +40,7 @@ function invalidate<S>(
 ) {
 	if (affected.has(instance)) return
 	affected.add(instance)
-	if (state.instrumentation)
-		countOperation(state, 'invalidations', instance.symbol)
+	countOperation(state, 'invalidations', instance.symbol)
 	if (instance.mountCount > 0) {
 		queueReconcile(state, instance)
 		queueEffect(state, instance)
@@ -71,8 +70,7 @@ function notify(state: StoreState, roots: Iterable<Instance<any>>) {
 			deliveries.push({ instance, callback, registration })
 	for (const { instance, callback, registration } of deliveries)
 		if (instance.subscriptions.get(callback) === registration) {
-			if (state.instrumentation)
-				countOperation(state, 'notifications', instance.symbol)
+			countOperation(state, 'notifications', instance.symbol)
 			callback()
 		}
 }
@@ -140,7 +138,7 @@ function runEffect(
 	}
 	const lifecycle: MountLifecycle = { children: [], active: true }
 	instance.effectLifecycle = lifecycle
-	if (state.instrumentation) countOperation(state, 'effects', instance.symbol)
+	countOperation(state, 'effects', instance.symbol)
 	resetDependencies(instance)
 	const read: Read = ((symbol, key) => {
 		const dep = getInstance(state, symbol, key)

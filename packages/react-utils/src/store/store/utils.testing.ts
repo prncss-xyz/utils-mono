@@ -2,7 +2,13 @@ import type fc from 'fast-check'
 
 import type { createStore as publicCreateStore } from '.'
 import { isoAssert } from '../../functions'
-import type { AtomSymbol, EffectAtom, Hydrate, Store } from '../atoms'
+import {
+	derivedAtom,
+	type AtomSymbol,
+	type EffectAtom,
+	type Hydrate,
+	type Store,
+} from '../atoms'
 import { createRuntime } from './createRuntime'
 import { consumerCount, mountedDependencyCount } from './graph'
 import { createState, type Operation, type StoreState } from './state'
@@ -66,6 +72,37 @@ export function countsByName(
 /** Stops counting the store's operations. */
 export function stopCountingOperations(store: Store) {
 	inspect(store).instrumentation = undefined
+}
+
+export function layeredGraph(source: AtomSymbol<number, any>) {
+	let layer = [source as AtomSymbol<number, never>]
+	for (let level = 0; level < 10; level++) {
+		const previous = layer
+		layer = Array.from({ length: 2 }, (_, index) =>
+			derivedAtom(
+				(read) => previous.reduce((sum, atom) => sum + read(atom), 0),
+				null,
+				{ name: `layer ${level} node ${index}` },
+			),
+		)
+	}
+	return derivedAtom(
+		(read) => layer.reduce((sum, atom) => sum + read(atom), 0),
+		null,
+		{ name: 'top' },
+	)
+}
+
+export function chain<Args extends unknown[]>(
+	source: AtomSymbol<number, Args>,
+	length: number,
+) {
+	let tip = derivedAtom((read) => read(source) + 1)
+	for (let index = 1; index < length; index++) {
+		const previous = tip
+		tip = derivedAtom((read) => read(previous) + 1)
+	}
+	return tip
 }
 
 export { consumerCount, mountedDependencyCount }
