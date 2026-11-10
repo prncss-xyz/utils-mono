@@ -58,6 +58,8 @@ export type StoreState = {
 	tasks: Tasks | undefined
 	phase: FlushPhase
 	hydrating: boolean
+	/** Getter runs in progress; store calls other than `read` are rejected meanwhile. */
+	evaluatingGetters: number
 	read: Read
 	write: Write
 	readPending: Read
@@ -89,8 +91,13 @@ export function createState(
 			releases: undefined,
 		},
 		hydrating: true,
+		evaluatingGetters: 0,
 		...wiring,
 	}
+}
+
+export function assertOutsideGetter(state: StoreState) {
+	isoAssert(state.evaluatingGetters === 0, 'getters must not call the store')
 }
 
 function getTasks(state: StoreState): Tasks {

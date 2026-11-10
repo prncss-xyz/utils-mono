@@ -201,7 +201,9 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 		}) as Read
 		const previous = instance.value
 		if (state.instrumentation) countOperation(state, 'getters', symbol)
+		state.evaluatingGetters++
 		const next = symbol.getter(read)
+		state.evaluatingGetters--
 		instance.value = next
 		if (!Object.is(next, previous)) advanceDerivedVersion(state, instance)
 		instance.freshness = { type: 'clean', validatedAt: state.epoch }

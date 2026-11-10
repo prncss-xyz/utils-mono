@@ -12,7 +12,7 @@ import {
 import { peekInstance, retain, release } from './engine'
 import { flush } from './flush'
 import { getInstance, getEffectInstance } from './registry'
-import { type StoreState, createState } from './state'
+import { type StoreState, assertOutsideGetter, createState } from './state'
 import { type Instance } from './types'
 import { readPending, sendInstance, dispatch } from './write'
 
@@ -21,12 +21,17 @@ export function createRuntime(hydrate: Hydrate = []): {
 	state: StoreState
 } {
 	const state: StoreState = createState({
-		read: ((symbol, key) =>
-			peekInstance(state, getInstance(state, symbol, key))) as Read,
+		read: ((symbol, key) => {
+			assertOutsideGetter(state)
+			return peekInstance(state, getInstance(state, symbol, key))
+		}) as Read,
 		write: ((
 			symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
 			...rest: unknown[]
-		) => dispatch(state, symbol, rest)) as Write,
+		) => {
+			assertOutsideGetter(state)
+			dispatch(state, symbol, rest)
+		}) as Write,
 		readPending: ((symbol, key) => readPending(state, symbol, key)) as Read,
 		scheduleFlush: () => queueMicrotask(() => flush(state)),
 	})
@@ -40,6 +45,7 @@ export function createRuntime(hydrate: Hydrate = []): {
 	state.hydrating = false
 	const store: Store = {
 		mountEffect: (effect) => {
+			assertOutsideGetter(state)
 			const instance = getEffectInstance(state, effect)
 			retain(state, instance)
 			let active = true
@@ -63,6 +69,7 @@ function subscribeInstance<S>(
 	instance: Instance<S>,
 	notify: () => void,
 ) {
+	assertOutsideGetter(state)
 	let registration = instance.subscriptions.get(notify)
 	if (!registration) {
 		registration = { references: 0 }
@@ -88,15 +95,26 @@ function resolve<S, Key, Args extends unknown[]>(
 	if (instance.handle) return instance.handle
 	if (symbol.type !== 'family' || symbol.retention.type === 'transient') {
 		return (instance.handle = {
-			peek: () => peekInstance(state, instance),
-			send: (...args) => sendInstance(state, instance, args),
+			peek: () => {
+				assertOutsideGetter(state)
+				return peekInstance(state, instance)
+			},
+			send: (...args) => {
+				assertOutsideGetter(state)
+				sendInstance(state, instance, args)
+			},
 			subscribe: (notify) => subscribeInstance(state, instance, notify),
 		})
 	}
 	return (instance.handle = {
-		peek: () => peekInstance(state, getInstance(state, symbol, key)),
-		send: (...args) =>
-			sendInstance(state, getInstance(state, symbol, key), args),
+		peek: () => {
+			assertOutsideGetter(state)
+			return peekInstance(state, getInstance(state, symbol, key))
+		},
+		send: (...args) => {
+			assertOutsideGetter(state)
+			sendInstance(state, getInstance(state, symbol, key), args)
+		},
 		subscribe: (notify) =>
 			subscribeInstance(state, getInstance(state, symbol, key), notify),
 	})

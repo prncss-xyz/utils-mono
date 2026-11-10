@@ -4,10 +4,11 @@ Stryker mutates `packages/react-utils/src/store/store/` to check that the test s
 
 ## Run
 
-Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vitest project of `packages/react-utils`. Settings are shared through `packages/react-utils/unit.testing.ts`; `vp test` and the pre-commit hook run the projects defined in the root `vite.config.ts`, which spreads the same settings. The run uses a fixed fast-check seed (`packages/react-utils/stryker.setup.testing.ts`, loaded only by `packages/react-utils/stryker.vitest.config.ts`).
+Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vitest project of `packages/react-utils`: every `**/*.test.ts` file under that package, not only those beside the store runtime (see `packages/react-utils/unit.testing.ts`). A change to any of those files counts as a change to the unit suite, even when no mutated source changed. Settings are shared through `packages/react-utils/unit.testing.ts`; `vp test` and the pre-commit hook run the projects defined in the root `vite.config.ts`, which spreads the same settings. The run uses a fixed fast-check seed (`packages/react-utils/stryker.setup.testing.ts`, loaded only by `packages/react-utils/stryker.vitest.config.ts`).
 
 - The HTML report is written to `packages/react-utils/reports/mutation/index.html`.
 - A Markdown summary is written to `packages/react-utils/reports/mutation/report.md`: status counts and every surviving or uncovered mutant, with its source text. `scripts/mutation-report.mjs` generates it from `mutation.json`. Run it with `--out <file>` to write a copy, or with `--check <file>` to confirm that a record still contains the generated output. Copy counts and locations from the generated output; do not retype them.
+- Start the run detached, for example `nohup pnpm --filter @prncss-xyz/react-utils mutate > /tmp/mutate.log 2>&1 &`, then poll the log and `reports/mutation/mutation.json`. A first full run can exceed a foreground command limit: one run under `timeout 580` stalled at 776/872 mutants and left no report. A detached incremental run after a test-only change finished in 1m41s; expect about that, and treat a run far beyond it as stuck rather than slow.
 - Incremental state is kept in `packages/react-utils/reports/stryker-incremental.json`, so a rerun on unchanged code finishes in seconds.
 - After a config-only change, the incremental run is enough. Compare its `mutation.json` with the previous one using the store task notes' `cmp.mjs`.
 - Pass `--force` for a full rerun only when the test set or the runner settings change.
@@ -31,6 +32,7 @@ Prefer an incremental run on the final reviewed state. Reuse passing evidence ac
 
 Compare the survivors with those recorded in the previous store task's notes. The latest baseline is the Stryker task's `mutation-results.md`.
 
+- For a test-only change, a HEAD baseline run is not required. Compare against the latest recorded baseline, and state in the task notes that no mutated source changed, since survivor attribution then rests on that.
 - A survivor on unchanged code is a regression in test strength.
 - A survivor on code the task added is missing coverage. Record it in the task notes.
 

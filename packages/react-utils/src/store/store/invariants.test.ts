@@ -43,8 +43,7 @@ describe('store graph invariants', () => {
 
 	it.each([false, true])(
 		'rejects pending getter cycles (indirect: %s)',
-		async (indirect) => {
-			const count = primitiveAtom(0)
+		(indirect) => {
 			const first = derivedAtom<number>((read): number =>
 				read(indirect ? second : first),
 			)
@@ -53,11 +52,8 @@ describe('store graph invariants', () => {
 				read(first)
 			})
 			const store = createStore()
-			store.send(count, 1)
 
 			expect(() => store.send(command)).toThrow('cyclic atom dependency')
-			await flushMicrotask()
-			expect(store.peek(count)).toBe(1)
 		},
 	)
 })

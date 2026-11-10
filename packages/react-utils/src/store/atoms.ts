@@ -232,11 +232,15 @@ function nowrite(): never {
 }
 
 /**
- * Getters are expected to be pure reads through their `read` argument. Writes,
- * subscriptions, or other store calls from a getter are unsupported and not
- * guarded. The runtime may run a getter any number of times and reuses its last
- * result while no dependency has changed, so the result should depend only on
- * what it read. A getter that reads itself, directly or through other getters, is
+ * Getters are pure in the way React render functions are: the result must
+ * depend only on what the getter reads through its `read` argument, which plays
+ * the role of hooks. Other user-supplied functions it calls are not checked, but
+ * the runtime may run a getter any number of times and reuses its last result
+ * while no dependency has changed, so impure inputs such as `Date.now()` give
+ * stale or inconsistent values. A getter must not write, subscribe, peek, or
+ * mount through the store by any other route: the store asserts that no getter
+ * is running when one of those calls is made. After a getter throws, the store
+ * is left in an undefined state and must not be used further. A getter that reads itself, directly or through other getters, is
  * rejected as a cyclic dependency. A promise returned by a getter is a plain
  * value: there is no cancellation, staleness handling, or Suspense support.
  *

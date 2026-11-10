@@ -68,7 +68,9 @@ function readPendingInstance<S>(
 	state.pendingEvaluations.add(instance)
 	if (state.instrumentation)
 		countOperation(state, 'pendingGetters', instance.symbol)
+	state.evaluatingGetters++
 	const value = instance.symbol.getter(read)
+	state.evaluatingGetters--
 	state.pendingEvaluations.delete(instance)
 	memo.set(instance, value)
 	return value
