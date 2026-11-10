@@ -103,10 +103,15 @@ function unlink<S>(
 	} else release(state, dep)
 }
 
+/**
+ * Checks direct consumers only. Invalidation dirties every transitive
+ * consumer, so through tracked reads a stale transitive consumer implies a
+ * stale direct one. Effects have no consumers.
+ */
 function hasStaleConsumer(instance: Instance<any>): boolean {
-	if (instance.symbol.type === 'derived' && instance.freshness.type !== 'clean')
-		return true
-	for (const sub of consumers(instance)) if (hasStaleConsumer(sub)) return true
+	isoAssert(instance.freshness.type === 'clean')
+	for (const consumer of consumers(instance))
+		if (consumer.freshness.type !== 'clean') return true
 	return false
 }
 
