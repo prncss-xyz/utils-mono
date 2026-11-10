@@ -374,7 +374,7 @@ describe('runtime lifecycle scenarios', () => {
 		flush(state)
 		expect(body).toHaveBeenCalledOnce()
 		expect(cleanup).toHaveBeenCalledOnce()
-		expect(state.instances.get(effect)?.mountCount).toBe(0)
+		expect(mountCount(store, effect)).toBe(0)
 		expect(mountCount(store, resource)).toBe(0)
 	})
 

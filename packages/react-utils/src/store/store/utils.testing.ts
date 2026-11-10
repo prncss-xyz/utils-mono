@@ -2,7 +2,7 @@ import type fc from 'fast-check'
 
 import type { createStore as publicCreateStore } from '.'
 import { isoAssert } from '../../functions'
-import type { AtomSymbol, Hydrate, Store } from '../atoms'
+import type { AtomSymbol, EffectAtom, Hydrate, Store } from '../atoms'
 import { createRuntime } from './createRuntime'
 import { consumerCount, mountedDependencyCount } from './graph'
 import { createState, type Operation, type StoreState } from './state'
@@ -86,7 +86,7 @@ export { flushMicrotask } from '../../utils.testing'
 
 export const internalInstance = <S, Args extends unknown[]>(
 	store: Store,
-	symbol: AtomSymbol<S, Args>,
+	symbol: AtomSymbol<S, Args> | EffectAtom,
 ) => {
 	const instance = inspect(store).instances.get(symbol as AtomSymbol<any, any>)
 	isoAssert(instance)
@@ -100,5 +100,5 @@ export const mountedSubCount = <S, Args extends unknown[]>(
 
 export const mountCount = <S, Args extends unknown[]>(
 	store: Store,
-	symbol: AtomSymbol<S, Args>,
+	symbol: AtomSymbol<S, Args> | EffectAtom,
 ) => internalInstance(store, symbol).mountCount
