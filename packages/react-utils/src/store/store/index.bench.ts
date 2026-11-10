@@ -345,7 +345,7 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 		},
 		operations: {
 			getters: 100,
-			invalidations: 101,
+			invalidations: 201,
 			notifications: 100,
 			effects: 100,
 			cleanups: 100,
