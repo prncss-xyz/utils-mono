@@ -304,7 +304,7 @@ describe('mount order within a flush', () => {
 		})
 	})
 
-	describe('release bookkeeping within a flush', () => {
+	describe('release bookkeeping', () => {
 		const logMountCycle = (events: string[]) => ({
 			onMount: () => {
 				events.push('mount')
