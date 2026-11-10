@@ -130,6 +130,17 @@ describe('family eviction', () => {
 		expect(create).toHaveBeenCalledOnce()
 	})
 
+	it('retains a written never-mounted primitive member across later flushes', async () => {
+		const create = vi.fn((_key: string) => primitiveAtom(0))
+		const values = atomFamily(create)
+		const store = createStore()
+		store.send(values, 'a', 3)
+		await flushMicrotask()
+		await flushMicrotask()
+		expect(store.peek(values, 'a')).toBe(3)
+		expect(create).toHaveBeenCalledOnce()
+	})
+
 	it('evicts written write-only members while retaining the primitives they write', async () => {
 		const values = atomFamily((_key: string) => primitiveAtom(0))
 		const create = vi.fn((_key: string) =>

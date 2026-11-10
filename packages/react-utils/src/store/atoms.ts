@@ -48,6 +48,14 @@ export type AtomFamilyOptions<Key> = { TTL?: number } & (
 	| { eq?: Extract<FamilyLookup<Key>, { type: 'eq' }>['eq']; hash?: never }
 )
 
+/**
+ * Reads an atom and, inside a getter or effect, records it as a dependency.
+ * Dependency tracking is synchronous: reads made after an `await` or in a later
+ * callback fall outside the evaluation and are not a supported way to declare
+ * dependencies. A write to such an atom alone does not notify an atom that stays
+ * mounted from its evaluation; beyond that, the effect of a late read (after a
+ * remount, during revalidation, or in an effect) is unspecified.
+ */
 export type Read = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
@@ -55,6 +63,14 @@ export type Read = {
 	): S
 	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>): S
 }
+/**
+ * Writes are batched: a setter reads the pending value left by earlier writes in
+ * the same microtask, so writes compose. Writes commit in one microtask, and
+ * until then `peek` and subscribers see the old committed value, so
+ * `send(x, 1); peek(x)` returns the previous value. A write made by a subscriber
+ * or an effect is applied by a later microtask; a write made by `onMount`
+ * settles within the mount phase, before the first tracked effect read returns.
+ */
 export type Write = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
@@ -90,6 +106,10 @@ export type Subscribe = {
 		notify: () => void,
 	): () => void
 }
+/**
+ * `peek` returns committed values, `send` queues a write, and neither flushes
+ * synchronously. See `Write` for when writes become visible.
+ */
 export type Store = {
 	peek: Read
 	send: Write
@@ -212,6 +232,14 @@ function nowrite(): never {
 }
 
 /**
+ * Getters are expected to be pure reads through their `read` argument. Writes,
+ * subscriptions, or other store calls from a getter are unsupported and not
+ * guarded. The runtime may run a getter any number of times and reuses its last
+ * result while no dependency has changed, so the result should depend only on
+ * what it read. A getter that reads itself, directly or through other getters, is
+ * rejected as a cyclic dependency. A promise returned by a getter is a plain
+ * value: there is no cancellation, staleness handling, or Suspense support.
+ *
  * Infers setter arguments as a tuple. When specifying the value type explicitly,
  * also specify the argument tuple (for example, derivedAtom<number, [n: number]>).
  * Omitting the setter creates a read-only atom.
@@ -248,13 +276,21 @@ function familyRetention(TTL: number): FamilyRetention {
 }
 
 /**
+ * For non-transient TTLs, writing a primitive or readable derived member cancels
+ * its pending eviction, so a written member that is never mounted stays retained
+ * indefinitely, even with TTL 0. Once such a member is mounted and released, it
+ * follows the TTL like any other member. Applications that create unbounded keys
+ * therefore grow memory with every key that is written and never mounted
+ * afterward; the store offers no explicit removal.
+ *
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.
  * Negative TTL values are transient; positive finite values expire after that
  * many milliseconds, and Infinity retains entries indefinitely. NaN is invalid.
- * TTL 0 evicts unwritten, unmounted entries in the next microtask. A first render
- * can peek before eviction and subscribe afterward; its re-resolving handle reaches
- * a new entry, costing one recreation and possibly an extra render for lazy primitives.
+ * TTL 0 evicts an unmounted entry in the next microtask, subject to the write
+ * retention above. A first render can peek before eviction and subscribe
+ * afterward; its re-resolving handle reaches a new entry, costing one
+ * recreation and possibly an extra render for lazy primitives.
  * Keys are matched either by `hash` (default: identity), stored in a Map, or by
  * `eq`, stored as key/value pairs and resolved to the first stored key for which
  * `eq(stored, key)` holds; `hash` and `eq` are mutually exclusive. `eq` lookup is a

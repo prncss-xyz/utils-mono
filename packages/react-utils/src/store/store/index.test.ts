@@ -6,6 +6,7 @@ import {
 	hydrate,
 	primitiveAtom,
 	type AtomSymbol,
+	type Read,
 } from '.'
 import { countOperations, createStore, flushMicrotask } from './utils.testing'
 
@@ -170,5 +171,58 @@ describe('Store', () => {
 		expect(totals.validations - validations).toBeLessThanOrEqual(
 			derivedCount + 1,
 		)
+	})
+
+	it('shows public reads and getters committed values while setters compose against pending writes', async () => {
+		const count = primitiveAtom(0)
+		const increment = derivedAtom(null, (read, write) =>
+			write(count, read(count) + 1),
+		)
+		const doubled = derivedAtom((read) => read(count) * 2)
+		const store = createStore()
+		const seen: number[] = []
+		store.subscribe(count, () => {
+			seen.push(store.peek(count))
+			if (store.peek(count) === 2) store.send(count, 10)
+		})
+		await flushMicrotask()
+		store.send(count, 1)
+		expect(store.peek(count)).toBe(0)
+		store.send(increment)
+		expect(store.peek(count)).toBe(0)
+		expect(store.peek(doubled)).toBe(0)
+		await flushMicrotask()
+		expect(store.peek(count)).toBe(2)
+		expect(seen).toEqual([2])
+		await flushMicrotask()
+		expect(store.peek(count)).toBe(10)
+		expect(seen).toEqual([2, 10])
+	})
+
+	it('keeps a promise a plain value and ignores a read made after an await while it stays subscribed', async () => {
+		const first = primitiveAtom(1)
+		const second = primitiveAtom(10)
+		const getter = vi.fn((read: Read) => {
+			const head = read(first)
+			return Promise.resolve().then(() => head + read(second))
+		})
+		const sum = derivedAtom(getter)
+		const store = createStore()
+		const notify = vi.fn()
+		store.subscribe(sum, notify)
+		await flushMicrotask()
+		const initial = store.peek(sum)
+		expect(initial).toBeInstanceOf(Promise)
+		expect(await initial).toBe(11)
+		store.send(second, 20)
+		await flushMicrotask()
+		expect(getter).toHaveBeenCalledOnce()
+		expect(notify).not.toHaveBeenCalled()
+		expect(store.peek(sum)).toBe(initial)
+		store.send(first, 2)
+		await flushMicrotask()
+		expect(getter).toHaveBeenCalledTimes(2)
+		expect(store.peek(sum)).not.toBe(initial)
+		expect(await store.peek(sum)).toBe(22)
 	})
 })
