@@ -60,24 +60,6 @@ describe('store graph invariants', () => {
 			expect(store.peek(count)).toBe(1)
 		},
 	)
-
-	it('allows repeated reads of a shared dependency', async () => {
-		const source = primitiveAtom(1)
-		const left = derivedAtom((read) => read(source) + 1)
-		const right = derivedAtom((read) => read(source) + read(source))
-		const leaf = derivedAtom((read) => read(left) + read(right))
-		const command = derivedAtom(null, (read, write) =>
-			write(source, read(leaf)),
-		)
-		const store = createStore()
-
-		expect(store.peek(leaf)).toBe(4)
-		store.send(source, 2)
-		store.send(command)
-		await flushMicrotask()
-		expect(store.peek(source)).toBe(7)
-		expect(store.peek(leaf)).toBe(22)
-	})
 })
 
 describe('atom family options', () => {

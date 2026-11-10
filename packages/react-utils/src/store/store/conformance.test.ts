@@ -7,11 +7,7 @@ import {
 	type Read,
 	type Store,
 } from '.'
-import {
-	countOperations,
-	createStore,
-	type Instrumentation,
-} from './utils.testing'
+import { countOperations, countsByName, createStore } from './utils.testing'
 
 const flushMicrotask = () => Promise.resolve()
 
@@ -35,13 +31,6 @@ type Case = {
 	peeked: Runs
 	subscribed: { getters: Runs; notifications: number }
 }
-
-const getterRuns = (instrumentation: Instrumentation): Runs =>
-	Object.fromEntries(
-		[...instrumentation.byName].flatMap(([name, { getters }]) =>
-			getters === undefined ? [] : [[name, getters]],
-		),
-	)
 
 const once = (...names: string[]): Runs =>
 	Object.fromEntries(names.map((name) => [name, 1]))
@@ -691,7 +680,7 @@ describe('Alien Signals conformance', () => {
 		update(store)
 		await flushMicrotask()
 		expect(sinks.map((sink) => store.peek(sink))).toEqual(values)
-		expect(getterRuns(instrumentation)).toEqual(peeked)
+		expect(countsByName(instrumentation, 'getters')).toEqual(peeked)
 	})
 
 	it.each(cases)(
@@ -708,7 +697,7 @@ describe('Alien Signals conformance', () => {
 			await flushMicrotask()
 			expect(sinks.map((sink) => store.peek(sink))).toEqual(values)
 			expect({
-				getters: getterRuns(instrumentation),
+				getters: countsByName(instrumentation, 'getters'),
 				notifications: instrumentation.totals.notifications,
 			}).toEqual(subscribed)
 		},

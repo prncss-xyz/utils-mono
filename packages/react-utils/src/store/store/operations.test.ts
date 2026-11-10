@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { derivedAtom, effectAtom, primitiveAtom, type AtomSymbol } from '.'
 import {
 	countOperations,
+	countsByName,
 	createOperationCounts,
 	createStore,
 	inspect,
@@ -25,14 +26,20 @@ function layeredGraph(source: AtomSymbol<number, any>) {
 	let layer: AtomSymbol<number, never>[] = [source as AtomSymbol<number, never>]
 	for (let level = 0; level < 10; level++) {
 		const previous = layer
-		layer = Array.from({ length: 2 }, () =>
-			derivedAtom((read) =>
-				previous.reduce((sum, atom) => sum + read(atom), 0),
+		layer = Array.from({ length: 2 }, (_, index) =>
+			derivedAtom(
+				(read) => previous.reduce((sum, atom) => sum + read(atom), 0),
+				null,
+				{ name: `layer ${level} node ${index}` },
 			),
 		)
 	}
 	const tip = layer
-	return derivedAtom((read) => tip.reduce((sum, atom) => sum + read(atom), 0))
+	return derivedAtom(
+		(read) => tip.reduce((sum, atom) => sum + read(atom), 0),
+		null,
+		{ name: 'top' },
+	)
 }
 
 function chain(source: AtomSymbol<number, any>, length: number) {
@@ -161,20 +168,23 @@ describe('operation counts', () => {
 		)
 	})
 
-	it('runs 2,047 pending getters on each read of a 21-node layered graph', async () => {
+	it('runs each getter of a 21-node layered graph once per pending read', async () => {
 		const source = primitiveAtom(0)
 		const top = layeredGraph(source)
 		const reads: number[] = []
+		const store = createStore()
+		expect(store.peek(top)).toBe(0)
+		const instrumentation = countOperations(store)
+		const { totals } = instrumentation
+		const getterCounts: number[] = []
 		const setter = derivedAtom(null, (read, write) => {
 			write(source, 1)
 			reads.push(read(top))
+			getterCounts.push(totals.pendingGetters)
 			reads.push(read(top))
 		})
-		const store = createStore()
-		expect(store.peek(top)).toBe(0)
-		const { totals } = countOperations(store)
 		store.send(setter)
-		expect(totals.pendingGetters).toBe(2 * 2_047)
+		expect(getterCounts).toEqual([21])
 		expect(reads).toEqual([1_024, 1_024])
 		expect(store.peek(top)).toBe(0)
 		await flushMicrotask()
@@ -182,10 +192,20 @@ describe('operation counts', () => {
 		expect(totals).toEqual(
 			counts({
 				getters: 21,
-				pendingGetters: 2 * 2_047,
+				pendingGetters: 2 * 21,
 				invalidations: 1,
 				validations: 21,
 			}),
+		)
+		const names = [
+			...Array.from({ length: 10 }, (_, level) => [
+				`layer ${level} node 0`,
+				`layer ${level} node 1`,
+			]).flat(),
+			'top',
+		]
+		expect(countsByName(instrumentation, 'pendingGetters')).toEqual(
+			Object.fromEntries(names.map((name) => [name, 2])),
 		)
 	})
 

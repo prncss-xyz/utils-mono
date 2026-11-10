@@ -50,6 +50,19 @@ export function countOperations(store: Store): Instrumentation {
 	return instrumentation
 }
 
+/** One operation's counts by atom name, for every name with any count. */
+export function countsByName(
+	instrumentation: Instrumentation,
+	operation: Operation,
+): Record<string, number | undefined> {
+	return Object.fromEntries(
+		Array.from(instrumentation.byName, ([name, counts]) => [
+			name,
+			counts[operation],
+		]),
+	)
+}
+
 /** Stops counting the store's operations. */
 export function stopCountingOperations(store: Store) {
 	inspect(store).instrumentation = undefined
