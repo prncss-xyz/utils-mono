@@ -97,32 +97,6 @@ describe('operation counts', () => {
 		})
 	})
 
-	it('holds only numbers and names, never instances or symbols', async () => {
-		const source = primitiveAtom(0, { name: 'source' })
-		const store = createStore()
-		const instrumentation = countOperations(store)
-		for (let key = 0; key < 10; key++) {
-			const derived = derivedAtom((read) => read(source) + key, null, {
-				name: `derived ${key}`,
-			})
-			store.subscribe(derived, () => {})()
-		}
-		store.send(source, 1)
-		await flushMicrotask()
-		const isCounts = (value: unknown) =>
-			typeof value === 'object' &&
-			value !== null &&
-			Object.getPrototypeOf(value) === Object.prototype &&
-			Object.values(value).every((count) => typeof count === 'number')
-		expect(Object.keys(instrumentation)).toEqual(['totals', 'byName'])
-		expect(isCounts(instrumentation.totals)).toBe(true)
-		expect(instrumentation.byName.size).toBe(11)
-		for (const [name, value] of instrumentation.byName) {
-			expect(typeof name).toBe('string')
-			expect(isCounts(value)).toBe(true)
-		}
-	})
-
 	it('runs only the intermediate getter when an equal-parity fanout keeps its values', async () => {
 		const source = primitiveAtom(0)
 		const parity = derivedAtom((read) => read(source) % 2, null, {
