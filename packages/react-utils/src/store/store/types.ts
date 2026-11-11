@@ -53,6 +53,10 @@ type Freshness =
 export type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<S, any> | EffectAtom
+	/**
+	 * Eviction bookkeeping of a member of an evicting family. Cleared on
+	 * eviction, and by a write to a readable member, which then is never evicted.
+	 */
 	familyEntry: FamilyEntry | undefined
 	familyRemovalTimeout: ReturnType<typeof setTimeout> | undefined
 	freshness: Freshness

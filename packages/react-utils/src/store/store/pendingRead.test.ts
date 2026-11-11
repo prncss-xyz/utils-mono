@@ -219,7 +219,10 @@ describe('pending reads', () => {
 	})
 
 	it('does not reuse values that read a family member evicted since', async () => {
-		const members = atomFamily(() => primitiveAtom(0), { TTL: 0 })
+		let created = 0
+		const members = atomFamily(() => primitiveAtom(++created === 1 ? 5 : 0), {
+			TTL: 0,
+		})
 		const other = primitiveAtom(0)
 		const trigger = primitiveAtom(0)
 		const total = derivedAtom((read) => read(members, 1) + read(other))
@@ -231,7 +234,6 @@ describe('pending reads', () => {
 		})
 		const store = createStore()
 		const unsubscribeMember = store.subscribe(members, 1, () => {})
-		store.send(members, 1, 5)
 		store.subscribe(trigger, () => {
 			void Promise.resolve().then(() => store.send(readTotal))
 			store.send(writeAndRead)

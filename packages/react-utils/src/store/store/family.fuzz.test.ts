@@ -62,6 +62,7 @@ type Entry = {
 	value: string
 	pending: string | undefined
 	references: number
+	written: boolean
 	eviction: 'none' | 'queued' | { deadline: number }
 	handle: Handle | undefined
 	subscribers: Subscriber[]
@@ -70,8 +71,9 @@ type Entry = {
 /**
  * Models the eviction policy of a family: a member created by any access is
  * queued for eviction, a first mount or a write cancels that, the last release
- * queues it again, and eviction removes it in the next microtask (TTL 0) or
- * after the TTL has elapsed. Kept handles re-resolve to the current member.
+ * queues it again unless the member was written, and eviction removes it in the
+ * next microtask (TTL 0) or after the TTL has elapsed. Kept handles re-resolve
+ * to the current member.
  */
 async function run(
 	TTL: number,
@@ -111,6 +113,7 @@ async function run(
 		value: `${key}#${++modelCreations}`,
 		pending: undefined,
 		references: 0,
+		written: false,
 		eviction,
 		handle: undefined,
 		subscribers: [],
@@ -190,6 +193,7 @@ async function run(
 					if (real) real.send(next)
 					else store.send(family, { id: key }, next)
 					entry.pending = next
+					entry.written = true
 					entry.eviction = 'none'
 					break
 				}
@@ -237,7 +241,12 @@ async function run(
 					dispose()
 					entry.references--
 					entry.subscribers.splice(entry.subscribers.indexOf(subscriber), 1)
-					if (entry.references === 0 && !transient && TTL !== Infinity)
+					if (
+						entry.references === 0 &&
+						!entry.written &&
+						!transient &&
+						TTL !== Infinity
+					)
 						entry.eviction = 'queued'
 					break
 				}

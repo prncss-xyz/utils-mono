@@ -295,12 +295,13 @@ function familyRetention(TTL: number): FamilyRetention {
 }
 
 /**
- * For non-transient TTLs, writing a primitive or readable derived member cancels
- * its pending eviction, so a written member that is never mounted stays retained
- * indefinitely, even with TTL 0. Once such a member is mounted and released, it
- * follows the TTL like any other member. Applications that create unbounded keys
- * therefore grow memory with every key that is written and never mounted
- * afterward; the store offers no explicit removal.
+ * For non-transient TTLs, a value written to a primitive or readable derived
+ * member is state, not cache: once written, the member is never evicted, even
+ * with TTL 0. Mounting it uses the written value, and releasing it afterward
+ * keeps the member and its value. Writes to write-only derived members hold no
+ * state and leave their eviction unchanged. Memory therefore grows with every
+ * written key; the store offers no explicit removal, so callers must not write
+ * keys they do not need.
  *
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.

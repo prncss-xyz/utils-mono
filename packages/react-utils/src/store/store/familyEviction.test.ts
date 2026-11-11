@@ -1,4 +1,4 @@
-import { assert, describe, expect, it, vi } from 'vitest'
+import { afterEach, assert, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	derivedAtom,
@@ -6,6 +6,7 @@ import {
 	atomFamily,
 	primitiveAtom,
 	TRANSIENT,
+	type AtomOptions,
 	type AtomSymbol,
 	type Read,
 	type Store,
@@ -113,32 +114,118 @@ describe('family eviction', () => {
 		},
 	)
 
-	it('retains a written readable family member', async () => {
-		const values = atomFamily((_key: string) => primitiveAtom(0))
-		const create = vi.fn((_key: string) =>
-			derivedAtom(
-				(read: Read) => read(values, 'a'),
-				(_read, write, value: SetStateWithReset<number>) =>
-					write(values, 'a', value),
-			),
-		)
-		const family = atomFamily(create)
-		const store = createStore()
-		store.send(family, 'a', 7)
-		await flushMicrotask()
-		expect(store.peek(family, 'a')).toBe(7)
-		expect(create).toHaveBeenCalledOnce()
-	})
+	type Member = AtomSymbol<number, [SetStateWithReset<number>]>
+	type BuildMember = (key: string, options: AtomOptions<number>) => Member
 
-	it('retains a written never-mounted primitive member across later flushes', async () => {
-		const create = vi.fn((_key: string) => primitiveAtom(0))
-		const values = atomFamily(create)
-		const store = createStore()
-		store.send(values, 'a', 3)
-		await flushMicrotask()
-		await flushMicrotask()
-		expect(store.peek(values, 'a')).toBe(3)
-		expect(create).toHaveBeenCalledOnce()
+	const memberKinds: [string, () => BuildMember][] = [
+		['primitive', () => (_key, options) => primitiveAtom(0, options)],
+		[
+			'readable derived',
+			() => {
+				const values = atomFamily((_key: string) => primitiveAtom(0), {
+					TTL: Infinity,
+				})
+				return (key, options) =>
+					derivedAtom(
+						(read: Read) => read(values, key),
+						(_read, write, value: SetStateWithReset<number>) =>
+							write(values, key, value),
+						options,
+					)
+			},
+		],
+	]
+
+	describe.each([0, 5])('with TTL %s', (TTL) => {
+		beforeEach(() => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+		})
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		const expire = async () => {
+			await flushMicrotask()
+			vi.advanceTimersByTime(TTL + 1)
+			await flushMicrotask()
+		}
+
+		const setup = (kind: () => BuildMember) => {
+			const build = kind()
+			const mounted: number[] = []
+			const create = vi.fn((key: string) => {
+				const member: Member = build(key, {
+					onMount: (read) => {
+						mounted.push(read(member))
+					},
+				})
+				return member
+			})
+			return { family: atomFamily(create, { TTL }), create, mounted }
+		}
+
+		it.each(memberKinds)(
+			'retains a written never-mounted %s member across flushes and expiry',
+			async (_name, kind) => {
+				const { family, create } = setup(kind)
+				const store = createStore()
+				store.send(family, 'a', 3)
+				await expire()
+				await expire()
+				expect(store.peek(family, 'a')).toBe(3)
+				expect(create).toHaveBeenCalledOnce()
+			},
+		)
+
+		it.each(memberKinds)(
+			'mounts a written %s member with its value and retains it after release',
+			async (_name, kind) => {
+				const { family, create, mounted } = setup(kind)
+				const store = createStore()
+				store.send(family, 'a', 3)
+				await flushMicrotask()
+				const unsubscribe = store.subscribe(family, 'a', () => {})
+				await flushMicrotask()
+				expect(mounted).toEqual([3])
+				unsubscribe()
+				await expire()
+				expect(store.peek(family, 'a')).toBe(3)
+				expect(create).toHaveBeenCalledOnce()
+			},
+		)
+
+		it.each(memberKinds)(
+			'retains a %s member written while mounted after release',
+			async (_name, kind) => {
+				const { family, create } = setup(kind)
+				const store = createStore()
+				const unsubscribe = store.subscribe(family, 'a', () => {})
+				await flushMicrotask()
+				store.send(family, 'a', 3)
+				await flushMicrotask()
+				unsubscribe()
+				await expire()
+				expect(store.peek(family, 'a')).toBe(3)
+				expect(create).toHaveBeenCalledOnce()
+			},
+		)
+
+		it.each(memberKinds)(
+			'evicts a read, never-written %s member after mount and release',
+			async (_name, kind) => {
+				const { family, create, mounted } = setup(kind)
+				const store = createStore()
+				expect(store.peek(family, 'a')).toBe(0)
+				const unsubscribe = store.subscribe(family, 'a', () => {})
+				await flushMicrotask()
+				expect(mounted).toEqual([0])
+				unsubscribe()
+				await expire()
+				expect(create).toHaveBeenCalledOnce()
+				expect(store.peek(family, 'a')).toBe(0)
+				expect(create).toHaveBeenCalledTimes(2)
+			},
+		)
 	})
 
 	it('evicts written write-only members while retaining the primitives they write', async () => {

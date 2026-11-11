@@ -56,7 +56,10 @@ export function sendInstance<S>(
 ) {
 	const { symbol } = instance
 	isoAssert(symbol.type !== 'effect', 'effect atoms have no value')
-	if (symbol.getter !== noread) cancelEviction(state, instance)
+	if (symbol.getter !== noread) {
+		cancelEviction(state, instance)
+		instance.familyEntry = undefined
+	}
 	switch (symbol.type) {
 		case 'primitive': {
 			const event = args[0]
