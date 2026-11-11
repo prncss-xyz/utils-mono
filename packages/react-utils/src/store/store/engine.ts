@@ -165,10 +165,10 @@ function teardown(state: StoreState, instance: Instance<any>) {
 	releaseChildren(state, instance, lifecycle)
 	const cleanup = lifecycle.cleanup
 	lifecycle.cleanup = undefined
-	runCleanup(state, instance, cleanup)
+	callCleanup(state, instance, cleanup)
 }
 
-export function runCleanup(
+export function callCleanup(
 	state: StoreState,
 	instance: Instance<any>,
 	cleanup: (() => void) | undefined,

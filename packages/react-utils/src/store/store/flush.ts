@@ -8,7 +8,7 @@ import {
 	link,
 	syncMountedDeps,
 	releaseChildren,
-	runCleanup,
+	callCleanup,
 	assertOwnershipEdge,
 } from './engine'
 import {
@@ -116,7 +116,7 @@ function mount<S>(state: StoreState, instance: Instance<S>) {
 	scope.done()
 	if (cleanup) {
 		if (instance.mountLifecycle === lifecycle) lifecycle.cleanup = cleanup
-		else runCleanup(state, instance, cleanup)
+		else callCleanup(state, instance, cleanup)
 	}
 }
 
@@ -132,7 +132,7 @@ function runEffect(
 	if (previous) {
 		const cleanup = previous.cleanup
 		previous.cleanup = undefined
-		runCleanup(state, instance, cleanup)
+		callCleanup(state, instance, cleanup)
 		releaseChildren(state, instance, previous)
 		if (instance.effectLifecycle !== previous || instance.mountCount === 0)
 			return
@@ -160,7 +160,7 @@ function runEffect(
 	scope.done()
 	if (cleanup) {
 		if (instance.effectLifecycle === lifecycle) lifecycle.cleanup = cleanup
-		else runCleanup(state, instance, cleanup)
+		else callCleanup(state, instance, cleanup)
 	}
 	if (instance.effectLifecycle === lifecycle) syncMountedDeps(state, instance)
 }
