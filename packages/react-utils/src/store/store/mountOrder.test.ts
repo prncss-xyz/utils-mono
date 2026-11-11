@@ -5,6 +5,7 @@ import {
 	effectAtom,
 	primitiveAtom,
 	type AtomSymbol,
+	type EffectAtom,
 	type Read,
 } from '.'
 import { createStore, flushMicrotask, mountCount } from './utils.testing'
@@ -409,6 +410,63 @@ describe('mount order within a flush', () => {
 
 			expect(events).toEqual(['mount'])
 		})
+
+		const gatedPair = () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const gatedOn = derivedAtom<number>((read) =>
+				read(sel) ? read(resource) : 0,
+			)
+			const gatedOff = derivedAtom<number>((read) =>
+				read(sel) ? 0 : read(resource),
+			)
+			const through = derivedAtom<number>((read) => read(gatedOff))
+			return { events, sel, resource, gatedOn, gatedOff, through }
+		}
+		it.each<{
+			name: string
+			effect: (atoms: ReturnType<typeof gatedPair>) => EffectAtom
+		}>([
+			{
+				name: 'its selector reads two intermediates that swap the dependency',
+				effect: ({ gatedOn, gatedOff }) =>
+					effectAtom(
+						(read) => read(gatedOn) + read(gatedOff),
+						() => {},
+					),
+			},
+			{
+				name: 'its body reads two intermediates that swap the dependency',
+				effect: ({ gatedOn, gatedOff }) =>
+					effectAtom((read) => {
+						read(gatedOff)
+						read(gatedOn)
+					}),
+			},
+			{
+				name: 'it reads the dependency directly once an intermediate below a derived drops it',
+				effect: ({ sel, resource, through }) =>
+					effectAtom(
+						(read) => (read(sel) ? read(resource) : read(through)),
+						() => {},
+					),
+			},
+		])(
+			'keeps a dependency mounted for an effect consumer when $name',
+			async ({ effect }) => {
+				const atoms = gatedPair()
+				const store = createStore()
+				store.mountEffect(effect(atoms))
+				await flushMicrotask()
+				store.send(atoms.sel, true)
+				await flushMicrotask()
+				store.send(atoms.sel, false)
+				await flushMicrotask()
+
+				expect(atoms.events).toEqual(['mount'])
+			},
+		)
 	})
 
 	it('counts a nested subscribe made while an unmounted instance is being retained', async () => {

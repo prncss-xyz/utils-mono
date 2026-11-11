@@ -148,7 +148,7 @@ function runEffect(
 		peekInstance(state, dep)
 		if (lifecycle.active) {
 			if (!hasMountedDependency(instance, dep)) link(state, instance, dep)
-			settle(state, new Map(), mounts, reconciles, mountWrites)
+			settle(state, new Map(), mounts, reconciles, mountWrites, false)
 		}
 		const value = peekInstance(state, dep)
 		if (lifecycle.active) recordDependency(instance, dep, dep.version)
@@ -176,17 +176,18 @@ export function flush(state: StoreState) {
 	state.phase.reconciles = reconciles
 	state.phase.familyEvictions = pendingFamilyEvictions
 	state.phase.releases = []
-	settle(state, primitives, mounts, reconciles, mountWrites)
+	settle(state, primitives, mounts, reconciles, mountWrites, true)
 	for (const instance of effects) {
 		effects.delete(instance)
-		if (instance.mountCount === 0) continue
-		let changed = !instance.effectLifecycle
-		for (const [dep, version] of dependencyVersions(instance)) {
-			peekInstance(state, dep)
-			if (dep.version !== version) changed = true
+		if (instance.mountCount > 0) {
+			let changed = !instance.effectLifecycle
+			for (const [dep, version] of dependencyVersions(instance)) {
+				peekInstance(state, dep)
+				if (dep.version !== version) changed = true
+			}
+			if (changed) runEffect(state, instance, mounts, reconciles, mountWrites)
 		}
-		if (changed) runEffect(state, instance, mounts, reconciles, mountWrites)
-		settle(state, new Map(), mounts, reconciles, mountWrites)
+		settle(state, new Map(), mounts, reconciles, mountWrites, true)
 	}
 	state.phase.effects = undefined
 	state.phase.releases = undefined
@@ -278,23 +279,34 @@ function reconcile(
 	if (instance.mountCount > 0) peekInstance(state, instance)
 }
 
+/**
+ * Applies the updates, then reconciles and mounts until idle. With
+ * `drainReleases`, it also releases the dependencies whose release `unlink`
+ * deferred, once no effect is queued. An effect body passes false, since it
+ * may still read them again.
+ */
 function settle(
 	state: StoreState,
 	primitives: Map<Instance<any>, any>,
 	mounts: Set<Instance<any>>,
 	reconciles: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
+	drainReleases: boolean,
 ) {
-	const releases = state.phase.releases
+	const { releases, effects } = state.phase
 	isoAssert(releases)
+	isoAssert(effects)
 	const idle = () =>
 		mountWrites.size === 0 && mounts.size === 0 && reconciles.size === 0
+	const shouldDrainReleases = () =>
+		drainReleases && idle() && effects.size === 0 && releases.length > 0
 	applyUpdates(state, primitives)
 	do {
 		for (const instance of reconciles) reconcile(state, instance, reconciles)
 		settleMount(state, mounts, mountWrites)
-		if (idle()) for (const dep of releases.splice(0)) release(state, dep)
-	} while (!idle() || releases.length > 0)
+		if (shouldDrainReleases())
+			for (const dep of releases.splice(0)) release(state, dep)
+	} while (!idle() || shouldDrainReleases())
 }
 
 function scheduleEvictions(

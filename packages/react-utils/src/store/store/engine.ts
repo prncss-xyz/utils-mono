@@ -6,6 +6,7 @@ import {
 	hasDependency,
 	dependencyCount,
 	consumers,
+	consumerCount,
 	mountedDependencies,
 	hasMountedDependency,
 	mountedDependencyCount,
@@ -89,30 +90,26 @@ export function link<S>(
 	retain(state, dep)
 }
 
+/**
+ * Defers the release of a dependency holding a live resource while the
+ * instance still has consumers. An instance unlinks only after recomputing,
+ * and the invalidation behind that recompute marked every derived consumer
+ * dirty or `check` and queued every effect consumer, so any consumer may
+ * still read the dependency again in this flush. Effects have no consumers.
+ */
 function unlink<S>(
 	state: StoreState,
 	instance: Instance<S>,
 	dep: Instance<any>,
 ) {
 	if (!hasMountedDependency(instance, dep)) return
-	const stale = hasStaleConsumer(instance)
+	isoAssert(instance.freshness.type === 'clean')
+	const mayReadAgain = consumerCount(instance) > 0
 	removeMountedEdge(instance, dep)
-	if (stale && hasLiveResource(dep)) {
-		isoAssert(state.phase.releases, 'stale consumer outside settle')
+	if (mayReadAgain && hasLiveResource(dep)) {
+		isoAssert(state.phase.releases, 'deferred release outside flush')
 		state.phase.releases.push(dep)
 	} else release(state, dep)
-}
-
-/**
- * Checks direct consumers only. Invalidation marks every transitive
- * consumer dirty or `check`, so through tracked reads a stale transitive
- * consumer implies a stale direct one. Effects have no consumers.
- */
-function hasStaleConsumer(instance: Instance<any>): boolean {
-	isoAssert(instance.freshness.type === 'clean')
-	for (const consumer of consumers(instance))
-		if (consumer.freshness.type !== 'clean') return true
-	return false
 }
 
 function hasLiveResource(

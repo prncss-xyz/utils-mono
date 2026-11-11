@@ -90,7 +90,9 @@ type Graph = Value<typeof graph>
 /**
  * Models value reachability, direct effect reads and owner-scoped children.
  * Effects retain their last direct read until cleanup; value intermediates
- * retain only their current dependencies. Every resource has a balanced lifetime.
+ * retain only their current dependencies. Every resource has a balanced lifetime
+ * and is never released while a mounted consumer reaches it both before and
+ * after the flush.
  */
 async function run(
 	graph: Graph,
@@ -107,8 +109,6 @@ async function run(
 	const liveEffects = new Map<number, number>()
 	const liveChildren = new Set<string>()
 	const violations: string[] = []
-	const suspects: { node: number; consumer: number; index: number }[] = []
-	const history: { node: number; kind: 'mount' | 'unmount' }[] = []
 	const spec = (node: number) =>
 		node < primitiveCount
 			? graph.primitives[node]!
@@ -160,7 +160,6 @@ async function run(
 								if (spec(dep).mount && !liveMounts.has(dep))
 									violations.push(`n${node} mounted before n${dep}`)
 							liveMounts.add(node)
-							history.push({ node, kind: 'mount' })
 							log.push(`mount n${node}`)
 						}
 						if (spec(node).effect) mountEffect(child(`mount ${node}`))
@@ -174,14 +173,15 @@ async function run(
 								violations.push(
 									`n${node} unmounted while directly read by its effect`,
 								)
-							history.push({ node, kind: 'unmount' })
 							log.push(`unmount n${node}`)
 							for (const consumer of liveMounts)
 								if (
 									closure(direct(consumer)).has(node) &&
 									closure(direct(consumer, prior), prior).has(node)
 								)
-									suspects.push({ node, consumer, index: history.length })
+									violations.push(
+										`n${node} released before mounted consumer n${consumer}`,
+									)
 						}
 					}
 				: undefined,
@@ -233,18 +233,6 @@ async function run(
 		prior = [...committed]
 	}
 	const check = (settled: boolean, label: string) => {
-		for (const { node, consumer, index } of suspects.splice(0)) {
-			const later = history.slice(index)
-			if (
-				!later.some((event) => event.node === node && event.kind === 'mount') ||
-				later.some(
-					(event) => event.node === consumer && event.kind === 'unmount',
-				)
-			)
-				violations.push(
-					`n${node} released before mounted consumer n${consumer}`,
-				)
-		}
 		const reachable = closure(subscriptions.map(({ node }) => node))
 		if (settled) {
 			for (const node of nodes.keys()) {

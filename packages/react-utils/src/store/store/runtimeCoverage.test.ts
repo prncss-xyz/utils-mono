@@ -431,31 +431,25 @@ describe('runtime lifecycle scenarios', () => {
 		unmountAgain()
 	})
 
-	it('releases a resource dropped below an effect before mounting a new subscription', async () => {
+	it('releases a resource dropped below a queued effect after the effect body reruns', async () => {
 		const events: string[] = []
 		const flag = primitiveAtom(true)
-		const dropped = primitiveAtom(0, {
+		const dropped = primitiveAtom(1, {
 			onMount: () => () => events.push('dropped cleanup'),
-		})
-		const newcomer = primitiveAtom(0, {
-			onMount: () => {
-				events.push('newcomer mount')
-			},
 		})
 		const middle = derivedAtom((read) => (read(flag) ? read(dropped) : 0))
 		const store = createStore()
 		const unmount = store.mountEffect(
 			effectAtom((read) => {
 				read(middle)
+				events.push('effect')
 			}),
 		)
 		await flushMicrotask()
 		store.send(flag, false)
-		const unsubscribeNewcomer = store.subscribe(newcomer, () => {})
 		await flushMicrotask()
 
-		expect(events).toEqual(['dropped cleanup', 'newcomer mount'])
-		unsubscribeNewcomer()
+		expect(events).toEqual(['effect', 'effect', 'dropped cleanup'])
 		unmount()
 	})
 
