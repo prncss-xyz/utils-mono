@@ -34,6 +34,7 @@ export type Delivery = {
 	instance: Instance<any>
 	callback: () => void
 	registration: Registration
+	version: number
 }
 
 /**
@@ -76,13 +77,11 @@ export type Tasks = {
 	mounts: Set<Instance<any>>
 	primitives: Map<Instance<any>, any>
 	effects: Set<Instance<any>>
-	reconciles: Set<Instance<any>>
 	pendingFamilyEvictions: Set<Instance<any>>
 }
 
 export type FlushPhase = {
 	mounts: Set<Instance<any>> | undefined
-	reconciles: Set<Instance<any>> | undefined
 	effects: Set<Instance<any>> | undefined
 	familyEvictions: Set<Instance<any>> | undefined
 	mountWrites: Map<Instance<any>, any> | undefined

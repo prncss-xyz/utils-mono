@@ -40,7 +40,8 @@ const once = (...names: string[]): Runs =>
  * conformance spec. Each write batch commits at the next microtask, so a
  * synchronous write followed by a read becomes a write, a flush, then a read.
  * `getters` counts getter runs, the same whether the sinks are only read or
- * each has one subscription; `notifications` counts callbacks when subscribed.
+ * each has one subscription; `notifications` counts callbacks when subscribed,
+ * which only sinks whose value changed receive.
  */
 const cases: Case[] = [
 	{
@@ -132,7 +133,7 @@ const cases: Case[] = [
 		},
 		values: ['b c'],
 		getters: once('b', 'c'),
-		notifications: 1,
+		notifications: 0,
 	},
 	{
 		title: '#9 linear convergence',
@@ -260,7 +261,7 @@ const cases: Case[] = [
 		},
 		values: [0],
 		getters: once('c'),
-		notifications: 1,
+		notifications: 0,
 	},
 	{
 		title: '#204 multi-source fan-in',
@@ -370,7 +371,7 @@ const cases: Case[] = [
 		},
 		values: [1],
 		getters: once('b'),
-		notifications: 1,
+		notifications: 0,
 	},
 	{
 		title:
@@ -386,7 +387,7 @@ const cases: Case[] = [
 		},
 		values: [5],
 		getters: once('c1', 'c2'),
-		notifications: 1,
+		notifications: 0,
 	},
 	{
 		title: '#220 computed same object reference — no downstream propagation',
@@ -402,7 +403,7 @@ const cases: Case[] = [
 		},
 		values: [{ x: 1 }],
 		getters: once('b'),
-		notifications: 1,
+		notifications: 0,
 	},
 	{
 		title: '#18 cached — not re-evaluated if deps unchanged',
@@ -655,7 +656,7 @@ const cases: Case[] = [
 		},
 		values: [1],
 		getters: once('c1'),
-		notifications: 1,
+		notifications: 0,
 	},
 ]
 

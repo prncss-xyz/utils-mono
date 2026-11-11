@@ -97,7 +97,7 @@ describe('operation counts', () => {
 		})
 	})
 
-	it('runs only the intermediate getter when an equal-parity fanout keeps its values', async () => {
+	it('runs only the intermediate getter and notifies no subscriber when an equal-parity fanout keeps its values', async () => {
 		const source = primitiveAtom(0)
 		const parity = derivedAtom((read) => read(source) % 2, null, {
 			name: 'parity',
@@ -118,7 +118,6 @@ describe('operation counts', () => {
 				getters: 1,
 				invalidations: 1_002,
 				validations: 1_000,
-				notifications: 1_000,
 			}),
 		)
 	})

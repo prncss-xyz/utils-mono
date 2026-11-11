@@ -92,7 +92,6 @@ export function createState(
 		tasks: undefined,
 		phase: {
 			mounts: undefined,
-			reconciles: undefined,
 			effects: undefined,
 			familyEvictions: undefined,
 			mountWrites: undefined,
@@ -114,7 +113,6 @@ function getTasks(state: StoreState): Tasks {
 		mounts: new Set(),
 		primitives: new Map(),
 		effects: new Set(),
-		reconciles: new Set(),
 		pendingFamilyEvictions: new Set(),
 	}
 	if (!state.hydrating) state.scheduleFlush()
@@ -128,11 +126,6 @@ export function queueMount(state: StoreState, instance: Instance<any>) {
 export function queueEffect<S>(state: StoreState, instance: Instance<S>) {
 	if (instance.symbol.type !== 'effect') return
 	;(state.phase.effects ?? getTasks(state).effects).add(instance)
-}
-
-export function queueReconcile<S>(state: StoreState, instance: Instance<S>) {
-	if (instance.symbol.type !== 'derived') return
-	;(state.phase.reconciles ?? getTasks(state).reconciles).add(instance)
 }
 
 export function queueEviction(state: StoreState, instance: Instance<any>) {

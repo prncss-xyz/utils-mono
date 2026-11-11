@@ -22,7 +22,6 @@ import {
 import { evict, getInstance, getEffectInstance } from './registry'
 import {
 	type StoreState,
-	queueReconcile,
 	queueEffect,
 	publishChange,
 	countOperation,
@@ -34,17 +33,19 @@ import { type Delivery, type Instance, type MountLifecycle } from './types'
  * Marks derived consumers of a changed primitive dirty and the other reachable
  * derived instances `check`, so they rerun only if a dependency's version
  * changed. A `check` instance reached again from a primitive becomes dirty.
+ * Collects the reached mounted derived instances in `reconciles`.
  */
 function invalidate<S>(
 	state: StoreState,
 	instance: Instance<S>,
 	affected: Set<Instance<any>>,
+	reconciles: Set<Instance<any>>,
 ) {
 	if (affected.has(instance)) return
 	affected.add(instance)
 	countOperation(state, 'invalidations', instance.symbol)
 	if (instance.mountCount > 0) {
-		queueReconcile(state, instance)
+		if (instance.symbol.type === 'derived') reconciles.add(instance)
 		queueEffect(state, instance)
 	}
 	const isSource = instance.symbol.type === 'primitive'
@@ -53,25 +54,39 @@ function invalidate<S>(
 			if (isSource) sub.freshness = { type: 'dirty' }
 			else if (sub.freshness.type === 'clean') sub.freshness = { type: 'check' }
 		}
-		invalidate(state, sub, affected)
+		invalidate(state, sub, affected, reconciles)
 	}
 }
 
 /**
- * Delivers to a snapshot of subscription registrations. A registration
- * removed or replaced before its turn is skipped; one created during
- * delivery (including a re-subscription by the same callback) waits for a
- * later notification.
+ * Brings the mounted derived instances reached from the changed roots up to
+ * date, then delivers to a snapshot of subscription registrations taken
+ * before that evaluation, only for instances whose value changed: the
+ * committed roots, and the derived instances whose version advanced. A
+ * registration removed or replaced before its turn is skipped; one created
+ * during evaluation or delivery (including a re-subscription by the same
+ * callback) waits for a later notification.
  */
-function notify(state: StoreState, roots: Iterable<Instance<any>>) {
+function propagateChanges(state: StoreState, roots: Instance<any>[]) {
 	const affected = new Set<Instance<any>>()
-	for (const root of roots) invalidate(state, root, affected)
+	const reconciles = new Set<Instance<any>>()
+	for (const root of roots) invalidate(state, root, affected, reconciles)
 	const deliveries: Delivery[] = []
 	for (const instance of affected)
 		for (const [callback, registration] of instance.subscriptions)
-			deliveries.push({ instance, callback, registration })
-	for (const { instance, callback, registration } of deliveries)
-		if (instance.subscriptions.get(callback) === registration) {
+			deliveries.push({
+				instance,
+				callback,
+				registration,
+				version: instance.version,
+			})
+	for (const instance of reconciles) reconcile(state, instance, reconciles)
+	const committed = new Set(roots)
+	for (const { instance, callback, registration, version } of deliveries)
+		if (
+			instance.subscriptions.get(callback) === registration &&
+			(committed.has(instance) || instance.version !== version)
+		) {
 			countOperation(state, 'notifications', instance.symbol)
 			callback()
 		}
@@ -124,7 +139,6 @@ function runEffect(
 	state: StoreState,
 	instance: Instance<any>,
 	mounts: Set<Instance<any>>,
-	reconciles: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
 ) {
 	isoAssert(instance.symbol.type === 'effect')
@@ -148,7 +162,7 @@ function runEffect(
 		peekInstance(state, dep)
 		if (lifecycle.active) {
 			if (!hasMountedDependency(instance, dep)) link(state, instance, dep)
-			settle(state, new Map(), mounts, reconciles, mountWrites, false)
+			settle(state, new Map(), mounts, mountWrites, false)
 		}
 		const value = peekInstance(state, dep)
 		if (lifecycle.active) recordDependency(instance, dep, dep.version)
@@ -167,16 +181,14 @@ function runEffect(
 
 export function flush(state: StoreState) {
 	isoAssert(state.tasks, 'unexpected call to flush')
-	const { mounts, primitives, effects, reconciles, pendingFamilyEvictions } =
-		state.tasks
+	const { mounts, primitives, effects, pendingFamilyEvictions } = state.tasks
 	const mountWrites = new Map<Instance<any>, any>()
 	state.tasks = undefined
 	state.phase.mounts = mounts
 	state.phase.effects = effects
-	state.phase.reconciles = reconciles
 	state.phase.familyEvictions = pendingFamilyEvictions
 	state.phase.releases = []
-	settle(state, primitives, mounts, reconciles, mountWrites, true)
+	settle(state, primitives, mounts, mountWrites, true)
 	for (const instance of effects) {
 		effects.delete(instance)
 		if (instance.mountCount > 0) {
@@ -185,14 +197,13 @@ export function flush(state: StoreState) {
 				peekInstance(state, dep)
 				if (dep.version !== version) changed = true
 			}
-			if (changed) runEffect(state, instance, mounts, reconciles, mountWrites)
+			if (changed) runEffect(state, instance, mounts, mountWrites)
 		}
-		settle(state, new Map(), mounts, reconciles, mountWrites, true)
+		settle(state, new Map(), mounts, mountWrites, true)
 	}
 	state.phase.effects = undefined
 	state.phase.releases = undefined
 	state.phase.mounts = undefined
-	state.phase.reconciles = undefined
 	scheduleEvictions(state, pendingFamilyEvictions)
 }
 
@@ -208,7 +219,7 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
 				publishChange(state, instance)
 				changed.push(instance)
 			}
-		notify(state, changed)
+		propagateChanges(state, changed)
 	}
 }
 
@@ -216,10 +227,10 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
  * Mounts retained dependencies before their consumers, including dependencies
  * below already-mounted nodes. Completed walks are shared until a write or
  * retention change invalidates them. A later root can still unlink and clean up
- * a dependency mounted earlier in the same flush. Revision changes made by
- * `peekInstance` need no re-walk: the dependencies it links are walked
- * immediately after, and the ones it unlinks no longer need a walk from this
- * node.
+ * a dependency mounted earlier in the same flush. A node still mounted is
+ * clean: `retain` validates it, and every later commit reconciles the mounted
+ * instances it reaches before the walk resumes. A commit can also release the
+ * node being walked, which ends its walk.
  */
 function settleMount(
 	state: StoreState,
@@ -245,12 +256,15 @@ function settleMount(
 			return false
 		}
 		const walkDependencies = () => {
-			peekInstance(state, node)
+			isoAssert(node.freshness.type === 'clean')
 			for (const dep of dependencies(node)) if (walk(dep)) return true
 			return false
 		}
 		let dependencyRequestedRewalk = false
-		while (walkDependencies()) dependencyRequestedRewalk = true
+		while (walkDependencies()) {
+			dependencyRequestedRewalk = true
+			if (node.mountCount === 0) break
+		}
 		mounts.delete(node)
 		const before = state.mountRevision
 		if (!node.mountLifecycle) {
@@ -280,29 +294,25 @@ function reconcile(
 }
 
 /**
- * Applies the updates, then reconciles and mounts until idle. With
- * `drainReleases`, it also releases the dependencies whose release `unlink`
- * deferred, once no effect is queued. An effect body passes false, since it
- * may still read them again.
+ * Applies the updates, then mounts until idle. With `drainReleases`, it also
+ * releases the dependencies whose release `unlink` deferred, once no effect is
+ * queued. An effect body passes false, since it may still read them again.
  */
 function settle(
 	state: StoreState,
 	primitives: Map<Instance<any>, any>,
 	mounts: Set<Instance<any>>,
-	reconciles: Set<Instance<any>>,
 	mountWrites: Map<Instance<any>, any>,
 	drainReleases: boolean,
 ) {
 	const { releases, effects } = state.phase
 	isoAssert(releases)
 	isoAssert(effects)
-	const idle = () =>
-		mountWrites.size === 0 && mounts.size === 0 && reconciles.size === 0
+	const idle = () => mountWrites.size === 0 && mounts.size === 0
 	const shouldDrainReleases = () =>
 		drainReleases && idle() && effects.size === 0 && releases.length > 0
 	applyUpdates(state, primitives)
 	do {
-		for (const instance of reconciles) reconcile(state, instance, reconciles)
 		settleMount(state, mounts, mountWrites)
 		if (shouldDrainReleases())
 			for (const dep of releases.splice(0)) release(state, dep)

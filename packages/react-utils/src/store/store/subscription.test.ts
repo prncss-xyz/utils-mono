@@ -275,3 +275,56 @@ describe.each(modes)('%s subscription references', (mode) => {
 		)
 	}, 15_000)
 })
+
+describe('value-change delivery', () => {
+	it('notifies a subscribed dependency evaluated by an earlier subscriber', async () => {
+		const source = primitiveAtom(0)
+		const relay = derivedAtom((read) => read(source))
+		const dependency = derivedAtom((read) => read(source) * 10)
+		const consumer = derivedAtom((read) => read(relay) + read(dependency))
+		const store = createStore()
+		const calls: string[] = []
+		store.subscribe(consumer, () => calls.push('consumer'))
+		store.subscribe(dependency, () => calls.push('dependency'))
+		store.send(source, 1)
+		await flushMicrotask()
+		expect(calls).toEqual(['consumer', 'dependency'])
+	})
+
+	it.each([
+		{
+			title: 'the same callback',
+			replacement: (callback: () => void) => callback,
+		},
+		{
+			title: 'a new callback',
+			replacement: (callback: () => void) => () => callback(),
+		},
+	])(
+		'delays a registration made by a cleanup during evaluation, re-registering $title',
+		async ({ replacement }) => {
+			const source = primitiveAtom(0)
+			const resource = primitiveAtom(0)
+			const switcher = derivedAtom((read) =>
+				read(source) === 0 ? read(resource) : read(source),
+			)
+			const watched = derivedAtom((read) => read(source))
+			const store = createStore()
+			const calls: string[] = []
+			const callback = () => calls.push('watched')
+			let unsubscribeWatched = store.subscribe(watched, callback)
+			resource.onMount = () => () => {
+				unsubscribeWatched()
+				unsubscribeWatched = store.subscribe(watched, replacement(callback))
+			}
+			store.subscribe(switcher, () => calls.push('switcher'))
+			await flushMicrotask()
+			store.send(source, 1)
+			await flushMicrotask()
+			expect(calls).toEqual(['switcher'])
+			store.send(source, 2)
+			await flushMicrotask()
+			expect(calls).toEqual(['switcher', 'switcher', 'watched'])
+		},
+	)
+})

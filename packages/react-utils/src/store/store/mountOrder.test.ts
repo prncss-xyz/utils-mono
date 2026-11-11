@@ -487,14 +487,18 @@ describe('mount order within a flush', () => {
 			evaluate()
 			return read(middle) + 1
 		})
+		const cleanupSubscriber = primitiveAtom(0, {
+			onMount: () => () => {
+				store.subscribe(derived, () => {})
+			},
+		})
+		const gate = derivedAtom((read) =>
+			read(flag) ? read(cleanupSubscriber) : 0,
+		)
 		const store = createStore()
 		store.peek(derived)
-		let subscribed = false
-		store.subscribe(middle, () => {
-			if (subscribed) return
-			subscribed = true
-			store.subscribe(derived, () => {})
-		})
+		store.subscribe(gate, () => {})
+		store.subscribe(middle, () => {})
 		await flushMicrotask()
 		store.send(flag, false)
 		await flushMicrotask()
@@ -579,5 +583,34 @@ describe('mount order within a flush', () => {
 		expect(cleanupDetail).toHaveBeenCalledOnce()
 		expect(store.peek(outer)).toBeNull()
 		unsubscribe()
+	})
+
+	it('stops walking a node released by a mount write below it', async () => {
+		const flag = primitiveAtom(false)
+		const source = primitiveAtom(0)
+		const writer = primitiveAtom(0, {
+			onMount: (_read, write) => {
+				write(source, 1)
+			},
+		})
+		const released = derivedAtom((read) =>
+			read(flag) ? read(writer) + read(source) : read(source),
+		)
+		const consumer = derivedAtom((read) =>
+			read(source) === 0 ? read(released) : -1,
+		)
+		const seen: number[] = []
+		const store = createStore()
+		store.subscribe(consumer, () => {})
+		store.mountEffect(
+			effectAtom((read) => {
+				seen.push(read(consumer))
+			}),
+		)
+		store.send(flag, true)
+		await flushMicrotask()
+		expect(seen).toEqual([-1])
+		expect(mountCount(store, released)).toBe(0)
+		expect(mountCount(store, writer)).toBe(0)
 	})
 })

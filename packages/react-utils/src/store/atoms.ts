@@ -89,10 +89,15 @@ export type Resolve = {
 }
 /**
  * Each call owns a reference and returns an independently idempotent disposer.
- * Distinct active callbacks run once per update; only the final reference removes
- * a callback and releases its subscription ownership. Delivery uses a snapshot:
- * new callbacks wait for a later update, and callbacks removed before their turn
- * are skipped even if re-registered. Resolved handles share this contract.
+ * Callbacks report value changes, not invalidation: distinct active callbacks run
+ * once per committed change of the atom's value under `Object.is`, and `peek` in
+ * a callback returns the new value. A write that leaves the value equal, directly
+ * or through derived atoms, runs none. Only the final reference removes a
+ * callback and releases its subscription ownership. Delivery uses a snapshot
+ * taken before changed values are computed: callbacks registered later,
+ * including by a cleanup that runs during that computation, wait for a later
+ * change, and callbacks removed before their turn are skipped even if
+ * re-registered. Resolved handles share this contract.
  */
 export type Subscribe = {
 	<S, Key, Args extends unknown[]>(
@@ -214,10 +219,9 @@ export type ResolvedAtom<S, Args extends unknown[]> = {
 	send: (...args: Args) => void
 	/**
 	 * Each call owns a reference and returns an independently idempotent disposer.
-	 * Each distinct active callback runs once per update, even with multiple references.
+	 * Each distinct active callback runs once per committed change of the value under
+	 * `Object.is`, even with multiple references; see `Subscribe` for delivery rules.
 	 * The final release removes the callback and releases its subscription ownership.
-	 * Delivery uses a snapshot: new callbacks wait for a later update, and a callback
-	 * removed before its turn is skipped, even if it is registered again.
 	 */
 	subscribe: (notify: () => void) => () => void
 }

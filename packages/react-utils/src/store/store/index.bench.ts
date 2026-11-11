@@ -249,7 +249,6 @@ scenario('equal-valued derived: 1,000 consumers', (counts) => {
 			getters: 1,
 			invalidations: 1_002,
 			validations: 1_000,
-			notifications: 1_000,
 		},
 	}
 })
