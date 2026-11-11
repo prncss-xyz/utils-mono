@@ -253,4 +253,39 @@ describe('operation counts', () => {
 		expect(store.peek(tip)).toBe(100)
 		expect(totals).toEqual(counts({ invalidations: 1, validations: 100 }))
 	})
+
+	it('counts a mount cleanup returned after the last subscription is dropped', async () => {
+		const source = primitiveAtom(0)
+		let unsubscribe = () => {}
+		const mounted = derivedAtom((read) => read(source), null, {
+			name: 'mounted',
+			onMount: () => {
+				unsubscribe()
+				return () => {}
+			},
+		})
+		const store = createStore()
+		const instrumentation = countOperations(store)
+		unsubscribe = store.subscribe(mounted, () => {})
+		await flushMicrotask()
+		expect(instrumentation.totals).toEqual(counts({ getters: 1, cleanups: 1 }))
+		expect(named(instrumentation)).toEqual({
+			mounted: { getters: 1, cleanups: 1 },
+		})
+	})
+
+	it('counts an effect cleanup returned after the effect is unmounted', async () => {
+		const source = primitiveAtom(0)
+		let unmount = () => {}
+		const effect = effectAtom((read) => {
+			read(source)
+			unmount()
+			return () => {}
+		})
+		const store = createStore()
+		const instrumentation = countOperations(store)
+		unmount = store.mountEffect(effect)
+		await flushMicrotask()
+		expect(instrumentation.totals).toEqual(counts({ effects: 1, cleanups: 1 }))
+	})
 })
