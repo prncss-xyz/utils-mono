@@ -23,9 +23,9 @@ export function localStorageAtom<T>(
 		return localStorage.getItem(key)
 	}
 	const raw = primitiveAtom<string | null>(getSnapshot, {
-		onMount: (_get, set) => {
+		onMount: (_read, write) => {
 			if (typeof window === 'undefined') return
-			const sync = () => set(raw, getSnapshot())
+			const sync = () => write(raw, getSnapshot())
 			window.addEventListener('storage', sync)
 			window.addEventListener('local-storage-update', sync)
 			sync()

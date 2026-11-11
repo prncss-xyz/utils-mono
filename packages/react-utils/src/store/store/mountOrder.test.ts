@@ -21,55 +21,58 @@ describe('mount order within a flush', () => {
 			const sw = primitiveAtom(false)
 			const e = primitiveAtom(1, logMount(order, 'E'))
 			const b = primitiveAtom(0, {
-				onMount: (_get, set) => {
+				onMount: (_read, write) => {
 					order.push('B')
-					set(flag, true)
+					write(flag, true)
 				},
 			})
-			const m = derivedAtom((get) => (get(flag) ? get(e) : 0))
-			const m2 = derivedAtom((get) => (get(sw) ? get(b) : 0))
+			const m = derivedAtom((read) => (read(flag) ? read(e) : 0))
+			const m2 = derivedAtom((read) => (read(sw) ? read(b) : 0))
 			return { flag, sw, e, b, m, m2 }
 		}
 		type Atoms = ReturnType<typeof fixture>
 		it.each<{
 			name: string
-			read: (get: Read, atoms: Atoms) => number
+			read: (read: Read, atoms: Atoms) => number
 		}>([
 			{
 				name: 'a mounted intermediate gains the dependency',
-				read: (get, { sw, b, m }) => (get(sw) ? get(b) : 0) + get(m),
+				read: (read, { sw, b, m }) => (read(sw) ? read(b) : 0) + read(m),
 			},
 			{
 				name: 'the consumer itself gains the dependency',
-				read: (get, { sw, b, flag, e }) =>
-					(get(sw) ? get(b) : 0) + (get(flag) ? get(e) : 0),
+				read: (read, { sw, b, flag, e }) =>
+					(read(sw) ? read(b) : 0) + (read(flag) ? read(e) : 0),
 			},
 			{
 				name: 'the writer is reached through a mounted intermediate without onMount',
-				read: (get, { m2, flag, e }) => (get(flag) ? get(e) : 0) + get(m2),
+				read: (read, { m2, flag, e }) => (read(flag) ? read(e) : 0) + read(m2),
 			},
 			{
 				name: 'a mounted intermediate is walked before the writer',
-				read: (get, { sw, b, m }) => get(m) + (get(sw) ? get(b) : 0),
+				read: (read, { sw, b, m }) => read(m) + (read(sw) ? read(b) : 0),
 			},
-		])('mounts the new dependency first when $name', async ({ read }) => {
-			const order: string[] = []
-			const atoms = fixture(order)
-			const a = derivedAtom(
-				(get) => read(get, atoms),
-				undefined,
-				logMount(order, 'A'),
-			)
-			const store = createStore()
-			store.subscribe(atoms.m, () => {})
-			store.subscribe(atoms.m2, () => {})
-			await flushMicrotask()
-			store.subscribe(a, () => {})
-			store.send(atoms.sw, true)
-			await flushMicrotask()
+		])(
+			'mounts the new dependency first when $name',
+			async ({ read: selectRead }) => {
+				const order: string[] = []
+				const atoms = fixture(order)
+				const a = derivedAtom(
+					(read) => selectRead(read, atoms),
+					undefined,
+					logMount(order, 'A'),
+				)
+				const store = createStore()
+				store.subscribe(atoms.m, () => {})
+				store.subscribe(atoms.m2, () => {})
+				await flushMicrotask()
+				store.subscribe(a, () => {})
+				store.send(atoms.sw, true)
+				await flushMicrotask()
 
-			expect(order).toEqual(['B', 'E', 'A'])
-		})
+				expect(order).toEqual(['B', 'E', 'A'])
+			},
+		)
 
 		it('invalidates a completed walk when a later root relinks a mounted intermediate', async () => {
 			const order: string[] = []
@@ -139,9 +142,9 @@ describe('mount order within a flush', () => {
 			const keep = primitiveAtom(true)
 			const sw = primitiveAtom(false)
 			const a = primitiveAtom(1, {
-				onMount: (_get, set) => {
+				onMount: (_read, write) => {
 					order.push('A')
-					set(keep, false)
+					write(keep, false)
 				},
 			})
 			const b = primitiveAtom(2, {
@@ -153,12 +156,12 @@ describe('mount order within a flush', () => {
 				},
 			})
 			const i = derivedAtom(
-				(get) => (get(flag) ? get(a) + (get(keep) ? get(b) : 0) : 0),
+				(read) => (read(flag) ? read(a) + (read(keep) ? read(b) : 0) : 0),
 				undefined,
 				logMount(order, 'I'),
 			)
 			const c = derivedAtom(
-				(get) => (get(sw) ? get(i) : 0),
+				(read) => (read(sw) ? read(i) : 0),
 				undefined,
 				logMount(order, 'C'),
 			)
@@ -208,15 +211,15 @@ describe('mount order within a flush', () => {
 			const flag = primitiveAtom(false)
 			const sw = primitiveAtom(false)
 			const g = primitiveAtom(1, {
-				onMount: (_get, set) => {
+				onMount: (_read, write) => {
 					order.push('G')
-					set(flag, true)
+					write(flag, true)
 				},
 			})
-			const i = derivedAtom((get) => get(g), undefined, logMount(order, 'I'))
+			const i = derivedAtom((read) => read(g), undefined, logMount(order, 'I'))
 			const e = primitiveAtom(1, logMount(order, 'E'))
 			const c = derivedAtom(
-				(get) => (get(sw) ? get(i) : 0) + (get(flag) ? get(e) : 0),
+				(read) => (read(sw) ? read(i) : 0) + (read(flag) ? read(e) : 0),
 				undefined,
 				logMount(order, 'C'),
 			)
@@ -249,7 +252,7 @@ describe('mount order within a flush', () => {
 					}
 				},
 			})
-			const n = derivedAtom((get) => (get(sw) ? get(d) : 0), undefined, {
+			const n = derivedAtom((read) => (read(sw) ? read(d) : 0), undefined, {
 				onMount: () => {
 					order.push('N')
 					return () => {
@@ -257,7 +260,7 @@ describe('mount order within a flush', () => {
 					}
 				},
 			})
-			const p = derivedAtom((get) => get(n), undefined, logMount(order, 'P'))
+			const p = derivedAtom((read) => read(n), undefined, logMount(order, 'P'))
 			unsubscribeN = store.subscribe(n, () => {})
 			await flushMicrotask()
 			unsubscribeP = store.subscribe(p, () => {})
@@ -291,7 +294,7 @@ describe('mount order within a flush', () => {
 			})
 			const sw = primitiveAtom(false)
 			const r = derivedAtom(
-				(get) => (get(sw) ? get(w) + get(x) : 0),
+				(read) => (read(sw) ? read(w) + read(x) : 0),
 				undefined,
 				logMount(order, 'R'),
 			)
@@ -316,8 +319,8 @@ describe('mount order within a flush', () => {
 			value: T,
 		) =>
 			primitiveAtom(0, {
-				onMount: (_get, set) => {
-					set(target, value)
+				onMount: (_read, write) => {
+					write(target, value)
 				},
 			})
 		const diamond = <Args extends unknown[]>(
@@ -325,12 +328,12 @@ describe('mount order within a flush', () => {
 		) => {
 			const sel = primitiveAtom(false)
 			const mode = primitiveAtom(false)
-			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(leaf)))
-			const direct = derivedAtom<number>((get) => get(gated))
-			const bypass = derivedAtom<number>((get) => get(leaf))
-			const joined = derivedAtom<number>((get) => get(gated) + get(bypass))
-			const top = derivedAtom<number>((get) =>
-				get(mode) ? get(joined) : get(direct),
+			const gated = derivedAtom<number>((read) => (read(sel) ? 0 : read(leaf)))
+			const direct = derivedAtom<number>((read) => read(gated))
+			const bypass = derivedAtom<number>((read) => read(leaf))
+			const joined = derivedAtom<number>((read) => read(gated) + read(bypass))
+			const top = derivedAtom<number>((read) =>
+				read(mode) ? read(joined) : read(direct),
 			)
 			return { sel, mode, top }
 		}
@@ -354,10 +357,12 @@ describe('mount order within a flush', () => {
 			const trigger = primitiveAtom(false)
 			const resource = primitiveAtom(0, logMountCycle(events))
 			const writer = mountWriter(trigger, true)
-			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(resource)))
-			const top = derivedAtom<number>((get) => get(gated))
-			const regain = derivedAtom<number>((get) =>
-				get(trigger) ? get(resource) : 0,
+			const gated = derivedAtom<number>((read) =>
+				read(sel) ? 0 : read(resource),
+			)
+			const top = derivedAtom<number>((read) => read(gated))
+			const regain = derivedAtom<number>((read) =>
+				read(trigger) ? read(resource) : 0,
 			)
 			const store = createStore()
 			store.subscribe(top, () => {})
@@ -374,12 +379,12 @@ describe('mount order within a flush', () => {
 			const events: string[] = []
 			const sel = primitiveAtom(false)
 			const resource = primitiveAtom(0, logMountCycle(events))
-			const left = derivedAtom<number>((get) => get(resource))
-			const right = derivedAtom<number>((get) => get(resource))
-			const leaf = derivedAtom<number>((get) => get(left) + get(right))
-			const gated = derivedAtom<number>((get) => (get(sel) ? 0 : get(leaf)))
-			const direct = derivedAtom<number>((get) => get(gated))
-			const top = derivedAtom<number>((get) => get(direct))
+			const left = derivedAtom<number>((read) => read(resource))
+			const right = derivedAtom<number>((read) => read(resource))
+			const leaf = derivedAtom<number>((read) => read(left) + read(right))
+			const gated = derivedAtom<number>((read) => (read(sel) ? 0 : read(leaf)))
+			const direct = derivedAtom<number>((read) => read(gated))
+			const top = derivedAtom<number>((read) => read(direct))
 			const store = createStore()
 			store.subscribe(top, () => {})
 			store.send(sel, true)
@@ -391,7 +396,7 @@ describe('mount order within a flush', () => {
 		it('keeps a dependency mounted when its live resource sits below a dropped dependency that is not mounted yet', async () => {
 			const events: string[] = []
 			const resource = primitiveAtom(0, logMountCycle(events))
-			const inner = derivedAtom<number>((get) => get(resource))
+			const inner = derivedAtom<number>((read) => read(resource))
 			const { sel, mode, top } = diamond(inner)
 			const store = createStore()
 			const unsubscribeResource = store.subscribe(resource, () => {})
@@ -444,7 +449,7 @@ describe('mount order within a flush', () => {
 		const events: string[] = []
 		const resource = (name: string, value: number) =>
 			primitiveAtom(value, {
-				onMount: (_get, _set, mountEffect) => {
+				onMount: (_read, _write, mountEffect) => {
 					events.push(`${name} mount`)
 					mountEffect(
 						effectAtom(() => {
@@ -467,8 +472,8 @@ describe('mount order within a flush', () => {
 		const { events, selectFirst, select } = swappable()
 		const consumer = derivedAtom(select)
 		const trigger = primitiveAtom(0, {
-			onMount: (_get, set) => {
-				set(selectFirst, false)
+			onMount: (_read, write) => {
+				write(selectFirst, false)
 			},
 		})
 		const store = createStore()

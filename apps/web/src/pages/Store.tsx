@@ -17,7 +17,7 @@ import {
 const simple = primitiveAtom(0)
 
 const simpleEffect = effectAtom(
-	(get) => get(simple),
+	(read) => read(simple),
 	(next, last) => {
 		// oxlint-disable-next-line no-console
 		console.log(next, last)

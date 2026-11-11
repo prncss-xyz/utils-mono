@@ -222,7 +222,9 @@ async function run(
 	const primitives = graph.initial.map((initial) => primitiveAtom(initial))
 	const nodes: AtomSymbol<number, never>[] = [...primitives] as never
 	for (const { a, b, weight } of graph.readers)
-		nodes.push(derivedAtom((get) => get(nodes[a]!) * weight + get(nodes[b]!)))
+		nodes.push(
+			derivedAtom((read) => read(nodes[a]!) * weight + read(nodes[b]!)),
+		)
 	const realTrace: string[] = []
 	const setters: AtomSymbol<never, [number]>[] = []
 	const realContext = (read: Read, write: Write): Context => ({

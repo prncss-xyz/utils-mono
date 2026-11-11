@@ -149,8 +149,8 @@ async function run(
 		onMount:
 			spec(node).mount || spec(node).effect
 				? (
-						_get: unknown,
-						_set: unknown,
+						_read: unknown,
+						_write: unknown,
 						mountEffect: (effect: ReturnType<typeof effectAtom>) => void,
 					) => {
 						if (spec(node).mount) {
@@ -192,18 +192,18 @@ async function run(
 	for (const [index, { a, b, c, modulus }] of graph.derived.entries())
 		nodes.push(
 			derivedAtom(
-				(get) =>
-					get(nodes[a]!) % modulus === 0
-						? get(nodes[b]!)
-						: get(nodes[c]!) % modulus,
+				(read) =>
+					read(nodes[a]!) % modulus === 0
+						? read(nodes[b]!)
+						: read(nodes[c]!) % modulus,
 				undefined,
 				options(primitiveCount + index),
 			) as never,
 		)
 	const effects = nodes.map((symbol, node) =>
 		effectAtom(
-			(get) => get(symbol),
-			(next, _last, _get, _set, mountEffect) => {
+			(read) => read(symbol),
+			(next, _last, _read, _write, mountEffect) => {
 				if (liveEffects.has(node))
 					violations.push(`effect n${node} ran without cleanup`)
 				if (next !== value(node))

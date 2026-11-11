@@ -1,5 +1,6 @@
 import { exhaustive, isoAssert } from '../../functions'
 import { type Read, type MountEffect } from '../atoms'
+import { associateUntrackedRead } from '../effectRead'
 import {
 	peekInstance,
 	retain,
@@ -152,6 +153,7 @@ function runEffect(
 		if (lifecycle.active) recordDependency(instance, dep, dep.version)
 		return value
 	}) as Read
+	associateUntrackedRead(read, state.read)
 	const scope = mounting(state, instance, lifecycle)
 	const cleanup = instance.symbol.body(read, state.write, scope.mountEffect)
 	scope.done()

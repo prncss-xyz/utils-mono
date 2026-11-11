@@ -26,7 +26,7 @@ describe('effect atoms', () => {
 		const runs = vi.fn()
 		const cleanup = vi.fn()
 		const effect = effectAtom(
-			(get) => get(source),
+			(read) => read(source),
 			(next, last) => {
 				runs(next, last)
 				return cleanup
@@ -56,7 +56,7 @@ describe('effect atoms', () => {
 		const source = primitiveAtom(0)
 		const runs = vi.fn()
 		const effect = effectAtom(
-			(get) => get(source),
+			(read) => read(source),
 			(next, last) => runs(next, last),
 		)
 		const first = createStore()
@@ -82,48 +82,117 @@ describe('effect atoms', () => {
 		unmountSecond()
 	})
 
-	it('tracks selected callbacks and preserves child and cleanup ordering', async () => {
+	it('uses the mounted child store for direct calls to factory effect bodies', async () => {
 		const source = primitiveAtom(1)
-		const detail = primitiveAtom(2)
-		const events: string[] = []
-		const child = effectAtom(() => {
-			events.push('child')
-			return () => events.push('release child')
-		})
+		const runs = vi.fn()
 		const effect = effectAtom(
-			(get) => get(source),
-			(next, last, get, _set, mountEffect) => {
-				events.push(`${next}/${last}/${get(detail)}`)
-				mountEffect(child)
-				return () => events.push('cleanup')
-			},
+			(read) => read(source),
+			(next, _last, read) => runs(next, read(source)),
 		)
+		const first = createStore([[source, 2]])
+		const second = createStore([[source, 3]])
+		let unmount = () => {}
+		effect.body(first.peek, first.send, (child) => {
+			unmount = second.mountEffect(child)
+		})
+		await flushMicrotask()
+		expect(runs.mock.calls).toEqual([[3, 3]])
+		unmount()
+	})
+
+	it('uses the supplied child reader for direct calls without a store', () => {
+		const source = primitiveAtom(1)
+		const runs = vi.fn()
+		const effect = effectAtom(
+			(read) => read(source),
+			(next, _last, read) => runs(next, read(source)),
+		)
+		const outer = createStore([[source, 2]])
+		const inner = createStore([[source, 3]])
+		effect.body(outer.peek, outer.send, (child) => {
+			child.body(inner.peek, inner.send, () => {})
+		})
+		expect(runs.mock.calls).toEqual([[3, 3]])
+	})
+
+	it('invokes a replaced effect body with its receiver and three operations', async () => {
+		const original = vi.fn()
+		const replacement = vi.fn(function (
+			this: EffectAtom,
+			...args: Parameters<EffectAtom['body']>
+		) {
+			expect(this).toBe(effect)
+			expect(args).toHaveLength(3)
+		})
+		const effect = effectAtom(() => 1, original)
+		effect.body = replacement
 		const store = createStore()
 		const unmount = store.mountEffect(effect)
 		await flushMicrotask()
-		store.send(detail, 3)
-		await flushMicrotask()
+		expect(replacement).toHaveBeenCalledOnce()
+		expect(original).not.toHaveBeenCalled()
 		unmount()
-		expect(events).toEqual([
-			'1/undefined/2',
-			'child',
-			'cleanup',
-			'release child',
-			'1/1/3',
-			'child',
-			'release child',
-			'cleanup',
-		])
 	})
+
+	it.each([false, true])(
+		'tracks only the tracker with a copied effect: %s',
+		async (copied) => {
+			const source = primitiveAtom(1)
+			const events: string[] = []
+			const detail = primitiveAtom(2, {
+				onMount: () => {
+					events.push('mount detail')
+					return () => events.push('release detail')
+				},
+			})
+			let deferredRead: () => number = () => 0
+			const child = effectAtom(() => {
+				events.push('child')
+				return () => events.push('release child')
+			})
+			const effect = effectAtom(
+				(read) => read(source),
+				(next, last, read, _write, mountEffect) => {
+					events.push(`${next}/${last}/${read(detail)}`)
+					deferredRead = () => read(detail)
+					mountEffect(child)
+					return () => events.push('cleanup')
+				},
+			)
+			const store = createStore()
+			const unmount = store.mountEffect(copied ? { ...effect } : effect)
+			await flushMicrotask()
+			store.send(detail, 3)
+			await flushMicrotask()
+			expect(deferredRead()).toBe(3)
+			expect(events).toEqual(['1/undefined/2', 'child'])
+			store.send(detail, 4)
+			await flushMicrotask()
+			expect(events).toEqual(['1/undefined/2', 'child'])
+			store.send(source, 2)
+			await flushMicrotask()
+			unmount()
+			expect(events).toEqual([
+				'1/undefined/2',
+				'child',
+				'cleanup',
+				'release child',
+				'2/1/4',
+				'child',
+				'release child',
+				'cleanup',
+			])
+		},
+	)
 
 	it('tracks direct atoms and families and batches changes into one rerun', async () => {
 		const source = primitiveAtom(1)
 		const untouched = primitiveAtom(0)
 		const values = atomFamily((key: string) => primitiveAtom(key.length))
-		const observed = derivedAtom((get) => get(source) * 2)
+		const observed = derivedAtom((read) => read(source) * 2)
 		const runs = vi.fn()
-		const effect = effectAtom((get) => {
-			runs(get(source), get(observed), get(values, 'key'))
+		const effect = effectAtom((read) => {
+			runs(read(source), read(observed), read(values, 'key'))
 		})
 		const store = createStore()
 		const unmount = store.mountEffect(effect)
@@ -164,8 +233,8 @@ describe('effect atoms', () => {
 		const a = child('a')
 		const b = child('b')
 		const effect = effectAtom(
-			(get) => get(get(flag) ? first : second),
-			(_next, _last, _get, _set, mountEffect) => {
+			(read) => read(read(flag) ? first : second),
+			(_next, _last, _read, _write, mountEffect) => {
 				events.push('body')
 				mountEffect(a)
 				mountEffect(b)
@@ -207,7 +276,7 @@ describe('effect atoms', () => {
 				return () => events.push(`~${name}`)
 			})
 		const owner = primitiveAtom(0, {
-			onMount: (_get, _set, mountEffect) => {
+			onMount: (_read, _write, mountEffect) => {
 				mountEffect(child('a'))
 				mountEffect(child('b'))
 				return () => events.push('owner cleanup')
@@ -224,13 +293,13 @@ describe('effect atoms', () => {
 	it('shares one instance across independent idempotent external and owner references', async () => {
 		const count = primitiveAtom(0)
 		const cleanup = vi.fn()
-		const body = vi.fn((get: Read) => {
-			get(count)
+		const body = vi.fn((read: Read) => {
+			read(count)
 			return cleanup
 		})
 		const effect = effectAtom(body)
 		const owner = primitiveAtom(0, {
-			onMount: (_get, _set, mountEffect) => {
+			onMount: (_read, _write, mountEffect) => {
 				mountEffect(effect)
 				mountEffect(effect)
 			},
@@ -263,7 +332,7 @@ describe('effect atoms', () => {
 		async (kind) => {
 			let captured: MountEffect = () => {}
 			const child = effectAtom(() => {})
-			const body = (_get: Read, _set: unknown, mountEffect: MountEffect) => {
+			const body = (_read: Read, _write: unknown, mountEffect: MountEffect) => {
 				captured = mountEffect
 				return () => expect(() => mountEffect(child)).toThrow('synchronously')
 			}
@@ -273,8 +342,8 @@ describe('effect atoms', () => {
 					? store.mountEffect(
 							effectAtom(
 								() => undefined,
-								(_next, _last, get, set, mountEffect) =>
-									body(get, set, mountEffect),
+								(_next, _last, read, write, mountEffect) =>
+									body(read, write, mountEffect),
 							),
 						)
 					: store.subscribe(primitiveAtom(0, { onMount: body }), () => {})
@@ -288,11 +357,11 @@ describe('effect atoms', () => {
 		const { store, flush } = manualStore()
 		const first: EffectAtom = effectAtom(
 			() => undefined,
-			(_next, _last, _get, _set, mountEffect) => mountEffect(second),
+			(_next, _last, _read, _write, mountEffect) => mountEffect(second),
 		)
 		const second = effectAtom(
 			() => undefined,
-			(_next, _last, _get, _set, mountEffect) => mountEffect(first),
+			(_next, _last, _read, _write, mountEffect) => mountEffect(first),
 		)
 		store.mountEffect(first)
 		expect(flush).toThrow('cyclic effect ownership')
@@ -302,13 +371,13 @@ describe('effect atoms', () => {
 		const { store, flush } = manualStore()
 		const first: EffectAtom = effectAtom(
 			() => undefined,
-			(_next, _last, _get, _set, mountEffect) => mountEffect(second),
+			(_next, _last, _read, _write, mountEffect) => mountEffect(second),
 		)
-		const second = effectAtom((get) => {
-			get(resource)
+		const second = effectAtom((read) => {
+			read(resource)
 		})
 		const resource = primitiveAtom(0, {
-			onMount: (_get, _set, mountEffect) => mountEffect(first),
+			onMount: (_read, _write, mountEffect) => mountEffect(first),
 		})
 		store.mountEffect(first)
 		expect(flush).toThrow('cyclic effect ownership')
@@ -319,12 +388,12 @@ describe('effect atoms', () => {
 		(indirect) => {
 			const { store, flush } = manualStore()
 			const owner = primitiveAtom(0, {
-				onMount: (_get, _set, mountEffect) => mountEffect(effect),
+				onMount: (_read, _write, mountEffect) => mountEffect(effect),
 			})
-			const bridge = derivedAtom((get) => get(owner))
-			const effect = effectAtom((get) => {
-				if (indirect) get(bridge)
-				else get(owner)
+			const bridge = derivedAtom((read) => read(owner))
+			const effect = effectAtom((read) => {
+				if (indirect) read(bridge)
+				else read(owner)
 			})
 			store.subscribe(owner, () => {})
 			expect(flush).toThrow('cyclic effect ownership')
@@ -340,9 +409,9 @@ describe('effect atoms', () => {
 				return () => events.push('resource cleanup')
 			},
 		})
-		const middle = derivedAtom((get) => (get(flag) ? get(resource) * 0 : 0))
-		const body = vi.fn((get: Read) => {
-			get(middle)
+		const middle = derivedAtom((read) => (read(flag) ? read(resource) * 0 : 0))
+		const body = vi.fn((read: Read) => {
+			read(middle)
 			return () => events.push('effect cleanup')
 		})
 		const store = createStore()
@@ -366,10 +435,10 @@ describe('effect atoms', () => {
 				return () => events.push('resource cleanup')
 			},
 		})
-		const middle = derivedAtom((get) => (get(sel) ? get(resource) * 0 : 0))
-		const top = derivedAtom((get) => (get(gate) ? get(middle) : 0))
-		const body = vi.fn((get: Read) => {
-			get(top)
+		const middle = derivedAtom((read) => (read(sel) ? read(resource) * 0 : 0))
+		const top = derivedAtom((read) => (read(gate) ? read(middle) : 0))
+		const body = vi.fn((read: Read) => {
+			read(top)
 			return () => events.push('effect cleanup')
 		})
 		const store = createStore()
@@ -423,7 +492,7 @@ describe('effect atoms', () => {
 		[
 			'getter',
 			(store: ReturnType<typeof createStore>, effect: EffectAtom) =>
-				store.peek(derivedAtom((get) => get(effect as never))),
+				store.peek(derivedAtom((read) => read(effect as never))),
 		],
 	] as const)('rejects an untyped effect passed to %s', (_name, access) => {
 		expect(() =>
@@ -443,7 +512,8 @@ describe('effect atoms', () => {
 		store.mountEffect(
 			effectAtom(
 				() => undefined,
-				(_next, _last, _get, _set, mountEffect) => mountEffect(value as never),
+				(_next, _last, _read, _write, mountEffect) =>
+					mountEffect(value as never),
 			),
 		)
 		expect(flush).toThrow('requires an effect atom')
@@ -452,18 +522,18 @@ describe('effect atoms', () => {
 	it('writes atoms, derived atoms and families in the following flush', async () => {
 		const target = primitiveAtom(0)
 		const doubled = derivedAtom(
-			(get) => get(target) * 2,
-			(_get, set, value: number) => set(target, value / 2),
+			(read) => read(target) * 2,
+			(_read, write, value: number) => write(target, value / 2),
 		)
 		const values = atomFamily((_key: string) => primitiveAtom(0))
 		const store = createStore()
 		const unmount = store.mountEffect(
 			effectAtom(
 				() => undefined,
-				(_next, _last, _get, set) => {
-					set(target, 1)
-					set(doubled, 6)
-					set(values, 'key', (value) => value + 1)
+				(_next, _last, _read, write) => {
+					write(target, 1)
+					write(doubled, 6)
+					write(values, 'key', (value) => value + 1)
 				},
 			),
 		)
@@ -479,8 +549,8 @@ describe('effect atoms', () => {
 		const count = primitiveAtom<number | undefined>(undefined)
 		const runs = vi.fn()
 		const cleanup = vi.fn()
-		const effect = effectAtom((get) => {
-			runs(get(count))
+		const effect = effectAtom((read) => {
+			runs(read(count))
 			return cleanup
 		})
 		const store = createStore()
@@ -521,8 +591,8 @@ describe('effect atoms', () => {
 		const cleanup = vi.fn(() => unmount())
 		const store = createStore()
 		const unmount = store.mountEffect(
-			effectAtom((get) => {
-				get(source)
+			effectAtom((read) => {
+				read(source)
 				body()
 				return cleanup
 			}),
@@ -560,22 +630,22 @@ describe('effect atoms', () => {
 	it('settles mount writes before the first tracked read returns', async () => {
 		const events: string[] = []
 		const source = primitiveAtom(0, {
-			onMount: (_get, set) => {
+			onMount: (_read, write) => {
 				events.push('source mount')
-				set(source, 2)
+				write(source, 2)
 				return () => events.push('source unmount')
 			},
 		})
-		const consumer = derivedAtom((get) => get(source) * 2, undefined, {
-			onMount: (get) => {
-				events.push(`consumer mount:${get(source)}`)
+		const consumer = derivedAtom((read) => read(source) * 2, undefined, {
+			onMount: (read) => {
+				events.push(`consumer mount:${read(source)}`)
 				return () => events.push('consumer unmount')
 			},
 		})
 		const store = createStore()
 		const unmount = store.mountEffect(
-			effectAtom((get) => {
-				events.push(`effect:${get(consumer)}`)
+			effectAtom((read) => {
+				events.push(`effect:${read(consumer)}`)
 				return () => events.push('effect cleanup')
 			}),
 		)
@@ -594,14 +664,14 @@ describe('effect atoms', () => {
 
 	it('settles a diamond once per batch before its observing effect', async () => {
 		const source = primitiveAtom(0)
-		const left = derivedAtom((get) => get(source) + 1)
-		const right = derivedAtom((get) => get(source) + 2)
-		const leaf = derivedAtom((get) => get(left) + get(right))
+		const left = derivedAtom((read) => read(source) + 1)
+		const right = derivedAtom((read) => read(source) + 2)
+		const leaf = derivedAtom((read) => read(left) + read(right))
 		const runs = vi.fn()
 		const store = createStore()
 		const unmount = store.mountEffect(
-			effectAtom((get) => {
-				runs(get(leaf), get(source))
+			effectAtom((read) => {
+				runs(read(leaf), read(source))
 			}),
 		)
 		await flushMicrotask()

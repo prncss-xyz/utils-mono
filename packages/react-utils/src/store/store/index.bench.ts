@@ -311,8 +311,8 @@ scenario('cleanup-heavy: 100 mounted atoms', (counts) => {
 	for (const atom of atoms)
 		disposers.push(
 			store.mountEffect(
-				effectAtom((get) => {
-					get(atom)
+				effectAtom((read) => {
+					read(atom)
 					counts.effects++
 					return () => {
 						counts.cleanups++

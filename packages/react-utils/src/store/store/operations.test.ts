@@ -49,7 +49,7 @@ describe('operation counts', () => {
 			onMount: (_read, _write, mountEffect) => {
 				mountEffect(
 					effectAtom(
-						(get) => get(source),
+						(read) => read(source),
 						() => () => {},
 					),
 				)

@@ -84,8 +84,8 @@ describe('family eviction', () => {
 			'effect',
 			(write: () => void) => ({
 				onMount: (
-					_get: Read,
-					_set: unknown,
+					_read: Read,
+					_write: unknown,
 					mountEffect: (effect: import('../atoms').EffectAtom) => void,
 				) => mountEffect(effectAtom(write)),
 			}),

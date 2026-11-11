@@ -1,4 +1,5 @@
 import { id, isoAssert, type SetStateWithReset } from '../functions'
+import { untrackedRead } from './effectRead'
 
 export const TRANSIENT = -1
 
@@ -49,12 +50,10 @@ export type AtomFamilyOptions<Key> = { TTL?: number } & (
 )
 
 /**
- * Reads an atom and, inside a getter or effect, records it as a dependency.
- * Dependency tracking is synchronous: reads made after an `await` or in a later
- * callback fall outside the evaluation and are not a supported way to declare
- * dependencies. A write to such an atom alone does not notify an atom that stays
- * mounted from its evaluation; beyond that, the effect of a late read (after a
- * remount, during revalidation, or in an effect) is unspecified.
+ * Reads an atom. Call the `read` passed to a getter or effect tracker only
+ * during that function's synchronous execution. Calls after it returns,
+ * including after an `await` or from a deferred callback, are unsupported.
+ * For asynchronous work, capture atom values during the synchronous call.
  */
 export type Read = {
 	<S, Key, Args extends unknown[]>(
@@ -149,19 +148,24 @@ type Setter<Args extends unknown[]> = (
 	...args: Args
 ) => void
 export type MountEffect = (effect: EffectAtom) => void
-export type EffectTracker<S = void | (() => void)> = (get: Read) => S
+export type EffectTracker<S = void | (() => void)> = (read: Read) => S
 export type EffectBody<S> = (
 	next: S,
 	last: S | undefined,
-	get: Read,
-	set: Write,
+	read: Read,
+	write: Write,
 	mountEffect: MountEffect,
 ) => void | (() => void)
 export type EffectAtom = { type: 'effect'; body: OnMount }
 
 /**
- * Tracks reads in the tracker and body. The previous tracked value is scoped
- * to each store's mounted lifecycle and is undefined on its first run.
+ * Only the tracker declares dependencies. Call its `read` only during its
+ * synchronous execution; calls after it returns, including after an `await` or
+ * from a deferred callback, are unsupported. For asynchronous work, capture
+ * atom values during the synchronous call. The body receives an untracked
+ * `read` that reads current values, including from deferred work. The previous
+ * tracked value is scoped to each store's mounted lifecycle and is undefined on
+ * its first run. With one argument, the callback's reads are tracked.
  */
 export function effectAtom<S>(
 	tracker: EffectTracker<S>,
@@ -175,13 +179,19 @@ export function effectAtom<S>(
 	if (body) {
 		return {
 			type: 'effect',
-			body: (_get, _set, mountEffect) => {
+			body: (_read, _write, mountEffect) => {
 				let last: S | undefined
 				mountEffect({
 					type: 'effect',
-					body: (get, set, mountEffect) => {
-						const next = (tracker as EffectTracker<S>)(get)
-						const cleanup = body(next, last, get, set, mountEffect)
+					body: (read, write, mountEffect) => {
+						const next = (tracker as EffectTracker<S>)(read)
+						const cleanup = body(
+							next,
+							last,
+							untrackedRead(read),
+							write,
+							mountEffect,
+						)
 						last = next
 						return cleanup
 					},
@@ -189,13 +199,13 @@ export function effectAtom<S>(
 			},
 		}
 	}
-	return { type: 'effect', body: (get) => (tracker as EffectTracker)(get) }
+	return { type: 'effect', body: (read) => (tracker as EffectTracker)(read) }
 }
 
 /** Runs in the effect microtask after the first subscription; cleans up on last release. */
 export type OnMount = (
-	get: Read,
-	set: Write,
+	read: Read,
+	write: Write,
 	mountEffect: MountEffect,
 ) => void | (() => void)
 
@@ -243,6 +253,11 @@ function nowrite(): never {
  * is left in an undefined state and must not be used further. A getter that reads itself, directly or through other getters, is
  * rejected as a cyclic dependency. A promise returned by a getter is a plain
  * value: there is no cancellation, staleness handling, or Suspense support.
+ *
+ * Call the getter's `read` only during its synchronous execution. Calls after
+ * it returns, including after an `await` or from a deferred callback, are
+ * unsupported. For asynchronous work, capture atom values during the
+ * synchronous call.
  *
  * Infers setter arguments as a tuple. When specifying the value type explicitly,
  * also specify the argument tuple (for example, derivedAtom<number, [n: number]>).

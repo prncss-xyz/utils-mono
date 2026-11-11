@@ -117,7 +117,7 @@ export function coreMachineAtom<E, S, R = S>(
 			write(state, advance(event, read(state), read, write)),
 		{
 			onMount: opts?.effect
-				? (_get, _set, mountEffect) => {
+				? (_read, _write, mountEffect) => {
 						const effect = opts.effect!
 						let initialized = false
 						let active = true
@@ -129,12 +129,12 @@ export function coreMachineAtom<E, S, R = S>(
 						}
 						mountEffect(
 							effectAtom(
-								(get) => result(get(state), get),
-								(next, last, get, set) => {
+								(read) => result(read(state), read),
+								(next, last, read, write) => {
 									if (initialized && Object.is(next, last)) return
 									clean()
 									if (!active) return
-									const nextCleanup = effect(next, last, get, set)
+									const nextCleanup = effect(next, last, read, write)
 									if (active) cleanup = nextCleanup
 									else nextCleanup?.()
 									initialized = true

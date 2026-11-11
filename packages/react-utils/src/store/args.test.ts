@@ -171,7 +171,7 @@ describe('setter argument tuples', () => {
 				mountEffect(
 					effectAtom(
 						() => undefined,
-						(_next, _last, _get, set) => set(command, 'effect', 2),
+						(_next, _last, _read, write) => write(command, 'effect', 2),
 					),
 				)
 			},

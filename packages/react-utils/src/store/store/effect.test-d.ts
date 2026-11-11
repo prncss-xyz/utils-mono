@@ -9,6 +9,7 @@ import {
 	type EffectBody,
 	type EffectTracker,
 	type MountEffect,
+	type OnMount,
 	type Read,
 	type Write,
 } from '.'
@@ -18,20 +19,26 @@ it('infers tracked values and exposes effect body operations', () => {
 	const value = primitiveAtom(0)
 	expectTypeOf<Parameters<EffectTracker<number>>>().toEqualTypeOf<[Read]>()
 	const effect = effectAtom(
-		(get) => get(value),
-		(next, last, get, set, mountEffect) => {
+		(read) => read(value),
+		(next, last, read, write, mountEffect) => {
 			expectTypeOf(next).toEqualTypeOf<number>()
 			expectTypeOf(last).toEqualTypeOf<number | undefined>()
-			expectTypeOf(get).toEqualTypeOf<Read>()
-			expectTypeOf(set).toEqualTypeOf<Write>()
+			expectTypeOf(read).toEqualTypeOf<Read>()
+			expectTypeOf(write).toEqualTypeOf<Write>()
 			expectTypeOf(mountEffect).toEqualTypeOf<MountEffect>()
 			return () => {}
 		},
 	)
 	expectTypeOf(effect).toEqualTypeOf<EffectAtom>()
+	expectTypeOf(effect.body).toEqualTypeOf<OnMount>()
+	effect.body(
+		() => 0 as never,
+		() => {},
+		() => {},
+	)
 	effectAtom(
 		// @ts-expect-error the tracked value and body argument types must agree
-		(get) => get(value),
+		(read) => read(value),
 		(_next: string, _last: string | undefined) => {},
 	)
 })
@@ -43,31 +50,31 @@ it('exposes only mounting operations for effect atoms', () => {
 	expectTypeOf(effect).toEqualTypeOf<EffectAtom>()
 	expectTypeOf(store.mountEffect(effect)).toEqualTypeOf<() => void>()
 	expectTypeOf(useMountEffect(effect)).toEqualTypeOf<void>()
-	const tracker: EffectTracker = (get) => {
-		get(value)
+	const tracker: EffectTracker = (read) => {
+		read(value)
 	}
 	expectTypeOf(effectAtom(tracker)).toEqualTypeOf<EffectAtom>()
-	// @ts-expect-error trackers receive only get
-	effectAtom((_get: Read, _set: Write) => {})
+	// @ts-expect-error trackers receive only read
+	effectAtom((_read: Read, _write: Write) => {})
 	const body: EffectBody<number> = (
 		_next,
 		_last,
-		get: Read,
-		set: Write,
+		read: Read,
+		write: Write,
 		mountEffect: MountEffect,
 	) => {
-		get(value)
-		set(value, 1)
+		read(value)
+		write(value, 1)
 		expectTypeOf(mountEffect(effect)).toEqualTypeOf<void>()
 		// @ts-expect-error effects have no readable value
-		get(effect)
+		read(effect)
 		// @ts-expect-error effects are not writable
-		set(effect)
+		write(effect)
 		// @ts-expect-error only effects can be mounted
 		mountEffect(value)
 	}
 	expectTypeOf(
-		effectAtom((get) => get(value), body),
+		effectAtom((read) => read(value), body),
 	).toEqualTypeOf<EffectAtom>()
 	// @ts-expect-error effects have no readable value
 	store.peek(effect)

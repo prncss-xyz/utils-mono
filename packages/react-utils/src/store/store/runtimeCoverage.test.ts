@@ -415,8 +415,8 @@ describe('runtime lifecycle scenarios', () => {
 			})
 		const first = recordedResource('first')
 		const second = recordedResource('second')
-		const effect = effectAtom((get) => {
-			get(get(flag) ? first : second)
+		const effect = effectAtom((read) => {
+			read(read(flag) ? first : second)
 		})
 		const store = createStore()
 		const unmount = store.mountEffect(effect)
@@ -445,8 +445,8 @@ describe('runtime lifecycle scenarios', () => {
 		const middle = derivedAtom((read) => (read(flag) ? read(dropped) : 0))
 		const store = createStore()
 		const unmount = store.mountEffect(
-			effectAtom((get) => {
-				get(middle)
+			effectAtom((read) => {
+				read(middle)
 			}),
 		)
 		await flushMicrotask()
@@ -464,15 +464,15 @@ describe('runtime lifecycle scenarios', () => {
 		(references) => {
 			const stage = primitiveAtom(0)
 			const parent: EffectAtom = effectAtom(
-				(get) => get(stage),
-				(value, _last, _get, _set, mountEffect) => {
+				(read) => read(stage),
+				(value, _last, _read, _write, mountEffect) => {
 					if (value === 0)
 						for (let i = 0; i < references; i++) mountEffect(child)
 				},
 			)
 			const child: EffectAtom = effectAtom(
-				(get) => get(stage),
-				(value, _last, _get, _set, mountEffect) => {
+				(read) => read(stage),
+				(value, _last, _read, _write, mountEffect) => {
 					if (value === 1) mountEffect(parent)
 				},
 			)
@@ -499,15 +499,15 @@ describe('runtime lifecycle scenarios', () => {
 		const middle = derivedAtom((read): number =>
 			read(closeCycle) ? read(owner) : read(base),
 		)
-		const reader = effectAtom((get) => {
-			get(middle)
+		const reader = effectAtom((read) => {
+			read(middle)
 		})
 		const store = createStore()
 		const probeDuringRelease = effectAtom(() => () => {
 			store.peek(middle)
 		})
 		const owner = primitiveAtom(0, {
-			onMount: (_get, _set, mountEffect) => {
+			onMount: (_read, _write, mountEffect) => {
 				mountEffect(reader)
 				mountEffect(probeDuringRelease)
 				mountEffect(reader)
@@ -533,9 +533,9 @@ describe('runtime lifecycle scenarios', () => {
 		let unmount = () => {}
 		const store = createStore()
 		unmount = store.mountEffect(
-			effectAtom((get) => {
+			effectAtom((read) => {
 				unmount()
-				values.push(get(resource))
+				values.push(read(resource))
 			}),
 		)
 		await flushMicrotask()
@@ -551,8 +551,8 @@ describe('runtime lifecycle scenarios', () => {
 		const store = createStore()
 		let unmount = () => {}
 		let remount = false
-		const first: EffectAtom = effectAtom((get) => {
-			events.push(`first ${get(source)}`)
+		const first: EffectAtom = effectAtom((read) => {
+			events.push(`first ${read(source)}`)
 			return () => {
 				if (!remount) return
 				remount = false
@@ -562,8 +562,8 @@ describe('runtime lifecycle scenarios', () => {
 		})
 		unmount = store.mountEffect(first)
 		const unmountSecond = store.mountEffect(
-			effectAtom((get) => {
-				events.push(`second ${get(source)}`)
+			effectAtom((read) => {
+				events.push(`second ${read(source)}`)
 			}),
 		)
 		await flushMicrotask()
@@ -584,9 +584,9 @@ describe('runtime lifecycle scenarios', () => {
 		const values: number[] = []
 		const store = createStore()
 		const unmount = store.mountEffect(
-			effectAtom((get) => {
-				getters.push(get)
-				if (get(source) === 1) values.push(getters[0]!(resource))
+			effectAtom((read) => {
+				getters.push(read)
+				if (read(source) === 1) values.push(getters[0]!(resource))
 			}),
 		)
 		await flushMicrotask()

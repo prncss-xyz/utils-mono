@@ -319,8 +319,8 @@ export const EvictionBeforeSubscription = meta.story({
 
 let effectEvents: string[] = []
 const hookSource = primitiveAtom(0)
-const hookEffect = effectAtom((get) => {
-	const value = get(hookSource)
+const hookEffect = effectAtom((read) => {
+	const value = read(hookSource)
 	effectEvents.push(`run ${value}`)
 	return () => {
 		effectEvents.push(`cleanup ${value}`)

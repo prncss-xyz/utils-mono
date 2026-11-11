@@ -117,9 +117,9 @@ describe('coreMachineAtom', () => {
 				return 'running'
 			},
 			{
-				effect: (next, last, _get, set) => {
+				effect: (next, last, _read, write) => {
 					effect(next, last)
-					send = (event) => set(machine, event)
+					send = (event) => write(machine, event)
 				},
 			},
 		)

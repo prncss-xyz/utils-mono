@@ -132,7 +132,7 @@ async function run(
 	const consumerMount = resource('consumer mount', ['source mount'], ['effect'])
 	const effect = resource('effect', ['consumer mount'], [])
 	const atom = derivedAtom((read) => read(source), undefined, {
-		onMount: (_get, _set, mountEffect) => {
+		onMount: (_read, _write, mountEffect) => {
 			consumerMount.start()
 			mountEffect(
 				effectAtom(() => {

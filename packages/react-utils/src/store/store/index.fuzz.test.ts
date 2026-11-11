@@ -70,10 +70,10 @@ it('matches a reference evaluation across random derived graphs', async () => {
 			const nodes = [...primitives] as AtomSymbol<number, never>[]
 			for (const { a, b, c, modulus } of graph.derived) {
 				nodes.push(
-					derivedAtom((get) =>
-						get(nodes[a]!) % modulus === 0
-							? get(nodes[b]!)
-							: get(nodes[c]!) % modulus,
+					derivedAtom((read) =>
+						read(nodes[a]!) % modulus === 0
+							? read(nodes[b]!)
+							: read(nodes[c]!) % modulus,
 					),
 				)
 			}
