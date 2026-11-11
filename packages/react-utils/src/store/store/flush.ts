@@ -26,6 +26,7 @@ import {
 	queueEffect,
 	publishChange,
 	countOperation,
+	dropPendingValues,
 } from './state'
 import { type Delivery, type Instance, type MountLifecycle } from './types'
 
@@ -195,6 +196,7 @@ export function flush(state: StoreState) {
 }
 
 function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
+	dropPendingValues(state)
 	while (pending.size > 0) {
 		const updates = [...pending]
 		pending.clear()

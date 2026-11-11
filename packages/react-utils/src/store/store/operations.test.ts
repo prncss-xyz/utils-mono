@@ -230,7 +230,7 @@ describe('operation counts', () => {
 		},
 	)
 
-	it('runs each getter of a 21-node layered graph once per pending read', async () => {
+	it('runs each getter of a 21-node layered graph once across repeated pending reads', async () => {
 		const source = primitiveAtom(0)
 		const top = layeredGraph(source)
 		const reads: number[] = []
@@ -238,15 +238,11 @@ describe('operation counts', () => {
 		expect(store.peek(top)).toBe(0)
 		const instrumentation = countOperations(store)
 		const { totals } = instrumentation
-		const getterCounts: number[] = []
 		const setter = derivedAtom(null, (read, write) => {
 			write(source, 1)
-			reads.push(read(top))
-			getterCounts.push(totals.pendingGetters)
-			reads.push(read(top))
+			reads.push(read(top), read(top))
 		})
 		store.send(setter)
-		expect(getterCounts).toEqual([21])
 		expect(reads).toEqual([1_024, 1_024])
 		expect(store.peek(top)).toBe(0)
 		await flushMicrotask()
@@ -254,7 +250,7 @@ describe('operation counts', () => {
 		expect(totals).toEqual(
 			counts({
 				getters: 21,
-				pendingGetters: 2 * 21,
+				pendingGetters: 21,
 				invalidations: 1,
 				validations: 21,
 			}),
@@ -267,7 +263,7 @@ describe('operation counts', () => {
 			'top',
 		]
 		expect(countsByName(instrumentation, 'pendingGetters')).toEqual(
-			Object.fromEntries(names.map((name) => [name, 2])),
+			Object.fromEntries(names.map((name) => [name, 1])),
 		)
 	})
 

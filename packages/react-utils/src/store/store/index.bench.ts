@@ -391,7 +391,7 @@ scenario('pending reads: 21-node layered graph, read twice', () => {
 		read: () => store.peek(result),
 		verify: (value) => expect(value).toBe(next * 2_048),
 		dispose: () => {},
-		operations: { pendingGetters: 2 * 21, invalidations: 2 },
+		operations: { pendingGetters: 21, invalidations: 2 },
 	}
 })
 

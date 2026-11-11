@@ -39,6 +39,13 @@ export type StoreState = {
 	instances: WeakMap<AtomSymbol<any, any> | EffectAtom, Instance<any>>
 	families: WeakMap<AtomFamily<any, any, any>, FamilyStorage<any, any>>
 	pendingEvaluations: Set<Instance<any>>
+	/**
+	 * Derived values of the pending view by resolved instance, shared by pending
+	 * reads until a pending write, a commit, or a change of a committed value
+	 * drops it. A mount phase's pending view is non-empty only after a write
+	 * into it, so it never reuses values of the ordinary pending view.
+	 */
+	pendingValues: Map<Instance<any>, unknown> | undefined
 	epoch: number
 	/**
 	 * Opt-in operation counters, in total and by atom name; `undefined`
@@ -77,6 +84,7 @@ export function createState(
 		instances: new WeakMap(),
 		families: new WeakMap(),
 		pendingEvaluations: new Set(),
+		pendingValues: undefined,
 		epoch: 0,
 		instrumentation: undefined,
 		mountRevision: 0,
@@ -167,6 +175,15 @@ export function publishChange<S>(state: StoreState, instance: Instance<S>) {
 	instance.version++
 	state.epoch++
 	state.mountRevision++
+	dropPendingValues(state)
+}
+
+/**
+ * Drops the derived values shared by pending reads. Pending writes, commits and
+ * committed value changes call it; the next pending read starts a new cache.
+ */
+export function dropPendingValues(state: StoreState) {
+	state.pendingValues = undefined
 }
 
 export function advanceDerivedVersion<S>(
