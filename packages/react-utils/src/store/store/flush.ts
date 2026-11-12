@@ -240,6 +240,62 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
 	}
 }
 
+type MountWalk = {
+	mountWrites: Map<Instance<any>, any> | undefined
+	visited: Set<Instance<any>>
+	visiting: Set<Instance<any>>
+	revision: number
+}
+
+function walkMount(
+	state: StoreState,
+	mounts: Set<Instance<any>>,
+	walk: MountWalk,
+	node: Instance<any>,
+): boolean {
+	state.mountWalks++
+	if (walk.revision !== state.mountRevision) {
+		walk.visited.clear()
+		walk.visiting.clear()
+		walk.revision = state.mountRevision
+	}
+	if (walk.visited.has(node) || walk.visiting.has(node)) return false
+	walk.visiting.add(node)
+	if (node.mountCount === 0 || node.symbol.type === 'effect') {
+		mounts.delete(node)
+		walk.visiting.delete(node)
+		return false
+	}
+	let dependencyRequestedRewalk = false
+	while (true) {
+		isoAssert(node.freshness.type === 'clean')
+		let rewalk = false
+		for (const dep of dependencies(node)) {
+			if (walkMount(state, mounts, walk, dep)) {
+				rewalk = true
+				break
+			}
+		}
+		if (!rewalk) break
+		dependencyRequestedRewalk = true
+		if (node.mountCount === 0) break
+	}
+	mounts.delete(node)
+	const before = state.mountRevision
+	if (!node.mountLifecycle) {
+		walk.mountWrites ??= new Map()
+		isoAssert(walk.mountWrites.size === 0)
+		state.phase.mountWrites = walk.mountWrites
+		mount(state, node)
+		state.phase.mountWrites = undefined
+		applyUpdates(state, walk.mountWrites)
+	}
+	walk.visiting.delete(node)
+	if (before !== state.mountRevision) return true
+	walk.visited.add(node)
+	return dependencyRequestedRewalk
+}
+
 /**
  * Mounts retained dependencies before their consumers, including dependencies
  * below already-mounted nodes. Completed walks are shared until a write or
@@ -251,51 +307,13 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
  */
 function settleMount(state: StoreState, mounts: Set<Instance<any>>) {
 	if (mounts.size === 0) return
-	let mountWrites: Map<Instance<any>, any> | undefined
-	const visited = new Set<Instance<any>>()
-	const visiting = new Set<Instance<any>>()
-	let revision = state.mountRevision
-	/** Returns whether a graph change requires the caller to re-walk. */
-	const walk = (node: Instance<any>): boolean => {
-		state.mountWalks++
-		if (revision !== state.mountRevision) {
-			visited.clear()
-			visiting.clear()
-			revision = state.mountRevision
-		}
-		if (visited.has(node) || visiting.has(node)) return false
-		visiting.add(node)
-		if (node.mountCount === 0 || node.symbol.type === 'effect') {
-			mounts.delete(node)
-			visiting.delete(node)
-			return false
-		}
-		const walkDependencies = () => {
-			isoAssert(node.freshness.type === 'clean')
-			for (const dep of dependencies(node)) if (walk(dep)) return true
-			return false
-		}
-		let dependencyRequestedRewalk = false
-		while (walkDependencies()) {
-			dependencyRequestedRewalk = true
-			if (node.mountCount === 0) break
-		}
-		mounts.delete(node)
-		const before = state.mountRevision
-		if (!node.mountLifecycle) {
-			mountWrites ??= new Map()
-			isoAssert(mountWrites.size === 0)
-			state.phase.mountWrites = mountWrites
-			mount(state, node)
-			state.phase.mountWrites = undefined
-			applyUpdates(state, mountWrites)
-		}
-		visiting.delete(node)
-		if (before !== state.mountRevision) return true
-		visited.add(node)
-		return dependencyRequestedRewalk
+	const walk: MountWalk = {
+		mountWrites: undefined,
+		visited: new Set(),
+		visiting: new Set(),
+		revision: state.mountRevision,
 	}
-	for (const instance of mounts) walk(instance)
+	for (const instance of mounts) walkMount(state, mounts, walk, instance)
 }
 
 function reconcile(
@@ -322,13 +340,12 @@ function settle(
 	const { teardowns, effects } = state.phase
 	isoAssert(teardowns)
 	isoAssert(effects)
-	const idle = () => mounts.size === 0
-	const shouldDrainTeardowns = () =>
-		runTeardowns && idle() && effects.size === 0 && teardowns.length > 0
-	do {
+	while (true) {
 		settleMount(state, mounts)
-		if (shouldDrainTeardowns()) drainTeardowns(state)
-	} while (!idle() || shouldDrainTeardowns())
+		if (mounts.size > 0) continue
+		if (!runTeardowns || effects.size > 0 || teardowns.length === 0) break
+		drainTeardowns(state)
+	}
 }
 
 function scheduleEvictions(
