@@ -69,7 +69,7 @@ export default defineConfig({
 	},
 	run: {
 		tasks: {
-			'vp:tsc': 'tsc --noEmit',
+			'vp:tsc': 'tsc --noEmit && tsc --noEmit -p tsconfig.bench.json',
 		},
 	},
 	test: {

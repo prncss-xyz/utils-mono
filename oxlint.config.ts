@@ -10,7 +10,10 @@ const lintConfig: OxlintConfig = {
 	ignorePatterns: ['.*', '**/*.gen.*'],
 	overrides: [
 		{
-			files: ['packages/react-utils/scripts/**'],
+			files: [
+				'packages/react-utils/scripts/**',
+				'packages/react-utils/src/**/*.bench.ts',
+			],
 			rules: {
 				'no-console': 'off',
 			},
