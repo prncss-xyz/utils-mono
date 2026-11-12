@@ -65,12 +65,12 @@ export type Instance<S> = {
 	effectLifecycle: MountLifecycle | undefined
 	mountLifecycle: MountLifecycle | undefined
 	version: number
-	depVersions: Map<Instance<any>, number>
-	mountedSubs: Set<Instance<any>>
-	subscriptions: Map<() => void, Registration>
+	depVersions: Map<Instance<any>, number> | undefined
+	mountedSubs: Set<Instance<any>> | undefined
+	subscriptions: Map<() => void, Registration> | undefined
 	mountCount: number
-	mountedDeps: Set<Instance<any>>
-	owners: Map<Instance<any>, number>
+	mountedDeps: Set<Instance<any>> | undefined
+	owners: Map<Instance<any>, number> | undefined
 }
 
 export type Tasks = {

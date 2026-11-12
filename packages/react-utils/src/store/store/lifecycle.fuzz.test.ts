@@ -8,6 +8,7 @@ import {
 	flushMicrotask,
 	inspect,
 	mountedDependencyCount,
+	ownerCount,
 	type Value,
 } from './utils.testing'
 
@@ -307,7 +308,7 @@ async function run(
 					instance.mountCount,
 					consumerCount(instance),
 					mountedDependencyCount(instance),
-					instance.owners.size,
+					ownerCount(instance),
 				],
 				report('remaining references'),
 			).toEqual([0, 0, 0, 0])

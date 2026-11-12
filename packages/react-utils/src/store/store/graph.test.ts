@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { primitiveAtom } from '../atoms'
 import {
 	addMountedEdge,
-	clearDependencies,
 	consumerCount,
 	consumers,
 	dependencies,
@@ -52,7 +51,8 @@ describe('mounted edges', () => {
 							addMountedEdge(nodes[step.from]!, nodes[step.to]!)
 						edges.add(key(step.from, step.to))
 					} else if (step.type === 'remove') {
-						removeMountedEdge(nodes[step.from]!, nodes[step.to]!)
+						if (edges.has(key(step.from, step.to)))
+							removeMountedEdge(nodes[step.from]!, nodes[step.to]!)
 						edges.delete(key(step.from, step.to))
 					} else if (step.type === 'detach') {
 						const detached = new Set(detachMountedEdges(nodes[step.from]!))
@@ -83,10 +83,17 @@ describe('mounted edges', () => {
 		addMountedEdge(consumer, dep)
 		expect(() => addMountedEdge(consumer, dep)).toThrow('added twice')
 	})
+
+	it('rejects removing an edge that is not mounted', () => {
+		const [consumer, dep] = instances() as [Node, Node]
+		expect(() => removeMountedEdge(consumer, dep)).toThrow('edge missing')
+		addMountedEdge(dep, consumer)
+		expect(() => removeMountedEdge(consumer, dep)).toThrow('edge missing')
+	})
 })
 
 describe('dependency records', () => {
-	it('records read versions, which are empty after reset and after clear', () => {
+	it('records read versions, which are empty after reset', () => {
 		const [consumer, first, second] = instances() as [Node, Node, Node]
 
 		recordDependency(consumer, first, 1)
@@ -105,9 +112,5 @@ describe('dependency records', () => {
 		expect([...dependencies(consumer)]).toEqual([])
 		expect(hasDependency(consumer, first)).toBe(false)
 		expect(hasDependency(consumer, second)).toBe(false)
-
-		recordDependency(consumer, first, 3)
-		clearDependencies(consumer)
-		expect(hasDependency(consumer, first)).toBe(false)
 	})
 })

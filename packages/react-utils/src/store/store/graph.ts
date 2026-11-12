@@ -1,64 +1,74 @@
 import { isoAssert } from '../../functions'
 import type { Instance } from './types'
 
+const noDependencies: ReadonlyMap<Instance<any>, number> = new Map()
+const noEdges: ReadonlySet<Instance<any>> = new Set()
+const noOwners: ReadonlyMap<Instance<any>, number> = new Map()
+
+/**
+ * Link collections start absent and are allocated on first insertion, since
+ * primitives never record dependencies, only effect atoms have owners, and
+ * unmounted instances have no mounted edges. An absent collection reads as an
+ * empty one of the same kind, which keeps iteration sites monomorphic.
+ */
 export function createLinks() {
 	return {
-		depVersions: new Map<Instance<any>, number>(),
-		mountedSubs: new Set<Instance<any>>(),
-		mountedDeps: new Set<Instance<any>>(),
-		owners: new Map<Instance<any>, number>(),
+		depVersions: undefined,
+		mountedSubs: undefined,
+		mountedDeps: undefined,
+		owners: undefined,
 	}
 }
 
 export function dependencies(instance: Instance<any>): Iterable<Instance<any>> {
-	return instance.depVersions.keys()
+	return (instance.depVersions ?? noDependencies).keys()
 }
 
 export function dependencyVersions(
 	instance: Instance<any>,
 ): Iterable<[Instance<any>, number]> {
-	return instance.depVersions
+	return instance.depVersions ?? noDependencies
 }
 
 export function hasDependency(instance: Instance<any>, dep: Instance<any>) {
-	return instance.depVersions.has(dep)
+	return (instance.depVersions ?? noDependencies).has(dep)
 }
 
 export function dependencyCount(instance: Instance<any>) {
-	return instance.depVersions.size
+	return (instance.depVersions ?? noDependencies).size
 }
 
 export function consumers(instance: Instance<any>): Iterable<Instance<any>> {
-	return instance.mountedSubs
+	return instance.mountedSubs ?? noEdges
 }
 
 export function consumerCount(instance: Instance<any>) {
-	return instance.mountedSubs.size
+	return (instance.mountedSubs ?? noEdges).size
 }
 
 export function mountedDependencies(
 	instance: Instance<any>,
 ): Iterable<Instance<any>> {
-	return instance.mountedDeps
+	return instance.mountedDeps ?? noEdges
 }
 
 export function hasMountedDependency(
 	instance: Instance<any>,
 	dep: Instance<any>,
 ) {
-	return instance.mountedDeps.has(dep)
+	return (instance.mountedDeps ?? noEdges).has(dep)
 }
 
 export function mountedDependencyCount(instance: Instance<any>) {
-	return instance.mountedDeps.size
+	return (instance.mountedDeps ?? noEdges).size
 }
 
-export function clearDependencies(instance: Instance<any>) {
-	instance.depVersions.clear()
-}
-
+/**
+ * Drops the dependency record instead of clearing it, so an iteration of the
+ * previous record still in progress is left intact.
+ */
 export function resetDependencies(instance: Instance<any>) {
-	instance.depVersions = new Map()
+	instance.depVersions = undefined
 }
 
 export function recordDependency(
@@ -66,18 +76,19 @@ export function recordDependency(
 	dep: Instance<any>,
 	version: number,
 ) {
-	instance.depVersions.set(dep, version)
+	;(instance.depVersions ??= new Map()).set(dep, version)
 }
 
 export function addMountedEdge(instance: Instance<any>, dep: Instance<any>) {
 	isoAssert(!hasMountedDependency(instance, dep), 'mounted edge added twice')
-	instance.mountedDeps.add(dep)
-	dep.mountedSubs.add(instance)
+	;(instance.mountedDeps ??= new Set()).add(dep)
+	;(dep.mountedSubs ??= new Set()).add(instance)
 }
 
 export function removeMountedEdge(instance: Instance<any>, dep: Instance<any>) {
-	instance.mountedDeps.delete(dep)
-	dep.mountedSubs.delete(instance)
+	isoAssert(hasMountedDependency(instance, dep), 'mounted edge missing')
+	instance.mountedDeps!.delete(dep)
+	dep.mountedSubs!.delete(instance)
 }
 
 /**
@@ -87,8 +98,30 @@ export function removeMountedEdge(instance: Instance<any>, dep: Instance<any>) {
 export function detachMountedEdges(
 	instance: Instance<any>,
 ): Iterable<Instance<any>> {
-	const mountedDeps = instance.mountedDeps
-	instance.mountedDeps = new Set()
-	for (const dep of mountedDeps) dep.mountedSubs.delete(instance)
+	const mountedDeps = instance.mountedDeps ?? noEdges
+	instance.mountedDeps = undefined
+	for (const dep of mountedDeps) {
+		isoAssert(dep.mountedSubs)
+		dep.mountedSubs.delete(instance)
+	}
 	return mountedDeps
+}
+
+export function owners(instance: Instance<any>): Iterable<Instance<any>> {
+	return (instance.owners ?? noOwners).keys()
+}
+
+/** Adds one ownership reference from `owner` to the effect instance `child`. */
+export function addOwner(child: Instance<any>, owner: Instance<any>) {
+	const counts = (child.owners ??= new Map())
+	counts.set(owner, (counts.get(owner) ?? 0) + 1)
+}
+
+/** Drops one ownership reference, removing `owner` with its last one. */
+export function releaseOwner(child: Instance<any>, owner: Instance<any>) {
+	const counts = child.owners
+	isoAssert(counts)
+	const references = counts.get(owner)!
+	if (references === 1) counts.delete(owner)
+	else counts.set(owner, references - 1)
 }

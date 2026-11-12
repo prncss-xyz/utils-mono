@@ -10,6 +10,7 @@ import {
 	type EffectAtom,
 } from '.'
 import { flush } from './flush'
+import { dependencyCount } from './graph'
 import {
 	countOperations,
 	createStore,
@@ -18,6 +19,7 @@ import {
 	inspect,
 	internalInstance,
 	mountCount,
+	ownerCount,
 	type Instrumentation,
 } from './utils.testing'
 import { dispatch } from './write'
@@ -227,10 +229,10 @@ describe('runtime lifecycle scenarios', () => {
 		const store = createStore()
 		expect(store.peek(family, 'first')).toBe(3)
 		const instance = internalInstance(store, member)
-		expect(instance.depVersions.size).toBe(1)
+		expect(dependencyCount(instance)).toBe(1)
 		await flushMicrotask()
 
-		expect(instance.depVersions.size).toBe(0)
+		expect(dependencyCount(instance)).toBe(0)
 		expect(store.peek(member)).toBe(3)
 	})
 
@@ -479,8 +481,8 @@ describe('runtime lifecycle scenarios', () => {
 			store.send(stage, 1)
 
 			expect(() => flush(state)).not.toThrow()
-			expect(state.instances.get(parent)?.owners.size).toBe(1)
-			expect(state.instances.get(child)?.owners.size).toBe(0)
+			expect(ownerCount(state.instances.get(parent)!)).toBe(1)
+			expect(ownerCount(state.instances.get(child)!)).toBe(0)
 			unmountChild()
 			unmountParent()
 		},

@@ -70,10 +70,11 @@ function subscribeInstance<S>(
 	notify: () => void,
 ) {
 	assertOutsideGetter(state)
-	let registration = instance.subscriptions.get(notify)
+	const subscriptions = (instance.subscriptions ??= new Map())
+	let registration = subscriptions.get(notify)
 	if (!registration) {
 		registration = { references: 0 }
-		instance.subscriptions.set(notify, registration)
+		subscriptions.set(notify, registration)
 	}
 	registration.references++
 	retain(state, instance)
@@ -81,7 +82,7 @@ function subscribeInstance<S>(
 	return () => {
 		if (!active) return
 		active = false
-		if (--registration.references === 0) instance.subscriptions.delete(notify)
+		if (--registration.references === 0) subscriptions.delete(notify)
 		release(state, instance)
 	}
 }

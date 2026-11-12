@@ -10,8 +10,9 @@ import {
 	type Store,
 } from '../atoms'
 import { createRuntime } from './createRuntime'
-import { consumerCount, mountedDependencyCount } from './graph'
+import { consumerCount, mountedDependencyCount, owners } from './graph'
 import { createState, type Operation, type StoreState } from './state'
+import type { Instance } from './types'
 
 const states = new WeakMap<Store, StoreState>()
 
@@ -106,6 +107,9 @@ export function chain<Args extends unknown[]>(
 }
 
 export { consumerCount, mountedDependencyCount }
+
+export const ownerCount = (instance: Instance<any>) =>
+	[...owners(instance)].length
 
 /** A state whose wiring is inert, for unit tests of registry and graph primitives. */
 export function createStubState(): StoreState {

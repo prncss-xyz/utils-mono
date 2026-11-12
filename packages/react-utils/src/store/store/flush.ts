@@ -12,6 +12,7 @@ import {
 	assertOwnershipEdge,
 } from './engine'
 import {
+	addOwner,
 	consumers,
 	dependencies,
 	hasMountedDependency,
@@ -72,17 +73,21 @@ function propagateChanges(state: StoreState, roots: Instance<any>[]) {
 	const reconciles = new Set<Instance<any>>()
 	for (const root of roots) invalidate(state, root, affected, reconciles)
 	const deliveries: Delivery[] = []
-	for (const instance of affected)
-		for (const [callback, registration] of instance.subscriptions)
-			deliveries.push({
-				instance,
-				callback,
-				registration,
-				version: instance.version,
-			})
+	for (const instance of affected) {
+		const { subscriptions } = instance
+		if (subscriptions)
+			for (const [callback, registration] of subscriptions)
+				deliveries.push({
+					instance,
+					callback,
+					registration,
+					version: instance.version,
+				})
+	}
 	for (const instance of reconciles) reconcile(state, instance, reconciles)
 	const committed = new Set(roots)
-	for (const { instance, callback, registration, version } of deliveries)
+	for (const { instance, callback, registration, version } of deliveries) {
+		isoAssert(instance.subscriptions)
 		if (
 			instance.subscriptions.get(callback) === registration &&
 			(committed.has(instance) || instance.version !== version)
@@ -90,6 +95,7 @@ function propagateChanges(state: StoreState, roots: Instance<any>[]) {
 			countOperation(state, 'notifications', instance.symbol)
 			callback()
 		}
+	}
 }
 
 function mounting(
@@ -106,7 +112,7 @@ function mounting(
 		const child = getEffectInstance(state, effect)
 		assertOwnershipEdge(owner, child)
 		lifecycle.children.push(child)
-		child.owners.set(owner, (child.owners.get(owner) ?? 0) + 1)
+		addOwner(child, owner)
 		retain(state, child)
 	}
 	return {

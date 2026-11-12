@@ -15,6 +15,8 @@ import {
 	addMountedEdge,
 	removeMountedEdge,
 	detachMountedEdges,
+	owners,
+	releaseOwner,
 } from './graph'
 import { getInstance } from './registry'
 import {
@@ -133,7 +135,7 @@ export function assertOwnershipEdge(
 		isoAssert(current !== target, 'cyclic effect ownership')
 		if (visited.has(current)) return
 		visited.add(current)
-		for (const parent of current.owners.keys()) walk(parent)
+		for (const parent of owners(current)) walk(parent)
 		for (const consumer of consumers(current)) walk(consumer)
 	}
 	walk(owner)
@@ -146,9 +148,7 @@ export function releaseChildren(
 ) {
 	while (lifecycle.children.length > 0) {
 		const child = lifecycle.children.pop()!
-		const references = child.owners.get(owner)!
-		if (references === 1) child.owners.delete(owner)
-		else child.owners.set(owner, references - 1)
+		releaseOwner(child, owner)
 		release(state, child)
 	}
 }
