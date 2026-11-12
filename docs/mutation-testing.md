@@ -2,9 +2,19 @@
 
 Stryker mutates `packages/react-utils/src/store/store/` to check that the test suite catches bugs. Each surviving mutant is either a test to add or, when provably equivalent, a suppression.
 
+## When to run
+
+Mutation testing is task-level validation, not a per-commit requirement. Do not add it to the pre-commit hook or `vp run verify`.
+
+- Run it when a task changes store runtime behavior or the mutation-testing configuration.
+- Run it for a test-only change whose purpose is to kill a survivor or to justify a suppression.
+- Do not run it for other test-only changes, including any `**/*.test.ts` file in `packages/react-utils`. A periodic full run covers them.
+- Skip unrelated tasks and documentation-only or formatting-only changes.
+- Always run incrementally (the default) and never pass `--force` outside the case under "Run". The incremental file limits the work to mutants whose code or covering tests changed, so the cost scales with the diff. Do not narrow the run with `--mutate`: a narrower mutate set drops the other files' results from the incremental file and loses the baseline.
+
 ## Run
 
-Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vitest project of `packages/react-utils`: every `**/*.test.ts` file under that package, not only those beside the store runtime (see `packages/react-utils/unit.testing.ts`). A change to any of those files counts as a change to the unit suite, even when no mutated source changed. Settings are shared through `packages/react-utils/unit.testing.ts`; `vp test` and the pre-commit hook run the projects defined in the root `vite.config.ts`, which spreads the same settings. The run uses a fixed fast-check seed (`packages/react-utils/stryker.setup.testing.ts`, loaded only by `packages/react-utils/stryker.vitest.config.ts`).
+Run `pnpm --filter @prncss-xyz/react-utils mutate`. It runs the whole `unit` vitest project of `packages/react-utils`: every `**/*.test.ts` file under that package, not only those beside the store runtime (see `packages/react-utils/unit.testing.ts`). A change to any of those files invalidates the incremental results of the mutants those tests cover, even when no mutated source changed. Settings are shared through `packages/react-utils/unit.testing.ts`; `vp test` and the pre-commit hook run the projects defined in the root `vite.config.ts`, which spreads the same settings. The run uses a fixed fast-check seed (`packages/react-utils/stryker.setup.testing.ts`, loaded only by `packages/react-utils/stryker.vitest.config.ts`).
 
 - The HTML report is written to `packages/react-utils/reports/mutation/index.html`.
 - A Markdown summary is written to `packages/react-utils/reports/mutation/report.md`: status counts and every surviving or uncovered mutant, with its source text. `scripts/mutation-report.mjs` generates it from `mutation.json`. Run it with `--out <file>` to write a copy, or with `--check <file>` to confirm that a record still contains the generated output. Copy counts and locations from the generated output; do not retype them.
