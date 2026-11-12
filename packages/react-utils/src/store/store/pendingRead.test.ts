@@ -220,10 +220,17 @@ describe('pending reads', () => {
 	})
 
 	it('does not reuse values that read a family member evicted since', async () => {
-		let created = 0
-		const members = atomFamily(() => primitiveAtom(++created === 1 ? 5 : 0), {
-			TTL: 0,
-		})
+		let firstInstance = true
+		const members = atomFamily(
+			() => {
+				const initial = firstInstance ? 5 : 0
+				firstInstance = false
+				return primitiveAtom(initial)
+			},
+			{
+				TTL: 0,
+			},
+		)
 		const other = primitiveAtom(0)
 		const trigger = primitiveAtom(0)
 		const total = derivedAtom((read) => read(members, 1) + read(other))
