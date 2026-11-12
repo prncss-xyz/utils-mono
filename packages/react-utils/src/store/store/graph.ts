@@ -111,6 +111,13 @@ export function owners(instance: Instance<any>): Iterable<Instance<any>> {
 	return (instance.owners ?? noOwners).keys()
 }
 
+/** The owners of the effect instance with their reference counts. */
+export function ownerReferences(
+	instance: Instance<any>,
+): Iterable<[Instance<any>, number]> {
+	return instance.owners ?? noOwners
+}
+
 /** Adds one ownership reference from `owner` to the effect instance `child`. */
 export function addOwner(child: Instance<any>, owner: Instance<any>) {
 	const counts = (child.owners ??= new Map())
@@ -122,6 +129,7 @@ export function releaseOwner(child: Instance<any>, owner: Instance<any>) {
 	const counts = child.owners
 	isoAssert(counts)
 	const references = counts.get(owner)!
+	// Stryker disable next-line ConditionalExpression: releaseChildren releases every reference of an owner in one loop, and no reader of owner references can run before it ends
 	if (references === 1) counts.delete(owner)
 	else counts.set(owner, references - 1)
 }

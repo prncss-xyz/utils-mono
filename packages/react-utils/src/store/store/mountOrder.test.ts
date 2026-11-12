@@ -11,6 +11,12 @@ import {
 import { createStore, flushMicrotask, mountCount } from './utils.testing'
 
 describe('mount order within a flush', () => {
+	const logUnmount = (events: string[], name: string) => ({
+		onMount: () => () => {
+			events.push(name)
+		},
+	})
+
 	describe('transitive', () => {
 		const logMount = (order: string[], name: string) => ({
 			onMount: () => {
@@ -233,7 +239,7 @@ describe('mount order within a flush', () => {
 			expect(order).toEqual(['G', 'I', 'E', 'C'])
 		})
 
-		it('remounts a node torn down and requeued by user code during its own walk', async () => {
+		it('keeps a node mounted when user code releases and retains it again during its own walk', async () => {
 			const order: string[] = []
 			const sw = primitiveAtom(false)
 			let unsubscribeN = () => {}
@@ -268,10 +274,10 @@ describe('mount order within a flush', () => {
 			store.send(sw, true)
 			await flushMicrotask()
 
-			expect(order).toEqual(['N', 'D', '~N', '~D', 'D', 'N', 'P'])
+			expect(order).toEqual(['N', 'D', 'P'])
 		})
 
-		it('mounts the parent after a sibling torn down and requeued without a write', async () => {
+		it('mounts the parent after a sibling released and retained again without a write', async () => {
 			const order: string[] = []
 			let unsubscribeR = () => {}
 			let tornDown = false
@@ -304,7 +310,7 @@ describe('mount order within a flush', () => {
 			store.subscribe(x, () => {})
 			await flushMicrotask()
 
-			expect(order).toEqual(['W', 'X', '~W', 'W', 'R'])
+			expect(order).toEqual(['W', 'X', 'R'])
 		})
 	})
 
@@ -467,6 +473,421 @@ describe('mount order within a flush', () => {
 				expect(atoms.events).toEqual(['mount'])
 			},
 		)
+
+		const gatedEffect = (
+			{ sel, resource }: ReturnType<typeof gatedPair>,
+			readWhen: boolean,
+		) =>
+			effectAtom(
+				(read) => (read(sel) === readWhen ? read(resource) : 0),
+				() => {},
+			)
+		it.each<{
+			name: string
+			mountRoots: (
+				store: ReturnType<typeof createStore>,
+				atoms: ReturnType<typeof gatedPair>,
+			) => void
+		}>([
+			{
+				name: 'two subscriptions',
+				mountRoots: (store, { gatedOff, gatedOn }) => {
+					store.subscribe(gatedOff, () => {})
+					store.subscribe(gatedOn, () => {})
+				},
+			},
+			{
+				name: 'two effects',
+				mountRoots: (store, atoms) => {
+					store.mountEffect(gatedEffect(atoms, false))
+					store.mountEffect(gatedEffect(atoms, true))
+				},
+			},
+			{
+				name: 'a subscription and an effect',
+				mountRoots: (store, atoms) => {
+					store.subscribe(atoms.gatedOff, () => {})
+					store.mountEffect(gatedEffect(atoms, true))
+				},
+			},
+		])(
+			'keeps a dependency mounted when it moves between $name',
+			async ({ mountRoots }) => {
+				const atoms = gatedPair()
+				const store = createStore()
+				mountRoots(store, atoms)
+				await flushMicrotask()
+				store.send(atoms.sel, true)
+				await flushMicrotask()
+				store.send(atoms.sel, false)
+				await flushMicrotask()
+
+				expect(atoms.events).toEqual(['mount'])
+			},
+		)
+
+		it('tears down a dropped consumer before a dependency it read through a path that stays mounted', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const resource = primitiveAtom(0, logUnmount(events, 'resource'))
+			const gated = derivedAtom((read) => (read(sel) ? 0 : read(resource)))
+			const shared = derivedAtom((read) => read(gated))
+			const consumer = derivedAtom<number>(
+				(read) => read(shared),
+				undefined,
+				logUnmount(events, 'consumer'),
+			)
+			const dropping = derivedAtom((read) => (read(sel) ? 0 : read(consumer)))
+			const store = createStore()
+			store.subscribe(dropping, () => {})
+			store.subscribe(shared, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['consumer', 'resource'])
+		})
+	})
+
+	describe('deferred teardown', () => {
+		const owning = (events: string[], effect: EffectAtom, name: string) =>
+			primitiveAtom(0, {
+				onMount: (_read, _write, mountEffect) => {
+					mountEffect(effect)
+					return () => events.push(name)
+				},
+			})
+		const logSelection = (
+			events: string[],
+			sel: ReturnType<typeof primitiveAtom<boolean>>,
+		) =>
+			effectAtom(
+				(read) => read(sel),
+				(selected) => {
+					events.push(`setup ${selected}`)
+					return () => events.push(`cleanup ${selected}`)
+				},
+			)
+		const mountWriteOwner = (
+			events: string[],
+			sel: ReturnType<typeof primitiveAtom<boolean>>,
+		) =>
+			primitiveAtom(0, {
+				onMount: (_read, write, mountEffect) => {
+					mountEffect(logSelection(events, sel))
+					write(sel, true)
+					return () => events.push('owner')
+				},
+			})
+		const selectedReader = (
+			sel: ReturnType<typeof primitiveAtom<boolean>>,
+			atom: ReturnType<typeof primitiveAtom<number>>,
+		) =>
+			effectAtom(
+				(read) => (read(sel) ? read(atom) : 0),
+				() => {},
+			)
+
+		it('does not rerun a child effect of an owner released in the flush', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const owner = owning(events, logSelection(events, sel), 'owner')
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['cleanup false', 'owner'])
+		})
+
+		it('does not run a child effect whose owner a mount write releases before its first run', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const owner = mountWriteOwner(events, sel)
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+
+			expect(events).toEqual(['owner'])
+		})
+
+		it('does not rerun a child effect whose cleanup releases its owner', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			let unsubscribe = () => {}
+			const owner = owning(
+				events,
+				effectAtom(
+					(read) => read(sel),
+					(selected) => {
+						events.push(`setup ${selected}`)
+						return () => {
+							events.push(`cleanup ${selected}`)
+							unsubscribe()
+						}
+					},
+				),
+				'owner',
+			)
+			const root = derivedAtom((read) => read(owner))
+			const store = createStore()
+			unsubscribe = store.subscribe(root, () => {})
+			await flushMicrotask()
+			events.length = 0
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['cleanup false', 'owner'])
+		})
+
+		it.each<{
+			name: string
+			owned: (
+				events: string[],
+				sel: ReturnType<typeof primitiveAtom<boolean>>,
+			) => EffectAtom
+		}>([
+			{ name: 'child', owned: logSelection },
+			{
+				name: 'grandchild',
+				owned: (events, sel) =>
+					effectAtom(
+						() => 0,
+						(_next, _last, _read, _write, mountEffect) => {
+							mountEffect(logSelection(events, sel))
+						},
+					),
+			},
+		])(
+			'resumes a skipped $name effect when its owner is retained again in the flush',
+			async ({ owned }) => {
+				const events: string[] = []
+				const sel = primitiveAtom(false)
+				const owner = owning(events, owned(events, sel), 'owner')
+				const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+				const store = createStore()
+				store.subscribe(root, () => {})
+				await flushMicrotask()
+				store.mountEffect(selectedReader(sel, owner))
+				await flushMicrotask()
+				events.length = 0
+				store.send(sel, true)
+				await flushMicrotask()
+
+				expect(events).toEqual(['cleanup false', 'setup true'])
+			},
+		)
+
+		it('checks each shared owner once when skipping the orphaned children of a deep owner lattice', async () => {
+			const depth = 26
+			const sel = primitiveAtom(false)
+			let runs = 0
+			let level: EffectAtom[] = []
+			for (let index = 0; index < depth; index++) {
+				const owned = level
+				const ownerEffect = () =>
+					effectAtom(
+						(read) => read(sel),
+						(_next, _last, _read, _write, mountEffect) => {
+							runs++
+							for (const child of owned) mountEffect(child)
+						},
+					)
+				level = [ownerEffect(), ownerEffect()]
+			}
+			const top = level
+			const owner = primitiveAtom(0, {
+				onMount: (_read, _write, mountEffect) => {
+					for (const child of top) mountEffect(child)
+				},
+			})
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+			runs = 0
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(runs).toBe(0)
+		})
+
+		it('runs a child effect that has not run yet when its owner is retained again in the flush', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const owner = mountWriteOwner(events, sel)
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+			const store = createStore()
+			store.mountEffect(selectedReader(sel, owner))
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+
+			expect(events).toEqual(['setup true'])
+		})
+
+		it('keeps deferred teardowns pending when a subscriber releases a reference that is not the last', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const doublySubscribed = primitiveAtom(0)
+			const resource = primitiveAtom(0, {
+				onMount: () => {
+					events.push('mount')
+					return () => events.push('unmount')
+				},
+			})
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(resource)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			store.mountEffect(selectedReader(sel, resource))
+			const unsubscribeDoublySubscribed = store.subscribe(
+				doublySubscribed,
+				() => {},
+			)
+			store.subscribe(doublySubscribed, () => {})
+			store.subscribe(sel, () => unsubscribeDoublySubscribed())
+			await flushMicrotask()
+			events.length = 0
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual([])
+		})
+
+		it('tears down a consumer before a dependency that an owned child still reads', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const dependency = primitiveAtom(0, logUnmount(events, 'dependency'))
+			const consumer = derivedAtom<number>(
+				(read) => read(dependency),
+				undefined,
+				logUnmount(events, 'consumer'),
+			)
+			const owner = owning(
+				events,
+				effectAtom(
+					(read) => read(dependency),
+					() => {},
+				),
+				'owner',
+			)
+			const root = derivedAtom((read) =>
+				read(sel) ? 0 : read(consumer) + read(owner),
+			)
+			const store = createStore()
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toHaveLength(3)
+			expect(events.indexOf('consumer')).toBeLessThan(
+				events.indexOf('dependency'),
+			)
+		})
+
+		it('tears down a dependency after a consumer that the teardown of an owner releases', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const dependency = primitiveAtom(1, logUnmount(events, 'dependency'))
+			const consumer = derivedAtom<number>(
+				(read) => (read(sel) ? 0 : read(dependency)),
+				undefined,
+				logUnmount(events, 'consumer'),
+			)
+			const owner = owning(
+				events,
+				effectAtom(
+					(read) => read(consumer),
+					() => {},
+				),
+				'owner',
+			)
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(owner)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toHaveLength(3)
+			expect(events.indexOf('consumer')).toBeLessThan(
+				events.indexOf('dependency'),
+			)
+		})
+
+		const subscribedRoot = () => {
+			const events: string[] = []
+			const trigger = primitiveAtom(0)
+			const dependency = primitiveAtom(0, logUnmount(events, 'dependency'))
+			const root = derivedAtom<number>(
+				(read) => read(dependency),
+				undefined,
+				logUnmount(events, 'root'),
+			)
+			const store = createStore()
+			const unsubscribeRoot = store.subscribe(root, () => {})
+			return { events, trigger, dependency, store, unsubscribeRoot }
+		}
+
+		it('tears down a root a subscriber unsubscribes at once and its dependency after the callback', async () => {
+			const { events, trigger, store, unsubscribeRoot } = subscribedRoot()
+			store.subscribe(trigger, () => {
+				events.push('callback start')
+				unsubscribeRoot()
+				events.push('callback end')
+			})
+			await flushMicrotask()
+			store.send(trigger, 1)
+			await flushMicrotask()
+
+			expect(events).toEqual([
+				'callback start',
+				'root',
+				'callback end',
+				'dependency',
+			])
+		})
+
+		it('keeps the dependency of an unsubscribed root that the callback subscribes to', async () => {
+			const { events, trigger, dependency, store, unsubscribeRoot } =
+				subscribedRoot()
+			store.subscribe(trigger, () => {
+				events.push('callback start')
+				unsubscribeRoot()
+				store.subscribe(dependency, () => {})
+				events.push('callback end')
+			})
+			await flushMicrotask()
+			store.send(trigger, 1)
+			await flushMicrotask()
+
+			expect(events).toEqual(['callback start', 'root', 'callback end'])
+		})
+
+		it('tears down a deferred consumer before a dependency a subscriber unsubscribes', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const dependency = primitiveAtom(0, logUnmount(events, 'dependency'))
+			const consumer = derivedAtom<number>(
+				(read) => read(dependency),
+				undefined,
+				logUnmount(events, 'consumer'),
+			)
+			const root = derivedAtom((read) => (read(sel) ? 0 : read(consumer)))
+			const store = createStore()
+			store.subscribe(root, () => {})
+			const unsubscribeDependency = store.subscribe(dependency, () => {})
+			store.subscribe(sel, () => unsubscribeDependency())
+			await flushMicrotask()
+			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['consumer', 'dependency'])
+		})
 	})
 
 	it('counts a nested subscribe made while an unmounted instance is being retained', async () => {
@@ -548,10 +969,10 @@ describe('mount order within a flush', () => {
 		expect(events).toEqual([
 			'first mount',
 			'first setup',
-			'first cleanup',
-			'first unmount',
 			'second mount',
 			'second setup',
+			'first cleanup',
+			'first unmount',
 		])
 
 		unsubscribeTrigger()
@@ -559,31 +980,42 @@ describe('mount order within a flush', () => {
 		expect(events.slice(6)).toEqual(['second cleanup', 'second unmount'])
 	})
 
-	it('re-runs consumers before guarded dependencies', async () => {
-		const items = primitiveAtom([{ name: 'a' }])
-		const index = primitiveAtom(0)
-		const valid = primitiveAtom(true)
-		const cleanupDetail = vi.fn()
-		const detailGetter = vi.fn((read: Read) => read(items)[read(index)]?.name)
-		const detail = derivedAtom(detailGetter, () => {}, {
-			onMount: () => cleanupDetail,
-		})
-		const outer = derivedAtom(
-			(read) => (read(valid) ? read(detail) : null),
-			() => {},
-		)
-		const store = createStore()
-		const unsubscribe = store.subscribe(outer, () => {})
-		await flushMicrotask()
-		expect(detailGetter).toHaveBeenCalledOnce()
-		store.send(index, 3)
-		store.send(valid, false)
-		await flushMicrotask()
-		expect(detailGetter).toHaveBeenCalledOnce()
-		expect(cleanupDetail).toHaveBeenCalledOnce()
-		expect(store.peek(outer)).toBeNull()
-		unsubscribe()
-	})
+	it.each<{
+		name: string
+		root: (
+			outer: AtomSymbol<string | null | undefined, never>,
+		) => AtomSymbol<string | null | undefined, never>
+	}>([
+		{ name: 'subscribed', root: (outer) => outer },
+		{
+			name: 'read by a subscribed instance',
+			root: (outer) => derivedAtom((read) => read(outer)),
+		},
+	])(
+		're-runs consumers before guarded dependencies when the consumer is $name',
+		async ({ root }) => {
+			const items = primitiveAtom([{ name: 'a' }])
+			const index = primitiveAtom(0)
+			const valid = primitiveAtom(true)
+			const cleanupDetail = vi.fn()
+			const detailGetter = vi.fn((read: Read) => read(items)[read(index)]?.name)
+			const detail = derivedAtom(detailGetter, () => {}, {
+				onMount: () => cleanupDetail,
+			})
+			const outer = derivedAtom((read) => (read(valid) ? read(detail) : null))
+			const store = createStore()
+			const unsubscribe = store.subscribe(root(outer), () => {})
+			await flushMicrotask()
+			expect(detailGetter).toHaveBeenCalledOnce()
+			store.send(index, 3)
+			store.send(valid, false)
+			await flushMicrotask()
+			expect(detailGetter).toHaveBeenCalledOnce()
+			expect(cleanupDetail).toHaveBeenCalledOnce()
+			expect(store.peek(outer)).toBeNull()
+			unsubscribe()
+		},
+	)
 
 	it('stops walking a node released by a mount write below it', async () => {
 		const flag = primitiveAtom(false)

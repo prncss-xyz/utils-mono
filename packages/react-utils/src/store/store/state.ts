@@ -102,7 +102,8 @@ export function createState(
 			effects: undefined,
 			familyEvictions: undefined,
 			mountWrites: undefined,
-			releases: undefined,
+			teardowns: undefined,
+			droppedEdges: undefined,
 		},
 		hydrating: true,
 		evaluatingGetters: 0,
@@ -138,7 +139,8 @@ export function recycleTasks(state: StoreState, tasks: Tasks) {
 			phase.effects === undefined &&
 			phase.familyEvictions === undefined &&
 			phase.mountWrites === undefined &&
-			phase.releases === undefined,
+			phase.teardowns === undefined &&
+			phase.droppedEdges === undefined,
 	)
 	isoAssert(
 		tasks.mounts.size === 0 &&

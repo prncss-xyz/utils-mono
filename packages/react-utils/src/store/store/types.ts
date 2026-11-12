@@ -85,5 +85,10 @@ export type FlushPhase = {
 	effects: Set<Instance<any>> | undefined
 	familyEvictions: Set<Instance<any>> | undefined
 	mountWrites: Map<Instance<any>, any> | undefined
-	releases: Instance<any>[] | undefined
+	teardowns: Instance<any>[] | undefined
+	/**
+	 * The references released in this flush on behalf of a consumer or an
+	 * owner, as pairs of that holder and the released instance.
+	 */
+	droppedEdges: Instance<any>[] | undefined
 }

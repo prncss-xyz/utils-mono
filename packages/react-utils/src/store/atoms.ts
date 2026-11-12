@@ -95,8 +95,8 @@ export type Resolve = {
  * or through derived atoms, runs none. Only the final reference removes a
  * callback and releases its subscription ownership. Delivery uses a snapshot
  * taken before changed values are computed: callbacks registered later,
- * including by a cleanup that runs during that computation, wait for a later
- * change, and callbacks removed before their turn are skipped even if
+ * including by the cleanup of a resource that computation released, wait for a
+ * later change, and callbacks removed before their turn are skipped even if
  * re-registered. Resolved handles share this contract.
  */
 export type Subscribe = {

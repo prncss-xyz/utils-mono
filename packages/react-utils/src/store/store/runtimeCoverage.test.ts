@@ -488,40 +488,6 @@ describe('runtime lifecycle scenarios', () => {
 		},
 	)
 
-	it('keeps a partially released owner reference visible to cycle checks', () => {
-		const ownerRetained = primitiveAtom(true)
-		const closeCycle = primitiveAtom(false)
-		const base = primitiveAtom(0)
-		const middle = derivedAtom((read): number =>
-			read(closeCycle) ? read(owner) : read(base),
-		)
-		const reader = effectAtom((read) => {
-			read(middle)
-		})
-		const store = createStore()
-		const probeDuringRelease = effectAtom(() => () => {
-			store.peek(middle)
-		})
-		const owner = primitiveAtom(0, {
-			onMount: (_read, _write, mountEffect) => {
-				mountEffect(reader)
-				mountEffect(probeDuringRelease)
-				mountEffect(reader)
-			},
-		})
-		const ownerConsumer = derivedAtom((read) =>
-			read(ownerRetained) ? read(owner) : 0,
-		)
-		const state = inspect(store)
-		state.scheduleFlush = vi.fn()
-		store.subscribe(ownerConsumer, () => {})
-		flush(state)
-		store.send(ownerRetained, false)
-		store.send(closeCycle, true)
-
-		expect(() => flush(state)).toThrow('cyclic effect ownership')
-	})
-
 	it('does not track a read made after an effect releases itself during its body', async () => {
 		const mount = vi.fn()
 		const resource = primitiveAtom(4, { onMount: mount })

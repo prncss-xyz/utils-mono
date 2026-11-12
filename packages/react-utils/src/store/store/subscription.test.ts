@@ -301,7 +301,7 @@ describe('value-change delivery', () => {
 			replacement: (callback: () => void) => () => callback(),
 		},
 	])(
-		'delays a registration made by a cleanup during evaluation, re-registering $title',
+		'delays a registration made by the cleanup of a resource released by evaluation, re-registering $title',
 		async ({ replacement }) => {
 			const source = primitiveAtom(0)
 			const resource = primitiveAtom(0)
@@ -321,10 +321,10 @@ describe('value-change delivery', () => {
 			await flushMicrotask()
 			store.send(source, 1)
 			await flushMicrotask()
-			expect(calls).toEqual(['switcher'])
+			expect(calls).toEqual(['watched', 'switcher'])
 			store.send(source, 2)
 			await flushMicrotask()
-			expect(calls).toEqual(['switcher', 'switcher', 'watched'])
+			expect(calls).toEqual(['watched', 'switcher', 'switcher', 'watched'])
 		},
 	)
 })

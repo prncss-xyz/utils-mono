@@ -4,10 +4,11 @@ import { associateUntrackedRead } from '../effectRead'
 import {
 	peekInstance,
 	retain,
-	release,
 	link,
 	syncMountedDeps,
 	releaseChildren,
+	drainTeardowns,
+	isOrphaned,
 	callCleanup,
 	assertOwnershipEdge,
 } from './engine'
@@ -154,7 +155,11 @@ function runEffect(
 		previous.cleanup = undefined
 		callCleanup(state, instance, cleanup)
 		releaseChildren(state, instance, previous)
-		if (instance.effectLifecycle !== previous || instance.mountCount === 0)
+		if (
+			instance.effectLifecycle !== previous ||
+			instance.mountCount === 0 ||
+			isOrphaned(instance)
+		)
 			return
 		previous.active = false
 	}
@@ -194,12 +199,13 @@ export function flush(state: StoreState) {
 	state.phase.mounts = mounts
 	state.phase.effects = effects
 	state.phase.familyEvictions = pendingFamilyEvictions
-	state.phase.releases = []
+	state.phase.teardowns = []
+	state.phase.droppedEdges = []
 	applyUpdates(state, primitives)
 	settle(state, mounts, true)
 	for (const instance of effects) {
 		effects.delete(instance)
-		if (instance.mountCount > 0) {
+		if (instance.mountCount > 0 && !isOrphaned(instance)) {
 			let changed = !instance.effectLifecycle
 			for (const [dep, version] of dependencyVersions(instance)) {
 				peekInstance(state, dep)
@@ -211,7 +217,8 @@ export function flush(state: StoreState) {
 		settle(state, mounts, true)
 	}
 	state.phase.effects = undefined
-	state.phase.releases = undefined
+	state.phase.teardowns = undefined
+	state.phase.droppedEdges = undefined
 	state.phase.mounts = undefined
 	scheduleEvictions(state, pendingFamilyEvictions)
 	recycleTasks(state, tasks)
@@ -303,26 +310,25 @@ function reconcile(
 }
 
 /**
- * Mounts until idle. With `drainReleases`, it also releases the dependencies
- * whose release `unlink` deferred, once no effect is queued. An effect body
- * passes false, since it may still read them again.
+ * Mounts until idle. With `runTeardowns`, it also runs the teardowns that
+ * `release` deferred, once no effect is queued. An effect body passes false,
+ * since it may still read the released instances again.
  */
 function settle(
 	state: StoreState,
 	mounts: Set<Instance<any>>,
-	drainReleases: boolean,
+	runTeardowns: boolean,
 ) {
-	const { releases, effects } = state.phase
-	isoAssert(releases)
+	const { teardowns, effects } = state.phase
+	isoAssert(teardowns)
 	isoAssert(effects)
 	const idle = () => mounts.size === 0
-	const shouldDrainReleases = () =>
-		drainReleases && idle() && effects.size === 0 && releases.length > 0
+	const shouldDrainTeardowns = () =>
+		runTeardowns && idle() && effects.size === 0 && teardowns.length > 0
 	do {
 		settleMount(state, mounts)
-		if (shouldDrainReleases())
-			for (const dep of releases.splice(0)) release(state, dep)
-	} while (!idle() || shouldDrainReleases())
+		if (shouldDrainTeardowns()) drainTeardowns(state)
+	} while (!idle() || shouldDrainTeardowns())
 }
 
 function scheduleEvictions(

@@ -213,7 +213,7 @@ describe('effect atoms', () => {
 		unmount()
 	})
 
-	it('cleans up before reversing old children and releases dropped direct reads after the body', async () => {
+	it('cleans up before reversing old children and releases dropped direct reads after the body and its children', async () => {
 		const events: string[] = []
 		const flag = primitiveAtom(true)
 		const resource = (name: string) =>
@@ -254,9 +254,9 @@ describe('effect atoms', () => {
 			'release a',
 			'mount second',
 			'body',
-			'unmount first',
 			'child a',
 			'child b',
+			'unmount first',
 		])
 		events.length = 0
 		unmount()

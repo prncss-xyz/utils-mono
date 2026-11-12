@@ -80,6 +80,14 @@ const scenario = graph.chain((graph) => {
 					weight: 1,
 					arbitrary: fc.record({ type: fc.constant('peek' as const), node }),
 				},
+				{
+					weight: 2,
+					arbitrary: fc.record({
+						type: fc.constant('unsubscribeOnChange' as const),
+						primitive,
+						slot: fc.integer({ min: 0, max: 49 }),
+					}),
+				},
 			),
 			{ maxLength: 50, size: 'max' },
 		),
@@ -90,10 +98,15 @@ type Graph = Value<typeof graph>
 
 /**
  * Models value reachability, direct effect reads and owner-scoped children.
+ * A subscription made by `unsubscribeOnChange` disposes itself and another
+ * subscription from its callback, within the flush that changes its primitive;
+ * like a disposal outside a flush, it tears down at once the instance whose
+ * last reference it drops, after the teardowns the flush deferred, while what
+ * that instance leaves unmounted is torn down at the end of the flush.
  * Effects retain their last direct read until cleanup; value intermediates
  * retain only their current dependencies. Every resource has a balanced lifetime
- * and is never released while a mounted consumer reaches it both before and
- * after the flush.
+ * and is never released while a mounted consumer, or the subscriptions taken
+ * together, reach it both before and after the flush.
  */
 async function run(
 	graph: Graph,
@@ -110,6 +123,8 @@ async function run(
 	const liveEffects = new Map<number, number>()
 	const liveChildren = new Set<string>()
 	const violations: string[] = []
+	let flushing = false
+	let unsubscribing = false
 	const spec = (node: number) =>
 		node < primitiveCount
 			? graph.primitives[node]!
@@ -167,6 +182,18 @@ async function run(
 						return () => {
 							if (liveChildren.has(`mount ${node}`))
 								violations.push(`child outlived mount n${node}`)
+							const roots = subscriptions.map(
+								(subscription) => subscription.node,
+							)
+							if (
+								flushing &&
+								!unsubscribing &&
+								closure(roots).has(node) &&
+								closure(roots, prior).has(node)
+							)
+								violations.push(
+									`n${node} released while subscriptions reach it before and after the flush`,
+								)
 							if (!spec(node).mount) return
 							if (!liveMounts.delete(node))
 								violations.push(`n${node} unmounted twice`)
@@ -230,7 +257,9 @@ async function run(
 	const commit = async () => {
 		for (const [node, next] of pending) committed[node] = next
 		pending.clear()
+		flushing = true
 		await flushMicrotask()
+		flushing = false
 		prior = [...committed]
 	}
 	const check = (settled: boolean, label: string) => {
@@ -273,6 +302,27 @@ async function run(
 						: store.subscribe(nodes[operation.node]!, () => {}),
 				})
 				break
+			case 'unsubscribeOnChange': {
+				if (spec(operation.primitive).effect) break
+				const entry = { node: operation.primitive, dispose: () => {} }
+				entry.dispose = store.subscribe(nodes[operation.primitive]!, () => {
+					const self = subscriptions.indexOf(entry)
+					if (self < 0) {
+						violations.push(`notified after disposal ${label}`)
+						return
+					}
+					subscriptions.splice(self, 1)
+					unsubscribing = true
+					entry.dispose()
+					if (subscriptions.length > 0)
+						subscriptions
+							.splice(operation.slot % subscriptions.length, 1)[0]!
+							.dispose()
+					unsubscribing = false
+				})
+				subscriptions.push(entry)
+				break
+			}
 			case 'unsubscribe':
 				if (subscriptions.length > 0)
 					subscriptions
@@ -493,6 +543,34 @@ const lateLinkedReaderExample: Value<typeof scenario> = {
 	],
 }
 
+/**
+ * Shrunk case: when P0 flips, n3 drops n2 and n5 drops n4 in one flush, so
+ * both teardowns are deferred; n4 read n2 through n3 before the flush and must
+ * be torn down first.
+ */
+const deferredTeardownOrderExample: Value<typeof scenario> = {
+	graph: {
+		primitives: [
+			{ initial: 0, effect: false, mount: true },
+			{ initial: 3, effect: true, mount: false },
+		],
+		derived: [
+			{ a: 1, b: 0, c: 1, modulus: 2, effect: true, mount: true },
+			{ a: 0, b: 0, c: 2, modulus: 3, effect: true, mount: true },
+			{ a: 3, b: 1, c: 2, modulus: 2, effect: false, mount: true },
+			{ a: 3, b: 3, c: 4, modulus: 3, effect: false, mount: true },
+		],
+	},
+	operations: [
+		{ type: 'write', primitive: 1, value: 0 },
+		{ type: 'write', primitive: 0, value: 2 },
+		{ type: 'subscribe', node: 5 },
+		{ type: 'yield' },
+		{ type: 'write', primitive: 0, value: 3 },
+		{ type: 'yield' },
+	],
+}
+
 it('keeps effect and mount lifecycles balanced and ordered across random graphs', async () => {
 	await fc.assert(
 		fc.asyncProperty(scenario, ({ graph, operations }) =>
@@ -507,6 +585,7 @@ it('keeps effect and mount lifecycles balanced and ordered across random graphs'
 				[unmountOrderExample],
 				[lateLinkedOwnerExample],
 				[lateLinkedReaderExample],
+				[deferredTeardownOrderExample],
 			],
 		},
 	)
