@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
 	atomFamily,
 	derivedAtom,
+	effectAtom,
 	primitiveAtom,
 	TRANSIENT,
 	type AtomSymbol,
@@ -244,6 +245,43 @@ describe('pending reads', () => {
 		await flushMicrotask()
 		await flushMicrotask()
 		expect(reads).toEqual([6, 1])
+	})
+
+	it('reuses pending values read during delivery in the next effect but not across effects', async () => {
+		const root = primitiveAtom(0)
+		const other = primitiveAtom(0)
+		const doubled = derivedAtom((read) => read(other) * 2, null, {
+			name: 'doubled',
+		})
+		const reads: number[] = []
+		const readDoubled = derivedAtom(null, (read) => reads.push(read(doubled)))
+		const store = createStore()
+		store.subscribe(root, () => {
+			store.send(other, 1)
+			store.send(readDoubled)
+		})
+		store.mountEffect(
+			effectAtom((read) => {
+				store.send(readDoubled)
+				read(root)
+				store.send(readDoubled)
+			}),
+		)
+		store.mountEffect(
+			effectAtom((read) => {
+				store.send(readDoubled)
+				read(root)
+			}),
+		)
+		await flushMicrotask()
+		reads.length = 0
+		const instrumentation = countOperations(store)
+		store.send(root, 1)
+		await flushMicrotask()
+		expect(reads).toEqual([2, 2, 2, 2])
+		expect(countsByName(instrumentation, 'pendingGetters')).toEqual({
+			doubled: 3,
+		})
 	})
 
 	it('drops pending values at commit when no committed value changes', async () => {

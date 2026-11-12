@@ -27,6 +27,7 @@ import {
 	publishChange,
 	countOperation,
 	dropPendingValues,
+	recycleTasks,
 } from './state'
 import { type Delivery, type Instance, type MountLifecycle } from './types'
 
@@ -145,7 +146,6 @@ function runEffect(
 	state: StoreState,
 	instance: Instance<any>,
 	mounts: Set<Instance<any>>,
-	mountWrites: Map<Instance<any>, any>,
 ) {
 	isoAssert(instance.symbol.type === 'effect')
 	const previous = instance.effectLifecycle
@@ -168,7 +168,8 @@ function runEffect(
 		peekInstance(state, dep)
 		if (lifecycle.active) {
 			if (!hasMountedDependency(instance, dep)) link(state, instance, dep)
-			settle(state, new Map(), mounts, mountWrites, false)
+			dropPendingValues(state)
+			settle(state, mounts, false)
 		}
 		const value = peekInstance(state, dep)
 		if (lifecycle.active) recordDependency(instance, dep, dep.version)
@@ -186,15 +187,16 @@ function runEffect(
 }
 
 export function flush(state: StoreState) {
-	isoAssert(state.tasks, 'unexpected call to flush')
-	const { mounts, primitives, effects, pendingFamilyEvictions } = state.tasks
-	const mountWrites = new Map<Instance<any>, any>()
+	const { tasks } = state
+	isoAssert(tasks, 'unexpected call to flush')
+	const { mounts, primitives, effects, pendingFamilyEvictions } = tasks
 	state.tasks = undefined
 	state.phase.mounts = mounts
 	state.phase.effects = effects
 	state.phase.familyEvictions = pendingFamilyEvictions
 	state.phase.releases = []
-	settle(state, primitives, mounts, mountWrites, true)
+	applyUpdates(state, primitives)
+	settle(state, mounts, true)
 	for (const instance of effects) {
 		effects.delete(instance)
 		if (instance.mountCount > 0) {
@@ -203,14 +205,16 @@ export function flush(state: StoreState) {
 				peekInstance(state, dep)
 				if (dep.version !== version) changed = true
 			}
-			if (changed) runEffect(state, instance, mounts, mountWrites)
+			if (changed) runEffect(state, instance, mounts)
 		}
-		settle(state, new Map(), mounts, mountWrites, true)
+		dropPendingValues(state)
+		settle(state, mounts, true)
 	}
 	state.phase.effects = undefined
 	state.phase.releases = undefined
 	state.phase.mounts = undefined
 	scheduleEvictions(state, pendingFamilyEvictions)
+	recycleTasks(state, tasks)
 }
 
 function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
@@ -238,11 +242,9 @@ function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {
  * instances it reaches before the walk resumes. A commit can also release the
  * node being walked, which ends its walk.
  */
-function settleMount(
-	state: StoreState,
-	mounts: Set<Instance<any>>,
-	mountWrites: Map<Instance<any>, any>,
-) {
+function settleMount(state: StoreState, mounts: Set<Instance<any>>) {
+	if (mounts.size === 0) return
+	let mountWrites: Map<Instance<any>, any> | undefined
 	const visited = new Set<Instance<any>>()
 	const visiting = new Set<Instance<any>>()
 	let revision = state.mountRevision
@@ -274,6 +276,7 @@ function settleMount(
 		mounts.delete(node)
 		const before = state.mountRevision
 		if (!node.mountLifecycle) {
+			mountWrites ??= new Map()
 			isoAssert(mountWrites.size === 0)
 			state.phase.mountWrites = mountWrites
 			mount(state, node)
@@ -300,26 +303,23 @@ function reconcile(
 }
 
 /**
- * Applies the updates, then mounts until idle. With `drainReleases`, it also
- * releases the dependencies whose release `unlink` deferred, once no effect is
- * queued. An effect body passes false, since it may still read them again.
+ * Mounts until idle. With `drainReleases`, it also releases the dependencies
+ * whose release `unlink` deferred, once no effect is queued. An effect body
+ * passes false, since it may still read them again.
  */
 function settle(
 	state: StoreState,
-	primitives: Map<Instance<any>, any>,
 	mounts: Set<Instance<any>>,
-	mountWrites: Map<Instance<any>, any>,
 	drainReleases: boolean,
 ) {
 	const { releases, effects } = state.phase
 	isoAssert(releases)
 	isoAssert(effects)
-	const idle = () => mountWrites.size === 0 && mounts.size === 0
+	const idle = () => mounts.size === 0
 	const shouldDrainReleases = () =>
 		drainReleases && idle() && effects.size === 0 && releases.length > 0
-	applyUpdates(state, primitives)
 	do {
-		settleMount(state, mounts, mountWrites)
+		settleMount(state, mounts)
 		if (shouldDrainReleases())
 			for (const dep of releases.splice(0)) release(state, dep)
 	} while (!idle() || shouldDrainReleases())
@@ -330,6 +330,7 @@ function scheduleEvictions(
 	pendingFamilyEvictions: Set<Instance<any>>,
 ) {
 	for (const instance of pendingFamilyEvictions) {
+		pendingFamilyEvictions.delete(instance)
 		if (instance.mountCount > 0) continue
 		const { familyEntry } = instance
 		isoAssert(familyEntry)

@@ -63,6 +63,12 @@ export type StoreState = {
 	/** Test instrumentation counting mount traversal calls, including cache hits. */
 	mountWalks: number
 	tasks: Tasks | undefined
+	/**
+	 * The emptied tasks of the last completed flush, taken by the next
+	 * `getTasks`, so that collections that usually stay empty are not
+	 * reallocated by every flush.
+	 */
+	spareTasks: Tasks | undefined
 	phase: FlushPhase
 	hydrating: boolean
 	/** Getter runs in progress; store calls other than `read` are rejected meanwhile. */
@@ -90,6 +96,7 @@ export function createState(
 		mountRevision: 0,
 		mountWalks: 0,
 		tasks: undefined,
+		spareTasks: undefined,
 		phase: {
 			mounts: undefined,
 			effects: undefined,
@@ -109,14 +116,37 @@ export function assertOutsideGetter(state: StoreState) {
 
 function getTasks(state: StoreState): Tasks {
 	if (state.tasks) return state.tasks
-	state.tasks = {
+	state.tasks = state.spareTasks ?? {
 		mounts: new Set(),
 		primitives: new Map(),
 		effects: new Set(),
 		pendingFamilyEvictions: new Set(),
 	}
+	state.spareTasks = undefined
 	if (!state.hydrating) state.scheduleFlush()
 	return state.tasks
+}
+
+/**
+ * Keeps the tasks of a completed flush for the next `getTasks`. The flush
+ * must have drained every collection and ended its phase.
+ */
+export function recycleTasks(state: StoreState, tasks: Tasks) {
+	const { phase } = state
+	isoAssert(
+		phase.mounts === undefined &&
+			phase.effects === undefined &&
+			phase.familyEvictions === undefined &&
+			phase.mountWrites === undefined &&
+			phase.releases === undefined,
+	)
+	isoAssert(
+		tasks.mounts.size === 0 &&
+			tasks.primitives.size === 0 &&
+			tasks.effects.size === 0 &&
+			tasks.pendingFamilyEvictions.size === 0,
+	)
+	state.spareTasks = tasks
 }
 
 export function queueMount(state: StoreState, instance: Instance<any>) {
