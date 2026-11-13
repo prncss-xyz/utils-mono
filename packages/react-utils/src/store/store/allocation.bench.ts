@@ -21,9 +21,10 @@ import { chain, createStore, flushMicrotask } from './utils.testing'
  * rather than bytes retained. An empty iteration (one `await flushMicrotask()`)
  * is measured the same way and subtracted from every row. Compare medians only
  * between runs on the same machine and Node version. Observed run-to-run
- * tolerance of the median across separate invocations was within 2% for every workload except family churn (6%) over four invocations; single
- * runs (min and max) spread much wider, so do not read differences smaller than
- * the tolerance as changes.
+ * tolerance of the median across separate invocations was within 5% for every
+ * row over four invocations (family churn widest, mounted rows within 1.5%);
+ * single runs (min and max) spread much wider, so do not read differences
+ * smaller than the tolerance as changes.
  */
 
 /**
@@ -46,56 +47,67 @@ type Workload = {
 	setup: () => Iteration
 }
 
+function readWorkloads({ mounted }: { mounted: boolean }): Workload[] {
+	const suffix = mounted ? ' (mounted)' : ''
+	return [
+		{
+			name: `stable reads${suffix}`,
+			setup: () => {
+				const store = createStore()
+				const root = primitiveAtom(0)
+				const tip = chain(root, 10)
+				if (mounted) store.subscribe(tip, () => {})
+				return async (index) => {
+					store.send(root, index + 1)
+					await flushMicrotask()
+					verify(store.peek(tip), index + 11)
+				}
+			},
+		},
+		{
+			name: `repeated reads${suffix}`,
+			setup: () => {
+				const store = createStore()
+				const root = primitiveAtom(0)
+				const repeated = derivedAtom((read) => {
+					let sum = 0
+					for (let count = 0; count < 10; count++) sum += read(root)
+					return sum
+				})
+				if (mounted) store.subscribe(repeated, () => {})
+				return async (index) => {
+					store.send(root, index + 1)
+					await flushMicrotask()
+					verify(store.peek(repeated), (index + 1) * 10)
+				}
+			},
+		},
+		{
+			name: `reordered reads${suffix}`,
+			setup: () => {
+				const store = createStore()
+				const roots = Array.from({ length: 8 }, (_, index) =>
+					primitiveAtom(index),
+				)
+				const flag = primitiveAtom(false)
+				const reordered = derivedAtom((read) => {
+					const ordered = read(flag) ? roots.slice().reverse() : roots
+					return ordered.reduce((sum, root) => sum + read(root), 0)
+				})
+				if (mounted) store.subscribe(reordered, () => {})
+				return async (index) => {
+					store.send(flag, index % 2 === 1)
+					await flushMicrotask()
+					verify(store.peek(reordered), 28)
+				}
+			},
+		},
+	]
+}
+
 const workloads: Workload[] = [
-	{
-		name: 'stable reads',
-		setup: () => {
-			const store = createStore()
-			const root = primitiveAtom(0)
-			const tip = chain(root, 10)
-			return async (index) => {
-				store.send(root, index + 1)
-				await flushMicrotask()
-				verify(store.peek(tip), index + 11)
-			}
-		},
-	},
-	{
-		name: 'repeated reads',
-		setup: () => {
-			const store = createStore()
-			const root = primitiveAtom(0)
-			const repeated = derivedAtom((read) => {
-				let sum = 0
-				for (let count = 0; count < 10; count++) sum += read(root)
-				return sum
-			})
-			return async (index) => {
-				store.send(root, index + 1)
-				await flushMicrotask()
-				verify(store.peek(repeated), (index + 1) * 10)
-			}
-		},
-	},
-	{
-		name: 'reordered reads',
-		setup: () => {
-			const store = createStore()
-			const roots = Array.from({ length: 8 }, (_, index) =>
-				primitiveAtom(index),
-			)
-			const flag = primitiveAtom(false)
-			const reordered = derivedAtom((read) => {
-				const ordered = read(flag) ? roots.slice().reverse() : roots
-				return ordered.reduce((sum, root) => sum + read(root), 0)
-			})
-			return async (index) => {
-				store.send(flag, index % 2 === 1)
-				await flushMicrotask()
-				verify(store.peek(reordered), 28)
-			}
-		},
-	},
+	...readWorkloads({ mounted: false }),
+	...readWorkloads({ mounted: true }),
 	{
 		name: 'branch churn',
 		setup: () => {
@@ -181,6 +193,8 @@ async function bytesPerIteration(iteration: Iteration) {
 
 let baseline: ReturnType<typeof bytesPerIteration> | undefined
 
+const nameWidth = Math.max(...workloads.map(({ name }) => name.length))
+
 for (const { name, setup } of workloads) {
 	test(name, { timeout: 120_000 }, async () => {
 		baseline ??= bytesPerIteration(async () => {
@@ -190,7 +204,7 @@ for (const { name, setup } of workloads) {
 		const result = await bytesPerIteration(setup())
 		const bytes = (value: number, base: number) => Math.round(value - base)
 		console.log(
-			`${name.padEnd(20)} median ${bytes(result.median, empty.median)}  min ${bytes(result.min, empty.median)}  max ${bytes(result.max, empty.median)}  (empty iteration ${Math.round(empty.median)})`,
+			`${name.padEnd(nameWidth)} median ${bytes(result.median, empty.median)}  min ${bytes(result.min, empty.median)}  max ${bytes(result.max, empty.median)}  (empty iteration ${Math.round(empty.median)})`,
 		)
 	})
 }
