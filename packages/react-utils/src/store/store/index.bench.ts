@@ -3,6 +3,7 @@ import { expect, test } from 'vite-plus/test'
 import {
 	atomFamily,
 	derivedAtom,
+	type AtomSymbol,
 	effectAtom,
 	primitiveAtom,
 	type Store,
@@ -394,19 +395,107 @@ scenario('pending reads: 21-node layered graph, read twice', () => {
 	}
 })
 
-scenario('unrelated write: 100-node unmounted chain', () => {
-	const store = createStore()
-	const root = primitiveAtom(0)
-	const unrelated = primitiveAtom(0)
-	const tip = chain(root, 100)
-	store.peek(tip)
-	let next = 0
+type UnrelatedWorkload = {
+	read: (store: Store) => number
+	expected: number
+	mounted?: AtomSymbol<number, never>
+	validations: number
+}
+
+/**
+ * Writes a primitive no atom of the workload depends on, then reads the
+ * workload. The write advances the store epoch, so every unmounted derived
+ * instance the read reaches is validated once and no getter runs.
+ */
+function unrelatedWrite(name: string, setup: () => UnrelatedWorkload) {
+	scenario(`unrelated write: ${name}`, () => {
+		const store = createStore()
+		const unrelated = primitiveAtom(0)
+		const { read, expected, mounted, validations } = setup()
+		const dispose = mounted ? store.subscribe(mounted, () => {}) : () => {}
+		read(store)
+		let next = 0
+		return {
+			stores: [store],
+			update: () => store.send(unrelated, ++next),
+			read: () => read(store),
+			verify: (value) => expect(value).toBe(expected),
+			dispose,
+			operations: { invalidations: 1, validations },
+		}
+	})
+}
+
+for (const length of [10, 100, 1_000]) {
+	unrelatedWrite(
+		`${length.toLocaleString('en-US')}-node unmounted chain`,
+		() => {
+			const tip = chain(primitiveAtom(0), length)
+			return {
+				read: (store) => store.peek(tip),
+				expected: length,
+				validations: length,
+			}
+		},
+	)
+}
+
+unrelatedWrite('100-node mounted chain', () => {
+	const tip = chain(primitiveAtom(0), 100)
 	return {
-		stores: [store],
-		update: () => store.send(unrelated, ++next),
-		read: () => store.peek(tip),
-		verify: (value) => expect(value).toBe(100),
-		dispose: () => {},
-		operations: { invalidations: 1, validations: 100 },
+		read: (store) => store.peek(tip),
+		expected: 100,
+		mounted: tip,
+		validations: 0,
+	}
+})
+
+unrelatedWrite('50 unmounted nodes over a 50-node mounted chain', () => {
+	const middle = chain(primitiveAtom(0), 50)
+	const tip = chain(middle, 50)
+	return {
+		read: (store) => store.peek(tip),
+		expected: 100,
+		mounted: middle,
+		validations: 50,
+	}
+})
+
+unrelatedWrite('unmounted diamond, 1,000 middles', () => {
+	const root = primitiveAtom(0)
+	const middles = Array.from({ length: 1_000 }, (_, index) =>
+		derivedAtom((read) => read(root) + index),
+	)
+	const sink = derivedAtom((read) =>
+		middles.reduce((sum, middle) => sum + read(middle), 0),
+	)
+	return {
+		read: (store) => store.peek(sink),
+		expected: 499_500,
+		validations: 1_001,
+	}
+})
+
+unrelatedWrite('unmounted 21-node layered graph', () => {
+	const top = layeredGraph(primitiveAtom(1))
+	return {
+		read: (store) => store.peek(top),
+		expected: 1_024,
+		validations: 21,
+	}
+})
+
+unrelatedWrite('1,000 unmounted family members', () => {
+	const root = primitiveAtom(0)
+	const family = atomFamily(
+		(key: number) => derivedAtom((read) => read(root) + key),
+		{ TTL: Infinity },
+	)
+	const keys = Array.from({ length: 1_000 }, (_, key) => key)
+	return {
+		read: (store) =>
+			keys.reduce((sum, key) => sum + store.resolve(family, key).peek(), 0),
+		expected: 499_500,
+		validations: 1_000,
 	}
 })
