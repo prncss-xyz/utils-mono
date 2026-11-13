@@ -31,6 +31,7 @@ Quote mutation counts and survivor locations from `reports/mutation/report.md`, 
 
 - `node scripts/mutation-report.mjs <mutation.json> --out <file>` writes the table for a run.
 - `node scripts/mutation-report.mjs <mutation.json> --check <file>` exits non-zero when a record does not contain the generated table for that run.
+- Report the `RuntimeError` count as its own line. Do not count those mutants as killed or covered; a nonzero count on code the task changed means that code is not covered by the score. See "Known limitation: RuntimeError instead of the real status".
 
 Prose that cites source lines is not checked by these commands. Keep such citations to lines the survivor table already lists, or re-verify them after each edit.
 
@@ -45,6 +46,16 @@ Compare the survivors with those recorded in the previous store task's notes. Th
 - For a test-only change, a HEAD baseline run is not required. Compare against the latest recorded baseline, and state in the task notes that no mutated source changed, since survivor attribution then rests on that.
 - A survivor on unchanged code is a regression in test strength.
 - A survivor on code the task added is missing coverage. Record it in the task notes.
+
+## Known limitation: RuntimeError instead of the real status
+
+A mutant whose only effect is an unhandled error outside a test is classified `RuntimeError` (`TypeError: Cannot convert object to primitive value`) instead of its real status, for example `Timeout`. Vitest 5.0.5 serializes the error as a null-prototype object (`@vitest/utils` `serialize.js:85`). `@stryker-mutator/vitest-runner` 10.1.1 passes it to `errorToString` (`vitest-test-runner.js:250`), and `@stryker-mutator/util` `errorToString` ends with `String(error)` (`errors.js:22`), which throws on a null-prototype object.
+
+`RuntimeError` mutants are excluded from the mutation score (`mutation-testing-metrics` `calculateMetrics.js`: only Killed, Timeout, Survived and NoCoverage count as valid). A mutant hidden this way is neither a survivor nor a kill. `report.md` lists only the count; find the locations in `reports/mutation/mutation.json`, where each such mutant has `status: "RuntimeError"` under `files[<path>].mutants` with its `location` and `statusReason`, or filter by status in the HTML report.
+
+Example: `packages/react-utils/src/store/store/flush.ts` `walkMount`, the `return false` in the `node.mountCount === 0` branch mutated to `return true`. With the tooling bug bypassed, its status is `Timeout`.
+
+Re-check this after any lockfile change that affects `@stryker-mutator/*` or `vitest` (`pnpm-workspace.yaml` pins `vitest` and `@vitest/*`, and ranges `@stryker-mutator/*` with `^`). Remove this section and its bullet under "Report counts and survivors" once the example mutant reports `Timeout` instead of `RuntimeError`.
 
 ## Exclusions
 
