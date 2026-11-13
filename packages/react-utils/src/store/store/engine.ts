@@ -67,9 +67,11 @@ function requeueChildren(state: StoreState, lifecycle: MountLifecycle) {
  * mount lifecycle from its `onMount` keeps it until `drainTeardowns`, so
  * that one retained again in the same flush is not unmounted and mounted
  * again. Without `onMount`, the teardown has no observable effect and runs at
- * once. The last release by a subscription or an effect handle tears down the
- * instance at once, after the deferred teardowns, so that consumers still go
- * first; what it leaves unmounted follows the rule above.
+ * once. The last release by a subscription or an effect handle follows the
+ * same rule while a mount or an effect is still queued, since either may
+ * retain the instance again. Otherwise it tears down the instance at once,
+ * after the deferred teardowns, so that consumers still go first; what it
+ * leaves unmounted follows the rule above.
  */
 export function release<S>(
 	state: StoreState,
@@ -77,16 +79,18 @@ export function release<S>(
 	holder?: Instance<any>,
 ) {
 	const { teardowns } = state.phase
+	const mayRetainAgain =
+		teardowns !== undefined && (holder !== undefined || hasQueuedWork(state))
 	if (teardowns) {
 		if (holder) recordDroppedEdge(state, holder, instance)
-		else if (instance.mountCount === 1) drainTeardowns(state)
+		else if (instance.mountCount === 1 && !hasQueuedWork(state))
+			drainTeardowns(state)
 	}
 	if (--instance.mountCount > 0) return
 	state.mountRevision++
 	const mountedDeps = detachMountedEdges(instance)
 	if (
-		holder &&
-		teardowns &&
+		mayRetainAgain &&
 		instance.mountLifecycle &&
 		instance.symbol.type !== 'effect' &&
 		instance.symbol.onMount
@@ -95,6 +99,12 @@ export function release<S>(
 	else teardown(state, instance)
 	if (instance.familyEntry) queueEviction(state, instance)
 	for (const dep of mountedDeps) release(state, dep, instance)
+}
+
+function hasQueuedWork(state: StoreState) {
+	const { mounts, effects } = state.phase
+	isoAssert(mounts && effects)
+	return mounts.size > 0 || effects.size > 0
 }
 
 function recordDroppedEdge(

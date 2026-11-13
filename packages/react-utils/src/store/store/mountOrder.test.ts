@@ -16,6 +16,21 @@ describe('mount order within a flush', () => {
 			events.push(name)
 		},
 	})
+	const logMountCycle = (events: string[]) => ({
+		onMount: () => {
+			events.push('mount')
+			return () => events.push('unmount')
+		},
+	})
+	const mountWriter = <T>(
+		target: ReturnType<typeof primitiveAtom<T>>,
+		value: T,
+	) =>
+		primitiveAtom(0, {
+			onMount: (_read, write) => {
+				write(target, value)
+			},
+		})
 
 	describe('transitive', () => {
 		const logMount = (order: string[], name: string) => ({
@@ -315,21 +330,6 @@ describe('mount order within a flush', () => {
 	})
 
 	describe('release bookkeeping', () => {
-		const logMountCycle = (events: string[]) => ({
-			onMount: () => {
-				events.push('mount')
-				return () => events.push('unmount')
-			},
-		})
-		const mountWriter = <T>(
-			target: ReturnType<typeof primitiveAtom<T>>,
-			value: T,
-		) =>
-			primitiveAtom(0, {
-				onMount: (_read, write) => {
-					write(target, value)
-				},
-			})
 		const diamond = <Args extends unknown[]>(
 			leaf: AtomSymbol<number, Args>,
 		) => {
@@ -733,25 +733,70 @@ describe('mount order within a flush', () => {
 			const events: string[] = []
 			const sel = primitiveAtom(false)
 			const doublySubscribed = primitiveAtom(0)
-			const resource = primitiveAtom(0, {
-				onMount: () => {
-					events.push('mount')
-					return () => events.push('unmount')
-				},
-			})
+			const resource = primitiveAtom(0, logMountCycle(events))
 			const root = derivedAtom((read) => (read(sel) ? 0 : read(resource)))
 			const store = createStore()
 			store.subscribe(root, () => {})
-			store.mountEffect(selectedReader(sel, resource))
 			const unsubscribeDoublySubscribed = store.subscribe(
 				doublySubscribed,
 				() => {},
 			)
 			store.subscribe(doublySubscribed, () => {})
-			store.subscribe(sel, () => unsubscribeDoublySubscribed())
+			store.subscribe(sel, () => {
+				events.push('callback start')
+				unsubscribeDoublySubscribed()
+				events.push('callback end')
+			})
 			await flushMicrotask()
 			events.length = 0
 			store.send(sel, true)
+			await flushMicrotask()
+
+			expect(events).toEqual(['callback start', 'callback end', 'unmount'])
+		})
+
+		it.each<{ released: 'resource' | 'other' }>([
+			{ released: 'resource' },
+			{ released: 'other' },
+		])(
+			'keeps a resource for a queued effect when a subscriber releases the last reference to $released',
+			async ({ released }) => {
+				const events: string[] = []
+				const sel = primitiveAtom(false)
+				const resource = primitiveAtom(0, logMountCycle(events))
+				const other = primitiveAtom(0)
+				const root = derivedAtom((read) => (read(sel) ? 0 : read(resource)))
+				const store = createStore()
+				store.subscribe(root, () => {})
+				store.mountEffect(selectedReader(sel, resource))
+				const unsubscribeReleased = store.subscribe(
+					{ resource, other }[released],
+					() => {},
+				)
+				store.subscribe(sel, () => unsubscribeReleased())
+				await flushMicrotask()
+				events.length = 0
+				store.send(sel, true)
+				await flushMicrotask()
+
+				expect(events).toEqual([])
+			},
+		)
+
+		it('keeps a root a subscriber unsubscribes for a queued mount that retains it again', async () => {
+			const events: string[] = []
+			const sel = primitiveAtom(false)
+			const trigger = primitiveAtom(0)
+			const resource = primitiveAtom(0, logMountCycle(events))
+			const consumer = derivedAtom((read) => (read(sel) ? read(resource) : 0))
+			const store = createStore()
+			store.subscribe(consumer, () => {})
+			const unsubscribeResource = store.subscribe(resource, () => {})
+			store.subscribe(trigger, () => unsubscribeResource())
+			await flushMicrotask()
+			events.length = 0
+			store.subscribe(mountWriter(sel, true), () => {})
+			store.send(trigger, 1)
 			await flushMicrotask()
 
 			expect(events).toEqual([])

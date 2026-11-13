@@ -106,9 +106,10 @@ type Graph = Value<typeof graph>
 /**
  * Models value reachability, direct effect reads and owner-scoped children.
  * A subscription made by `unsubscribeOnChange` disposes itself and another
- * subscription from its callback, within the flush that changes its primitive;
- * like a disposal outside a flush, it tears down at once the instance whose
- * last reference it drops, after the teardowns the flush deferred, while what
+ * subscription from its callback, within the flush that changes its primitive.
+ * Once no mount or effect is queued, like a disposal outside a flush, it tears
+ * down at once the instance whose last reference it drops, after the
+ * teardowns the flush deferred; otherwise that teardown is deferred too. What
  * that instance leaves unmounted is torn down at the end of the flush.
  * The effect of an inlined derived node runs its getter, reading that node's
  * dependencies directly instead of the node. Effects retain their last direct
@@ -123,12 +124,6 @@ type Graph = Value<typeof graph>
  *
  * The roots' reachability is also what the settled check compares with the
  * mounted nodes and the mount children.
- *
- * The roots check skips releases made while an `unsubscribeOnChange`
- * callback disposes. Such a disposal drains the deferred teardowns first
- * (ff77ef3), so a resource that a surviving consumer still needs can be
- * released and re-acquired within the flush. This known runtime gap is not
- * covered here.
  */
 async function run(
 	graph: Graph,
@@ -146,7 +141,6 @@ async function run(
 	const liveChildren = new Set<string>()
 	const violations: string[] = []
 	let flushing = false
-	let unsubscribing = false
 	const spec = (node: number) =>
 		node < primitiveCount
 			? graph.primitives[node]!
@@ -222,7 +216,6 @@ async function run(
 							if (liveChildren.has(`mount ${node}`))
 								violations.push(`child outlived mount n${node}`)
 							if (
-								!unsubscribing &&
 								closure(rootReads()).has(node) &&
 								closure(rootReads(prior), prior).has(node)
 							)
@@ -354,13 +347,11 @@ async function run(
 						return
 					}
 					subscriptions.splice(self, 1)
-					unsubscribing = true
 					entry.dispose()
 					if (subscriptions.length > 0)
 						subscriptions
 							.splice(operation.slot % subscriptions.length, 1)[0]!
 							.dispose()
-					unsubscribing = false
 				})
 				subscriptions.push(entry)
 				break
