@@ -28,17 +28,14 @@ const graph = fc
 			{ minLength: 1, maxLength: 3, size: 'max' },
 		),
 		derived: fc.array(
-			fc.record(
-				{
-					a: dependency,
-					b: dependency,
-					c: dependency,
-					modulus: fc.integer({ min: 2, max: 3 }),
-					...flags,
-					inlined: fc.boolean(),
-				},
-				{ requiredKeys: ['a', 'b', 'c', 'modulus', 'effect', 'mount'] },
-			),
+			fc.record({
+				a: dependency,
+				b: dependency,
+				c: dependency,
+				modulus: fc.integer({ min: 2, max: 3 }),
+				...flags,
+				inlined: fc.boolean(),
+			}),
 			{ minLength: 1, maxLength: 11, size: 'max' },
 		),
 	})
@@ -117,16 +114,21 @@ type Graph = Value<typeof graph>
  * dependencies directly instead of the node. Effects retain their last direct
  * reads until cleanup; value intermediates retain only their current
  * dependencies. Every resource has a balanced lifetime and is never released
- * while a mounted consumer, a live effect, or the subscriptions taken together,
- * reach it both before and after the flush.
+ * while a mounted consumer, or the roots taken together, reach it both before
+ * and after the flush. The roots are the reads of every live effect, those of
+ * subscribed effects that have not run yet while flushing, and the subscribed
+ * nodes that are not effects, so a disposed effect stays a root until its
+ * cleanup runs. A live effect's direct reads are also checked against each
+ * unmount of a mount node.
  *
- * The live-effect and subscriptions checks skip releases made while an
- * `unsubscribeOnChange` callback disposes. Such a disposal drains the deferred
- * teardowns first (ff77ef3), so a resource that a surviving consumer still
- * needs can be released and re-acquired within the flush. This known runtime
- * gap is not covered here: with the live-effect check limited to the disposed
- * effects, seed 5, path "2120:167:1:6:12:12:13:22:19:22:22:20" at 5000 runs
- * logs `unmount n4`, `cleanup n8` and `mount n4` while n8 stays subscribed.
+ * The roots' reachability is also what the settled check compares with the
+ * mounted nodes and the mount children.
+ *
+ * The roots check skips releases made while an `unsubscribeOnChange`
+ * callback disposes. Such a disposal drains the deferred teardowns first
+ * (ff77ef3), so a resource that a surviving consumer still needs can be
+ * released and re-acquired within the flush. This known runtime gap is not
+ * covered here.
  */
 async function run(
 	graph: Graph,
@@ -165,10 +167,19 @@ async function run(
 		node >= primitiveCount && graph.derived[node - primitiveCount]!.inlined
 			? direct(node, values)
 			: [node]
-	const rootReads = (values = committed) =>
-		subscriptions.flatMap(({ node }) =>
-			spec(node).effect ? effectReads(node, values) : [node],
-		)
+	const rootReads = (values = committed) => {
+		const valueRoots = subscriptions
+			.filter(({ node }) => !spec(node).effect)
+			.map(({ node }) => node)
+		const effectRoots = new Set(liveEffects.keys())
+		if (flushing)
+			for (const { node } of subscriptions)
+				if (spec(node).effect) effectRoots.add(node)
+		return [
+			...valueRoots,
+			...[...effectRoots].flatMap((node) => effectReads(node, values)),
+		]
+	}
 	const closure = (roots: Iterable<number>, values = committed) => {
 		const found = new Set<number>()
 		const visit = (node: number) => {
@@ -211,32 +222,22 @@ async function run(
 							if (liveChildren.has(`mount ${node}`))
 								violations.push(`child outlived mount n${node}`)
 							if (
-								flushing &&
 								!unsubscribing &&
 								closure(rootReads()).has(node) &&
 								closure(rootReads(prior), prior).has(node)
 							)
 								violations.push(
-									`n${node} released while subscriptions reach it before and after the flush`,
+									`n${node} released while roots reach it before and after the flush`,
 								)
 							if (!spec(node).mount) return
 							if (!liveMounts.delete(node))
 								violations.push(`n${node} unmounted twice`)
 							log.push(`unmount n${node}`)
-							for (const [effect, { reads }] of liveEffects) {
+							for (const [effect, { reads }] of liveEffects)
 								if (reads.includes(node))
 									violations.push(
 										`n${node} unmounted while directly read by effect n${effect}`,
 									)
-								if (
-									!unsubscribing &&
-									closure(effectReads(effect)).has(node) &&
-									closure(effectReads(effect, prior), prior).has(node)
-								)
-									violations.push(
-										`n${node} released before effect consumer n${effect}`,
-									)
-							}
 							for (const consumer of liveMounts)
 								if (
 									closure(direct(consumer)).has(node) &&
@@ -250,10 +251,10 @@ async function run(
 				: undefined,
 	})
 	const nodes: AtomSymbol<number, any>[] = []
-	const trackers: ((read: Read) => number)[] = []
+	const effectGetters: ((read: Read) => number)[] = []
 	for (const [index, { initial }] of graph.primitives.entries()) {
 		nodes.push(primitiveAtom(initial, options(index)))
-		trackers.push((read) => read(nodes[index]!))
+		effectGetters.push((read) => read(nodes[index]!))
 	}
 	for (const [
 		index,
@@ -265,10 +266,10 @@ async function run(
 				? read(nodes[b]!)
 				: read(nodes[c]!) % modulus
 		nodes.push(derivedAtom(getter, undefined, options(node)) as never)
-		trackers.push(inlined ? getter : (read) => read(nodes[node]!))
+		effectGetters.push(inlined ? getter : (read) => read(nodes[node]!))
 	}
-	const effects = trackers.map((tracker, node) =>
-		effectAtom(tracker, (next, _last, _read, _write, mountEffect) => {
+	const effects = effectGetters.map((getter, node) =>
+		effectAtom(getter, (next, _last, _read, _write, mountEffect) => {
 			if (liveEffects.has(node))
 				violations.push(`effect n${node} ran without cleanup`)
 			if (next !== value(node))
@@ -311,8 +312,11 @@ async function run(
 					subscriptions.some((subscription) => subscription.node === node)
 				if (liveEffects.has(node) !== active)
 					violations.push(`n${node} effect reachability mismatch`)
-				if (active && liveEffects.get(node)?.value !== value(node))
-					violations.push(`n${node} stale effect`)
+				if (active && liveEffects.has(node))
+					expect(
+						liveEffects.get(node)!.value,
+						report(`n${node} stale effect`),
+					).toBe(value(node))
 				if (
 					spec(node).effect &&
 					liveChildren.has(`mount ${node}`) !== reachable.has(node)
@@ -411,13 +415,69 @@ const mountOrderExample: Value<typeof scenario> = {
 	graph: {
 		primitives: [{ initial: 0, effect: true, mount: false }],
 		derived: [
-			{ a: 0, b: 0, c: 0, modulus: 3, effect: false, mount: false },
-			{ a: 1, b: 0, c: 1, modulus: 3, effect: false, mount: true },
-			{ a: 0, b: 2, c: 1, modulus: 2, effect: true, mount: false },
-			{ a: 3, b: 1, c: 0, modulus: 3, effect: true, mount: false },
-			{ a: 1, b: 4, c: 1, modulus: 2, effect: false, mount: true },
-			{ a: 2, b: 1, c: 1, modulus: 3, effect: false, mount: false },
-			{ a: 1, b: 0, c: 5, modulus: 3, effect: true, mount: true },
+			{
+				a: 0,
+				b: 0,
+				c: 0,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 0,
+				c: 1,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 2,
+				c: 1,
+				modulus: 2,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 1,
+				c: 0,
+				modulus: 3,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 4,
+				c: 1,
+				modulus: 2,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 2,
+				b: 1,
+				c: 1,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 0,
+				c: 5,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -441,13 +501,69 @@ const disposeOrderExample: Value<typeof scenario> = {
 			{ initial: 1, effect: false, mount: false },
 		],
 		derived: [
-			{ a: 1, b: 0, c: 0, modulus: 3, effect: true, mount: true },
-			{ a: 1, b: 1, c: 2, modulus: 3, effect: true, mount: false },
-			{ a: 2, b: 1, c: 3, modulus: 2, effect: true, mount: true },
-			{ a: 0, b: 3, c: 0, modulus: 3, effect: true, mount: false },
-			{ a: 1, b: 1, c: 2, modulus: 2, effect: false, mount: false },
-			{ a: 6, b: 1, c: 0, modulus: 2, effect: true, mount: false },
-			{ a: 5, b: 6, c: 0, modulus: 3, effect: true, mount: true },
+			{
+				a: 1,
+				b: 0,
+				c: 0,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 1,
+				c: 2,
+				modulus: 3,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 2,
+				b: 1,
+				c: 3,
+				modulus: 2,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 3,
+				c: 0,
+				modulus: 3,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 1,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 6,
+				b: 1,
+				c: 0,
+				modulus: 2,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 5,
+				b: 6,
+				c: 0,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -472,13 +588,69 @@ const danglingMountExample: Value<typeof scenario> = {
 			{ initial: 2, effect: false, mount: false },
 		],
 		derived: [
-			{ a: 1, b: 0, c: 0, modulus: 3, effect: false, mount: true },
-			{ a: 1, b: 2, c: 0, modulus: 3, effect: false, mount: true },
-			{ a: 1, b: 0, c: 0, modulus: 2, effect: false, mount: false },
-			{ a: 4, b: 0, c: 1, modulus: 3, effect: true, mount: true },
-			{ a: 1, b: 1, c: 3, modulus: 3, effect: false, mount: true },
-			{ a: 5, b: 6, c: 4, modulus: 3, effect: true, mount: true },
-			{ a: 5, b: 1, c: 6, modulus: 3, effect: false, mount: false },
+			{
+				a: 1,
+				b: 0,
+				c: 0,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 2,
+				c: 0,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 0,
+				c: 0,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 4,
+				b: 0,
+				c: 1,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 1,
+				c: 3,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 5,
+				b: 6,
+				c: 4,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 5,
+				b: 1,
+				c: 6,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -503,13 +675,69 @@ const unmountOrderExample: Value<typeof scenario> = {
 			{ initial: 1, effect: false, mount: true },
 		],
 		derived: [
-			{ a: 0, b: 2, c: 1, modulus: 3, effect: false, mount: true },
-			{ a: 0, b: 0, c: 2, modulus: 3, effect: false, mount: true },
-			{ a: 3, b: 4, c: 1, modulus: 2, effect: false, mount: true },
-			{ a: 1, b: 3, c: 4, modulus: 3, effect: false, mount: true },
-			{ a: 3, b: 2, c: 2, modulus: 2, effect: false, mount: false },
-			{ a: 1, b: 5, c: 6, modulus: 2, effect: false, mount: true },
-			{ a: 0, b: 6, c: 5, modulus: 3, effect: false, mount: false },
+			{
+				a: 0,
+				b: 2,
+				c: 1,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 0,
+				c: 2,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 4,
+				c: 1,
+				modulus: 2,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 3,
+				c: 4,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 2,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 5,
+				c: 6,
+				modulus: 2,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 6,
+				c: 5,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -532,10 +760,42 @@ const lateLinkedOwnerExample: Value<typeof scenario> = {
 			{ initial: 1, effect: false, mount: false },
 		],
 		derived: [
-			{ a: 0, b: 0, c: 1, modulus: 3, effect: false, mount: false },
-			{ a: 1, b: 0, c: 2, modulus: 2, effect: false, mount: false },
-			{ a: 3, b: 1, c: 1, modulus: 2, effect: false, mount: false },
-			{ a: 1, b: 3, c: 0, modulus: 2, effect: true, mount: false },
+			{
+				a: 0,
+				b: 0,
+				c: 1,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 0,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 1,
+				c: 1,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 3,
+				c: 0,
+				modulus: 2,
+				effect: true,
+				mount: false,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -564,10 +824,42 @@ const lateLinkedReaderExample: Value<typeof scenario> = {
 			{ initial: 3, effect: false, mount: true },
 		],
 		derived: [
-			{ a: 1, b: 2, c: 0, modulus: 3, effect: false, mount: true },
-			{ a: 1, b: 2, c: 3, modulus: 3, effect: true, mount: true },
-			{ a: 2, b: 4, c: 4, modulus: 2, effect: false, mount: false },
-			{ a: 0, b: 1, c: 4, modulus: 3, effect: false, mount: false },
+			{
+				a: 1,
+				b: 2,
+				c: 0,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 1,
+				b: 2,
+				c: 3,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 2,
+				b: 4,
+				c: 4,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 1,
+				c: 4,
+				modulus: 3,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -593,10 +885,42 @@ const deferredTeardownOrderExample: Value<typeof scenario> = {
 			{ initial: 3, effect: true, mount: false },
 		],
 		derived: [
-			{ a: 1, b: 0, c: 1, modulus: 2, effect: true, mount: true },
-			{ a: 0, b: 0, c: 2, modulus: 3, effect: true, mount: true },
-			{ a: 3, b: 1, c: 2, modulus: 2, effect: false, mount: true },
-			{ a: 3, b: 3, c: 4, modulus: 3, effect: false, mount: true },
+			{
+				a: 1,
+				b: 0,
+				c: 1,
+				modulus: 2,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 0,
+				b: 0,
+				c: 2,
+				modulus: 3,
+				effect: true,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 1,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 3,
+				c: 4,
+				modulus: 3,
+				effect: false,
+				mount: true,
+				inlined: false,
+			},
 		],
 	},
 	operations: [
@@ -621,9 +945,33 @@ const effectConsumerExample: Value<typeof scenario> = {
 			{ initial: 1, effect: false, mount: true },
 		],
 		derived: [
-			{ a: 0, b: 0, c: 1, modulus: 2, effect: false, mount: false },
-			{ a: 2, b: 0, c: 2, modulus: 2, effect: false, mount: false },
-			{ a: 3, b: 1, c: 2, modulus: 2, effect: false, mount: false },
+			{
+				a: 0,
+				b: 0,
+				c: 1,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 2,
+				b: 0,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
+			{
+				a: 3,
+				b: 1,
+				c: 2,
+				modulus: 2,
+				effect: false,
+				mount: false,
+				inlined: false,
+			},
 			{
 				a: 3,
 				b: 4,
