@@ -12,7 +12,12 @@ import {
 import { peekInstance, retain, release } from './engine'
 import { flush } from './flush'
 import { getInstance, getEffectInstance } from './registry'
-import { type StoreState, assertOutsideGetter, createState } from './state'
+import {
+	type StoreState,
+	assertOutsideGetter,
+	createState,
+	whenSettled,
+} from './state'
 import { type Instance } from './types'
 import { readPending, sendInstance, dispatch } from './write'
 
@@ -60,6 +65,10 @@ export function createRuntime(hydrate: Hydrate = []): {
 		resolve: ((symbol, key) => resolve(state, symbol, key)) as Resolve,
 		subscribe: ((symbol, keyOrNotify, notify) =>
 			subscribe(state, symbol, keyOrNotify, notify)) as Subscribe,
+		settled: () => {
+			assertOutsideGetter(state)
+			return whenSettled(state)
+		},
 	}
 	return { store, state }
 }

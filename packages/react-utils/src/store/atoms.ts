@@ -112,7 +112,8 @@ export type Subscribe = {
 }
 /**
  * `peek` returns committed values, `send` queues a write, and neither flushes
- * synchronously. See `Write` for when writes become visible.
+ * synchronously. See `Write` for when writes become visible, and `settled` to
+ * wait for them.
  */
 export type Store = {
 	peek: Read
@@ -120,6 +121,16 @@ export type Store = {
 	resolve: Resolve
 	subscribe: Subscribe
 	mountEffect: (effect: EffectAtom) => () => void
+	/**
+	 * Resolves once the store is settled: no write is pending and no flush is
+	 * queued or running, including the later flushes that apply writes made
+	 * during a flush, such as by subscribers and effects. Called on a settled
+	 * store, it resolves without waiting for a flush. Timed family evictions and
+	 * timers started by callbacks are not awaited. It only reports that queued
+	 * work has run: writes are not grouped into a transaction and none is undone.
+	 * New writes can follow before an `await` resumes.
+	 */
+	settled: () => Promise<void>
 }
 
 export type Hydrate = readonly HydrateEntry[]

@@ -70,6 +70,11 @@ export type StoreState = {
 	 */
 	spareTasks: Tasks | undefined
 	phase: FlushPhase
+	/**
+	 * The promise shared by `settled` calls made while work is queued or a flush
+	 * runs, resolved by the first flush that ends with nothing queued.
+	 */
+	settling: { promise: Promise<void>; resolve: () => void } | undefined
 	hydrating: boolean
 	/** Getter runs in progress; store calls other than `read` are rejected meanwhile. */
 	evaluatingGetters: number
@@ -105,6 +110,7 @@ export function createState(
 			teardowns: undefined,
 			droppedEdges: undefined,
 		},
+		settling: undefined,
 		hydrating: true,
 		evaluatingGetters: 0,
 		...wiring,
@@ -149,6 +155,31 @@ export function recycleTasks(state: StoreState, tasks: Tasks) {
 			tasks.pendingFamilyEvictions.size === 0,
 	)
 	state.spareTasks = tasks
+}
+
+/**
+ * Returns a resolved promise when no work is queued and no flush runs;
+ * otherwise the promise that the flush ending with nothing queued resolves.
+ */
+export function whenSettled(state: StoreState): Promise<void> {
+	if (state.tasks === undefined && state.phase.mounts === undefined)
+		return Promise.resolve()
+	if (!state.settling) {
+		let resolve!: () => void
+		const promise = new Promise<void>((done) => {
+			resolve = done
+		})
+		state.settling = { promise, resolve }
+	}
+	return state.settling.promise
+}
+
+/** Called at the end of a flush; resolves `settling` if nothing is queued. */
+export function resolveSettled(state: StoreState) {
+	const { settling } = state
+	if (settling === undefined || state.tasks !== undefined) return
+	state.settling = undefined
+	settling.resolve()
 }
 
 export function queueMount(state: StoreState, instance: Instance<any>) {

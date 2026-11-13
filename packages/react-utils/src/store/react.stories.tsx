@@ -9,9 +9,11 @@ import {
 	useAtomValue,
 	useMountEffect,
 	useSetAtom,
+	useStore,
 } from './react'
 import {
 	atomFamily,
+	createStore,
 	derivedAtom,
 	effectAtom,
 	primitiveAtom,
@@ -216,6 +218,90 @@ export const ProviderLifetime = meta.story({
 		await expect(canvas.getByLabelText('Cached sends')).toHaveTextContent('0')
 		await userEvent.click(canvas.getByRole('button', { name: 'Send cached' }))
 		await expect(canvas.getByLabelText('Cached sends')).toHaveTextContent('1')
+	},
+})
+
+const sharedCount = primitiveAtom(0)
+
+function createServiceFixture() {
+	return { service: createStore(), replacement: createStore() }
+}
+
+let serviceFixture = createServiceFixture()
+
+function SharedStoreProbe() {
+	const store = useStore()
+	const [count, setCount] = useAtom(sharedCount)
+	const [settled, setSettled] = useState<number | undefined>(undefined)
+	return (
+		<>
+			<output aria-label='Shared count'>{count}</output>
+			<output aria-label='Context store'>
+				{store === serviceFixture.service ? 'service' : 'other'}
+			</output>
+			<output aria-label='Settled count'>{settled ?? 'none'}</output>
+			<button type='button' onClick={() => setCount((value) => value + 1)}>
+				Increment shared
+			</button>
+			<button
+				type='button'
+				onClick={() => {
+					store.send(sharedCount, 10)
+					void store.settled().then(() => setSettled(store.peek(sharedCount)))
+				}}
+			>
+				Send and settle
+			</button>
+		</>
+	)
+}
+
+function SharedStoreHarness() {
+	const [replaced, setReplaced] = useState(false)
+	return (
+		<>
+			<button type='button' onClick={() => setReplaced(true)}>
+				Replace store
+			</button>
+			<StoreProvider
+				store={replaced ? serviceFixture.replacement : serviceFixture.service}
+			>
+				<SharedStoreProbe />
+			</StoreProvider>
+		</>
+	)
+}
+
+export const SharedStore = meta.story({
+	beforeEach: () => {
+		serviceFixture = createServiceFixture()
+	},
+	render: () => <SharedStoreHarness />,
+	play: async ({ canvas, userEvent }) => {
+		const { service } = serviceFixture
+		await expect(canvas.getByLabelText('Context store')).toHaveTextContent(
+			'service',
+		)
+		await expect(canvas.getByLabelText('Shared count')).toHaveTextContent('0')
+		service.send(sharedCount, 5)
+		await waitFor(() =>
+			expect(canvas.getByLabelText('Shared count')).toHaveTextContent('5'),
+		)
+		await userEvent.click(
+			canvas.getByRole('button', { name: 'Increment shared' }),
+		)
+		await waitFor(() => expect(service.peek(sharedCount)).toBe(6))
+		await userEvent.click(
+			canvas.getByRole('button', { name: 'Send and settle' }),
+		)
+		await waitFor(() =>
+			expect(canvas.getByLabelText('Settled count')).toHaveTextContent('10'),
+		)
+		await userEvent.click(canvas.getByRole('button', { name: 'Replace store' }))
+		await expect(canvas.getByLabelText('Context store')).toHaveTextContent(
+			'service',
+		)
+		await expect(canvas.getByLabelText('Shared count')).toHaveTextContent('10')
 	},
 })
 

@@ -29,6 +29,7 @@ import {
 	countOperation,
 	dropPendingValues,
 	recycleTasks,
+	resolveSettled,
 } from './state'
 import { type Delivery, type Instance, type MountLifecycle } from './types'
 
@@ -222,6 +223,7 @@ export function flush(state: StoreState) {
 	state.phase.mounts = undefined
 	scheduleEvictions(state, pendingFamilyEvictions)
 	recycleTasks(state, tasks)
+	resolveSettled(state)
 }
 
 function applyUpdates(state: StoreState, pending: Map<Instance<any>, any>) {

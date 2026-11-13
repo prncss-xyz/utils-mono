@@ -16,32 +16,37 @@ import {
 	type EffectAtom,
 	type ValidHydrate,
 	type ResolvedAtom,
+	type Store,
 } from './store'
 
-const StoreCtx = createContext<ReturnType<typeof createStore> | null>(null)
+const StoreCtx = createContext<Store | null>(null)
 
-function useStore() {
+/** Returns the store of the nearest `StoreProvider`. */
+export function useStore(): Store {
 	const store = useContext(StoreCtx)
 	if (!store) throw new Error('Atom hooks must be used within a StoreProvider')
 	return store
 }
 
+type StoreProviderProps<Entries extends readonly (readonly unknown[])[]> = {
+	children: React.ReactNode
+} & (
+	| { store: Store; hydrate?: never }
+	| { store?: never; hydrate?: Entries & ValidHydrate<Entries> }
+)
+
 /**
- * Creates and hydrates the store on the first render; later hydrate changes are ignored.
- * Remount with a new key to start over. React may retry the initializer before committing
- * (including in StrictMode); hydration runs neither effects nor onMount callbacks.
+ * Provides `store`, which lets code outside React share state with the tree,
+ * or else creates and hydrates a store. Either is bound on the first render;
+ * later `store` and `hydrate` changes are ignored. Remount with a new key to
+ * start over. React may retry the initializer before committing (including in
+ * StrictMode); hydration runs neither effects nor onMount callbacks.
  */
 export function StoreProvider<
 	const Entries extends readonly (readonly unknown[])[] = [],
->({
-	children,
-	hydrate,
-}: {
-	children: React.ReactNode
-	hydrate?: Entries & ValidHydrate<Entries>
-}) {
-	const [store] = useState(() =>
-		hydrate ? createStore(hydrate) : createStore(),
+>({ children, store: provided, hydrate }: StoreProviderProps<Entries>) {
+	const [store] = useState(
+		() => provided ?? (hydrate ? createStore(hydrate) : createStore()),
 	)
 	return <StoreCtx.Provider value={store}>{children}</StoreCtx.Provider>
 }
@@ -101,7 +106,7 @@ export function useSetAtom<V, Key, Args extends unknown[]>(
 	)
 	const resolvedAtomRef = useRef<
 		| {
-				store: ReturnType<typeof createStore>
+				store: Store
 				atom: AtomFamily<V, Key, Args> | AtomSymbol<V, Args>
 				key: Key | undefined
 				resolved: ResolvedAtom<V, Args>
