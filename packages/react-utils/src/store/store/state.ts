@@ -105,6 +105,7 @@ export function createState(
 		phase: {
 			mounts: undefined,
 			effects: undefined,
+			runningEffect: undefined,
 			familyEvictions: undefined,
 			mountWrites: undefined,
 			teardowns: undefined,
@@ -143,6 +144,7 @@ export function recycleTasks(state: StoreState, tasks: Tasks) {
 	isoAssert(
 		phase.mounts === undefined &&
 			phase.effects === undefined &&
+			phase.runningEffect === undefined &&
 			phase.familyEvictions === undefined &&
 			phase.mountWrites === undefined &&
 			phase.teardowns === undefined &&

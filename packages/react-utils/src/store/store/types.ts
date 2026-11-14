@@ -83,6 +83,7 @@ export type Tasks = {
 export type FlushPhase = {
 	mounts: Set<Instance<any>> | undefined
 	effects: Set<Instance<any>> | undefined
+	runningEffect: Instance<any> | undefined
 	familyEvictions: Set<Instance<any>> | undefined
 	mountWrites: Map<Instance<any>, any> | undefined
 	teardowns: Instance<any>[] | undefined

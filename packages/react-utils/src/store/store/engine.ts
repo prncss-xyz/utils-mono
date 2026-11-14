@@ -77,10 +77,11 @@ function requeueChildren(state: StoreState, lifecycle: MountLifecycle) {
  * that one retained again in the same flush is not unmounted and mounted
  * again. Without `onMount`, the teardown has no observable effect and runs at
  * once. The last release by a subscription or an effect handle follows the
- * same rule while a mount or an effect is still queued, since either may
- * retain the instance again. Otherwise it tears down the instance at once,
- * after the deferred teardowns, so that consumers still go first; what it
- * leaves unmounted follows the rule above.
+ * same rule while a mount or an effect is still queued, or an effect that
+ * does not belong to the instance is running, since it may retain the
+ * instance again. Otherwise it tears down the instance at once, after the
+ * deferred teardowns, so that consumers still go first; what it leaves
+ * unmounted follows the rule above.
  */
 export function release<S>(
 	state: StoreState,
@@ -107,10 +108,11 @@ function* releaseInstance(
 ): Generator<Instance<any>> {
 	const { teardowns } = state.phase
 	const mayRetainAgain =
-		teardowns !== undefined && (holder !== undefined || hasQueuedWork(state))
+		teardowns !== undefined &&
+		(holder !== undefined || hasQueuedWork(state, instance))
 	if (teardowns) {
 		if (holder) recordDroppedEdge(state, holder, instance)
-		else if (instance.mountCount === 1 && !hasQueuedWork(state))
+		else if (instance.mountCount === 1 && !hasQueuedWork(state, instance))
 			drainTeardowns(state)
 	}
 	if (--instance.mountCount > 0) return
@@ -128,10 +130,26 @@ function* releaseInstance(
 	yield* mountedDeps
 }
 
-function hasQueuedWork(state: StoreState) {
-	const { mounts, effects } = state.phase
+function hasQueuedWork(state: StoreState, instance: Instance<any>) {
+	const { mounts, effects, runningEffect } = state.phase
 	isoAssert(mounts && effects)
-	return mounts.size > 0 || effects.size > 0
+	return (
+		mounts.size > 0 ||
+		effects.size > 0 ||
+		(runningEffect !== undefined && !ownsEffect(instance, runningEffect))
+	)
+}
+
+function ownsEffect(owner: Instance<any>, effect: Instance<any>) {
+	const visited = new Set<Instance<any>>()
+	const visit = (current: Instance<any>): boolean => {
+		if (current === owner) return true
+		if (visited.has(current)) return false
+		visited.add(current)
+		for (const parent of owners(current)) if (visit(parent)) return true
+		return false
+	}
+	return visit(effect)
 }
 
 function recordDroppedEdge(

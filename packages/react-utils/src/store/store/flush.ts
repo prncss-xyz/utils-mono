@@ -226,7 +226,11 @@ export function flush(state: StoreState) {
 				peekInstance(state, dep)
 				if (dep.version !== version) changed = true
 			}
-			if (changed) runEffect(state, instance, mounts)
+			if (changed) {
+				state.phase.runningEffect = instance
+				runEffect(state, instance, mounts)
+				state.phase.runningEffect = undefined
+			}
 		}
 		dropPendingValues(state)
 		settle(state, mounts, true)

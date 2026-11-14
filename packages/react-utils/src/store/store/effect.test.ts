@@ -578,6 +578,91 @@ describe('effect atoms', () => {
 		expect(cleanup).toHaveBeenCalledTimes(4)
 	})
 
+	it('keeps a resource mounted when an effect body disposes and reads it', async () => {
+		const events: string[] = []
+		const resource = primitiveAtom(0, {
+			onMount: () => {
+				events.push('mount')
+				return () => events.push('unmount')
+			},
+		})
+		const store = createStore()
+		const unsubscribe = store.subscribe(resource, () => {})
+		const unmount = store.mountEffect(
+			effectAtom((read) => {
+				unsubscribe()
+				read(resource)
+			}),
+		)
+		await flushMicrotask()
+		expect(events).toEqual(['mount'])
+		unmount()
+		expect(events).toEqual(['mount', 'unmount'])
+	})
+
+	it('keeps a resource mounted when a shared effect disposes and reads it', async () => {
+		const events: string[] = []
+		const resource = primitiveAtom(0, {
+			onMount: () => {
+				events.push('mount')
+				return () => events.push('unmount')
+			},
+		})
+		const store = createStore()
+		const unsubscribe = store.subscribe(resource, () => {})
+		const shared = effectAtom((read) => {
+			unsubscribe()
+			read(resource)
+		})
+		const left: EffectAtom = {
+			type: 'effect',
+			body: (_read, _write, mountEffect) => mountEffect(shared),
+		}
+		const right: EffectAtom = {
+			type: 'effect',
+			body: (_read, _write, mountEffect) => mountEffect(shared),
+		}
+		const owner: EffectAtom = {
+			type: 'effect',
+			body: (_read, _write, mountEffect) => {
+				mountEffect(left)
+				mountEffect(right)
+			},
+		}
+		const unmount = store.mountEffect(owner)
+		await flushMicrotask()
+		expect(events).toEqual(['mount'])
+		unmount()
+		expect(events).toEqual(['mount', 'unmount'])
+	})
+
+	it('keeps a resource mounted when an effect cleanup disposes and reads it', async () => {
+		const events: string[] = []
+		const source = primitiveAtom(0)
+		const resource = primitiveAtom(0, {
+			onMount: () => {
+				events.push('mount')
+				return () => events.push('unmount')
+			},
+		})
+		const store = createStore()
+		const unsubscribe = store.subscribe(resource, () => {})
+		const unmount = store.mountEffect(
+			effectAtom((read) => {
+				read(source)
+				return () => {
+					unsubscribe()
+					read(resource)
+				}
+			}),
+		)
+		await flushMicrotask()
+		store.send(source, 1)
+		await flushMicrotask()
+		expect(events).toEqual(['mount', 'unmount'])
+		unmount()
+	})
+
 	it('disposes a setup released during its own body', async () => {
 		let unmount = () => {}
 		const cleanup = vi.fn()
