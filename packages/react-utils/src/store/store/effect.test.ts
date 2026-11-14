@@ -275,9 +275,10 @@ describe('effect atoms', () => {
 				events.push(name)
 				return () => events.push(`~${name}`)
 			})
+		const firstChild = child('a')
 		const owner = primitiveAtom(0, {
 			onMount: (_read, _write, mountEffect) => {
-				mountEffect(child('a'))
+				mountEffect(firstChild)
 				mountEffect(child('b'))
 				return () => events.push('owner cleanup')
 			},
@@ -288,6 +289,12 @@ describe('effect atoms', () => {
 		expect(events).toEqual(['a', 'b'])
 		unsubscribe()
 		expect(events).toEqual(['a', 'b', '~b', '~a', 'owner cleanup'])
+		events.length = 0
+		const unmountChild = store.mountEffect(firstChild)
+		await flushMicrotask()
+		expect(events).toEqual(['a'])
+		unmountChild()
+		expect(events).toEqual(['a', '~a'])
 	})
 
 	it('shares one instance across independent idempotent external and owner references', async () => {

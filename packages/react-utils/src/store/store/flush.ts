@@ -45,6 +45,20 @@ function invalidate<S>(
 	affected: Set<Instance<any>>,
 	reconciles: Set<Instance<any>>,
 ) {
+	const stack = [invalidateInstance(state, instance, affected, reconciles)]
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next()
+		if (next.done) stack.pop()
+		else stack.push(invalidateInstance(state, next.value, affected, reconciles))
+	}
+}
+
+function* invalidateInstance(
+	state: StoreState,
+	instance: Instance<any>,
+	affected: Set<Instance<any>>,
+	reconciles: Set<Instance<any>>,
+) {
 	if (affected.has(instance)) return
 	affected.add(instance)
 	countOperation(state, 'invalidations', instance.symbol)
@@ -58,7 +72,7 @@ function invalidate<S>(
 			if (isSource) sub.freshness = { type: 'dirty' }
 			else if (sub.freshness.type === 'clean') sub.freshness = { type: 'check' }
 		}
-		invalidate(state, sub, affected, reconciles)
+		yield sub
 	}
 }
 
@@ -249,12 +263,12 @@ type MountWalk = {
 	revision: number
 }
 
-function walkMount(
+function* walkMount(
 	state: StoreState,
 	mounts: Set<Instance<any>>,
 	walk: MountWalk,
 	node: Instance<any>,
-): boolean {
+): Generator<Instance<any>, boolean, boolean> {
 	state.mountWalks++
 	if (walk.revision !== state.mountRevision) {
 		walk.visited.clear()
@@ -273,7 +287,7 @@ function walkMount(
 		isoAssert(node.freshness.type === 'clean')
 		let rewalk = false
 		for (const dep of dependencies(node)) {
-			if (walkMount(state, mounts, walk, dep)) {
+			if (yield dep) {
 				rewalk = true
 				break
 			}
@@ -315,7 +329,20 @@ function settleMount(state: StoreState, mounts: Set<Instance<any>>) {
 		visiting: new Set(),
 		revision: state.mountRevision,
 	}
-	for (const instance of mounts) walkMount(state, mounts, walk, instance)
+	for (const instance of mounts) {
+		const stack = [walkMount(state, mounts, walk, instance)]
+		let rewalk = false
+		while (stack.length > 0) {
+			const next = stack[stack.length - 1]!.next(rewalk)
+			if (next.done) {
+				stack.pop()
+				rewalk = next.value
+			} else {
+				stack.push(walkMount(state, mounts, walk, next.value))
+				rewalk = false
+			}
+		}
+	}
 }
 
 function reconcile(
@@ -323,9 +350,21 @@ function reconcile(
 	instance: Instance<any>,
 	reconciles: Set<Instance<any>>,
 ) {
+	const stack = [reconcileInstance(state, instance, reconciles)]
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next()
+		if (next.done) stack.pop()
+		else stack.push(reconcileInstance(state, next.value, reconciles))
+	}
+}
+
+function* reconcileInstance(
+	state: StoreState,
+	instance: Instance<any>,
+	reconciles: Set<Instance<any>>,
+) {
 	if (!reconciles.delete(instance)) return
-	for (const sub of Array.from(consumers(instance)))
-		reconcile(state, sub, reconciles)
+	yield* Array.from(consumers(instance))
 	if (instance.mountCount > 0) peekInstance(state, instance)
 }
 

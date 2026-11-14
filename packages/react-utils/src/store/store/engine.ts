@@ -38,6 +38,15 @@ import { type Instance, type MountLifecycle } from './types'
  * lifecycle, and its children resume the runs they skipped meanwhile.
  */
 export function retain<S>(state: StoreState, instance: Instance<S>) {
+	const stack = [retainInstance(state, instance)]
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next()
+		if (next.done) stack.pop()
+		else stack.push(retainInstance(state, next.value))
+	}
+}
+
+function* retainInstance(state: StoreState, instance: Instance<any>) {
 	if (instance.mountCount === 0) {
 		cancelEviction(state, instance)
 		if (instance.symbol.type === 'effect') resetDependencies(instance)
@@ -45,7 +54,7 @@ export function retain<S>(state: StoreState, instance: Instance<S>) {
 	}
 	if (instance.mountCount++ > 0) return
 	state.mountRevision++
-	syncMountedDeps(state, instance)
+	yield* mountedDepsToRetain(state, instance)
 	isoAssert(instance.mountCount > 0)
 	queueMount(state, instance)
 	queueEffect(state, instance)
@@ -78,6 +87,24 @@ export function release<S>(
 	instance: Instance<S>,
 	holder?: Instance<any>,
 ) {
+	const stack = [{ instance, steps: releaseInstance(state, instance, holder) }]
+	while (stack.length > 0) {
+		const current = stack[stack.length - 1]!
+		const next = current.steps.next()
+		if (next.done) stack.pop()
+		else
+			stack.push({
+				instance: next.value,
+				steps: releaseInstance(state, next.value, current.instance),
+			})
+	}
+}
+
+function* releaseInstance(
+	state: StoreState,
+	instance: Instance<any>,
+	holder: Instance<any> | undefined,
+): Generator<Instance<any>> {
 	const { teardowns } = state.phase
 	const mayRetainAgain =
 		teardowns !== undefined && (holder !== undefined || hasQueuedWork(state))
@@ -96,9 +123,9 @@ export function release<S>(
 		instance.symbol.onMount
 	)
 		teardowns.push(instance)
-	else teardown(state, instance)
+	else yield* teardownInstance(state, instance)
 	if (instance.familyEntry) queueEviction(state, instance)
-	for (const dep of mountedDeps) release(state, dep, instance)
+	yield* mountedDeps
 }
 
 function hasQueuedWork(state: StoreState) {
@@ -186,25 +213,38 @@ function consumersFirst(roots: Instance<any>[], droppedEdges: Instance<any>[]) {
 	}
 	const order: Instance<any>[] = []
 	const visited = new Set<Instance<any>>()
-	const visit = (instance: Instance<any>) => {
+	function* visit(instance: Instance<any>) {
 		if (visited.has(instance)) return
 		visited.add(instance)
-		for (const dep of mountedDependencies(instance)) visit(dep)
+		yield* mountedDependencies(instance)
 		const lifecycle = instance.mountLifecycle ?? instance.effectLifecycle
-		for (const child of lifecycle?.children ?? []) visit(child)
-		for (const held of dropped.get(instance) ?? []) visit(held)
+		yield* lifecycle?.children ?? []
+		yield* dropped.get(instance) ?? []
 		order.push(instance)
 	}
-	for (const root of roots) visit(root)
+	for (const root of roots) {
+		const stack = [visit(root)]
+		while (stack.length > 0) {
+			const next = stack[stack.length - 1]!.next()
+			if (next.done) stack.pop()
+			else stack.push(visit(next.value))
+		}
+	}
 	return order.reverse()
 }
 
 export function syncMountedDeps<S>(state: StoreState, instance: Instance<S>) {
+	for (const dep of mountedDepsToRetain(state, instance)) retain(state, dep)
+}
+
+function* mountedDepsToRetain(state: StoreState, instance: Instance<any>) {
 	let linked = false
 	for (const dep of dependencies(instance)) {
 		isoAssert(instance.mountCount > 0)
 		if (hasMountedDependency(instance, dep)) continue
-		link(state, instance, dep)
+		assertOwnershipEdge(instance, dep)
+		addMountedEdge(instance, dep)
+		yield dep
 		linked = true
 	}
 	if (!linked && dependencyCount(instance) === mountedDependencyCount(instance))
@@ -258,14 +298,20 @@ export function assertOwnershipEdge(
 	target: Instance<any>,
 ) {
 	const visited = new Set<Instance<any>>()
-	const walk = (current: Instance<any>) => {
+	const stack: Iterator<Instance<any>>[] = [[owner][Symbol.iterator]()]
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next()
+		if (next.done) {
+			stack.pop()
+			continue
+		}
+		const current = next.value
 		isoAssert(current !== target, 'cyclic effect ownership')
-		if (visited.has(current)) return
+		if (visited.has(current)) continue
 		visited.add(current)
-		for (const parent of owners(current)) walk(parent)
-		for (const consumer of consumers(current)) walk(consumer)
+		stack.push(consumers(current)[Symbol.iterator]())
+		stack.push(owners(current)[Symbol.iterator]())
 	}
-	walk(owner)
 }
 
 export function releaseChildren(
@@ -281,12 +327,21 @@ export function releaseChildren(
 }
 
 function teardown(state: StoreState, instance: Instance<any>) {
+	for (const child of teardownInstance(state, instance))
+		release(state, child, instance)
+}
+
+function* teardownInstance(state: StoreState, instance: Instance<any>) {
 	const lifecycle = instance.effectLifecycle ?? instance.mountLifecycle
 	instance.effectLifecycle = undefined
 	instance.mountLifecycle = undefined
 	if (!lifecycle) return
 	lifecycle.active = false
-	releaseChildren(state, instance, lifecycle)
+	while (lifecycle.children.length > 0) {
+		const child = lifecycle.children.pop()!
+		releaseOwner(child, instance)
+		yield child
+	}
 	const cleanup = lifecycle.cleanup
 	lifecycle.cleanup = undefined
 	callCleanup(state, instance, cleanup)
@@ -339,7 +394,7 @@ export function peekInstance<S>(state: StoreState, instance: Instance<S>) {
 
 /**
  * Whether the instance is clean and either mounted or already validated at
- * the current epoch. It must be re-checked after `depsAreCurrent`, because
+ * the current epoch. It must be re-checked after `validateDependencies`, because
  * nested peeks can mount or revalidate the instance.
  */
 function isFresh<S>(state: StoreState, instance: Instance<S>) {
@@ -351,21 +406,40 @@ function isFresh<S>(state: StoreState, instance: Instance<S>) {
 
 /** Settles a `check` instance, or an unmounted one not validated this epoch. */
 function revalidate<S>(state: StoreState, instance: Instance<S>) {
+	const stack = [validateDependencies(state, instance)]
+	while (stack.length > 0) {
+		const next = stack[stack.length - 1]!.next()
+		if (next.done) stack.pop()
+		else stack.push(validateDependencies(state, next.value))
+	}
+}
+
+function* validateDependencies(state: StoreState, instance: Instance<any>) {
 	isoAssert(
 		instance.freshness.type === 'clean' || instance.freshness.type === 'check',
 	)
-	const current = depsAreCurrent(state, instance)
+	countOperation(state, 'validations', instance.symbol)
+	let current = true
+	for (const [dep, version] of dependencyVersions(instance)) {
+		if (dep.version !== version) {
+			current = false
+			break
+		}
+		if (
+			dep.symbol.type === 'derived' &&
+			dep.freshness.type !== 'dirty' &&
+			!isFresh(state, dep)
+		) {
+			isoAssert(dep.freshness.type !== 'evaluating', 'cyclic atom dependency')
+			yield dep
+		}
+		peekInstance(state, dep)
+		if (dep.version !== version) {
+			current = false
+			break
+		}
+	}
 	if (isFresh(state, instance)) return
 	if (current) instance.freshness = { type: 'clean', validatedAt: state.epoch }
 	else instance.freshness = { type: 'dirty' }
-}
-
-function depsAreCurrent<S>(state: StoreState, instance: Instance<S>) {
-	countOperation(state, 'validations', instance.symbol)
-	for (const [dep, version] of dependencyVersions(instance)) {
-		if (dep.version !== version) return false
-		peekInstance(state, dep)
-		if (dep.version !== version) return false
-	}
-	return true
 }
