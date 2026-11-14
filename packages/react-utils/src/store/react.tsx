@@ -24,7 +24,7 @@ const StoreCtx = createContext<Store | null>(null)
 /** Returns the store of the nearest `StoreProvider`. */
 export function useStore(): Store {
 	const store = useContext(StoreCtx)
-	if (!store) throw new Error('Atom hooks must be used within a StoreProvider')
+	if (!store) throw new Error('useStore must be used within a StoreProvider')
 	return store
 }
 
