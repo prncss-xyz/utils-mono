@@ -55,8 +55,9 @@ export type Instance<S> = {
 	handle: ResolvedAtom<S, any> | undefined
 	symbol: AtomSymbol<S, any> | EffectAtom
 	/**
-	 * Eviction bookkeeping of a member of an evicting family. Cleared on
-	 * eviction, and by a write to a readable member, which then is never evicted.
+	 * Eviction bookkeeping of a member of an evicting family, cleared on
+	 * eviction. A write to a readable member cancels its pending eviction, and
+	 * only its next complete release queues one again.
 	 */
 	familyEntry: FamilyEntry | undefined
 	familyRemovalTimeout: ReturnType<typeof setTimeout> | undefined

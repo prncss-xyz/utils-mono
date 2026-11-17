@@ -4,8 +4,10 @@ import {
 	derivedAtom,
 	effectAtom,
 	atomFamily,
+	hydrate,
 	primitiveAtom,
 	TRANSIENT,
+	type AtomFamily,
 	type AtomOptions,
 	type AtomSymbol,
 	type Read,
@@ -115,16 +117,15 @@ describe('family eviction', () => {
 	)
 
 	type Member = AtomSymbol<number, [SetStateWithReset<number>]>
+	type MemberFamily = AtomFamily<number, string, [SetStateWithReset<number>]>
 	type BuildMember = (key: string, options: AtomOptions<number>) => Member
 
-	const memberKinds: [string, () => BuildMember][] = [
+	const memberKinds: [string, (TTL: number) => BuildMember][] = [
 		['primitive', () => (_key, options) => primitiveAtom(0, options)],
 		[
 			'readable derived',
-			() => {
-				const values = atomFamily((_key: string) => primitiveAtom(0), {
-					TTL: Infinity,
-				})
+			(TTL) => {
+				const values = atomFamily((_key: string) => primitiveAtom(0), { TTL })
 				return (key, options) =>
 					derivedAtom(
 						(read: Read) => read(values, key),
@@ -136,7 +137,97 @@ describe('family eviction', () => {
 		],
 	]
 
-	describe.each([0, 5])('with TTL %s', (TTL) => {
+	const setup = (kind: (TTL: number) => BuildMember, TTL: number) => {
+		const build = kind(TTL)
+		const mounted: number[] = []
+		const create = vi.fn((key: string) => {
+			const member: Member = build(key, {
+				onMount: (read) => {
+					mounted.push(read(member))
+				},
+			})
+			return member
+		})
+		return { family: atomFamily(create, { TTL }), create, mounted }
+	}
+
+	type WriteAndMount = <Handles>(
+		family: MemberFamily,
+		mount: (store: Store) => Handles,
+	) => Promise<{ store: Store; handles: Handles }>
+
+	const writeSources: [string, (family: MemberFamily) => Store][] = [
+		[
+			'a write',
+			(family) => {
+				const store = createStore()
+				store.send(family, 'a', 3)
+				return store
+			},
+		],
+		['hydration', (family) => createStore([hydrate(family, 'a', 3)])],
+	]
+
+	const writesAroundMount: [string, WriteAndMount][] = [
+		[
+			'a write before mounting',
+			async (family, mount) => {
+				const store = createStore()
+				store.send(family, 'a', 3)
+				await flushMicrotask()
+				const handles = mount(store)
+				await flushMicrotask()
+				return { store, handles }
+			},
+		],
+		[
+			'hydration',
+			async (family, mount) => {
+				const store = createStore([hydrate(family, 'a', 3)])
+				const handles = mount(store)
+				await flushMicrotask()
+				return { store, handles }
+			},
+		],
+		[
+			'a write while mounted',
+			async (family, mount) => {
+				const store = createStore()
+				const handles = mount(store)
+				await flushMicrotask()
+				store.send(family, 'a', 3)
+				await flushMicrotask()
+				return { store, handles }
+			},
+		],
+	]
+
+	const references: [
+		string,
+		(store: Store, family: MemberFamily) => () => void,
+	][] = [
+		[
+			'another subscription',
+			(store, family) => store.subscribe(family, 'a', () => {}),
+		],
+		[
+			'a mounted consumer',
+			(store, family) =>
+				store.subscribe(
+					derivedAtom((read) => read(family, 'a')),
+					() => {},
+				),
+		],
+	]
+
+	const resumedPolicies = [
+		{ TTL: 0, elapsed: 0, value: 0, creations: 2 },
+		{ TTL: 5, elapsed: 4, value: 3, creations: 1 },
+		{ TTL: 5, elapsed: 5, value: 0, creations: 2 },
+		{ TTL: Infinity, elapsed: 1_000, value: 3, creations: 1 },
+	]
+
+	describe('member retention', () => {
 		beforeEach(() => {
 			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
 		})
@@ -144,88 +235,96 @@ describe('family eviction', () => {
 			vi.useRealTimers()
 		})
 
-		const expire = async () => {
+		const elapse = async (ms: number) => {
 			await flushMicrotask()
-			vi.advanceTimersByTime(TTL + 1)
+			vi.advanceTimersByTime(ms)
 			await flushMicrotask()
 		}
 
-		const setup = (kind: () => BuildMember) => {
-			const build = kind()
-			const mounted: number[] = []
-			const create = vi.fn((key: string) => {
-				const member: Member = build(key, {
-					onMount: (read) => {
-						mounted.push(read(member))
+		describe.each([0, 5])('with TTL %s', (TTL) => {
+			it.each(memberKinds)(
+				'evicts a read, never-written %s member after mount and release',
+				async (_name, kind) => {
+					const { family, create, mounted } = setup(kind, TTL)
+					const store = createStore()
+					expect(store.peek(family, 'a')).toBe(0)
+					const unsubscribe = store.subscribe(family, 'a', () => {})
+					await flushMicrotask()
+					expect(mounted).toEqual([0])
+					unsubscribe()
+					await elapse(TTL + 1)
+					expect(create).toHaveBeenCalledOnce()
+					expect(store.peek(family, 'a')).toBe(0)
+					expect(create).toHaveBeenCalledTimes(2)
+				},
+			)
+		})
+
+		describe.each([0, 5, Infinity])('with TTL %s', (TTL) => {
+			describe.each(memberKinds)('a %s member', (_name, kind) => {
+				it.each(writeSources)(
+					'stays retained until its first mount after %s',
+					async (_source, write) => {
+						const { family, create, mounted } = setup(kind, TTL)
+						const store = write(family)
+						await elapse(1_000)
+						await elapse(1_000)
+						expect(store.peek(family, 'a')).toBe(3)
+						store.subscribe(family, 'a', () => {})
+						await flushMicrotask()
+						expect(mounted).toEqual([3])
+						expect(create).toHaveBeenCalledOnce()
 					},
-				})
-				return member
+				)
 			})
-			return { family: atomFamily(create, { TTL }), create, mounted }
-		}
+		})
 
-		it.each(memberKinds)(
-			'retains a written never-mounted %s member across flushes and expiry',
-			async (_name, kind) => {
-				const { family, create } = setup(kind)
-				const store = createStore()
-				store.send(family, 'a', 3)
-				await expire()
-				await expire()
-				expect(store.peek(family, 'a')).toBe(3)
-				expect(create).toHaveBeenCalledOnce()
-			},
-		)
+		describe.each(memberKinds)('a %s member', (_name, kind) => {
+			it.each(
+				resumedPolicies.flatMap((policy) =>
+					writesAroundMount.flatMap(([source, write]) =>
+						references.map(([reference, hold]) => ({
+							...policy,
+							source,
+							write,
+							reference,
+							hold,
+						})),
+					),
+				),
+			)(
+				'with TTL $TTL after $source stays retained once $reference is released, then peeks $value $elapsed ms after the final release',
+				async ({ TTL, elapsed, value, creations, write, hold }) => {
+					const { family, create } = setup(kind, TTL)
+					const { store, handles } = await write(family, (store) => ({
+						dispose: hold(store, family),
+						unsubscribe: store.subscribe(family, 'a', () => {}),
+					}))
+					expect(store.peek(family, 'a')).toBe(3)
+					handles.dispose()
+					await elapse(1_000)
+					expect(store.peek(family, 'a')).toBe(3)
+					expect(create).toHaveBeenCalledOnce()
+					handles.unsubscribe()
+					await elapse(elapsed)
+					expect(store.peek(family, 'a')).toBe(value)
+					expect(create).toHaveBeenCalledTimes(creations)
+				},
+			)
 
-		it.each(memberKinds)(
-			'mounts a written %s member with its value and retains it after release',
-			async (_name, kind) => {
-				const { family, create, mounted } = setup(kind)
+			it('with TTL 5 is retained again by a write after its release', async () => {
+				const { family, create } = setup(kind, 5)
 				const store = createStore()
-				store.send(family, 'a', 3)
-				await flushMicrotask()
 				const unsubscribe = store.subscribe(family, 'a', () => {})
 				await flushMicrotask()
-				expect(mounted).toEqual([3])
 				unsubscribe()
-				await expire()
-				expect(store.peek(family, 'a')).toBe(3)
+				await elapse(4)
+				store.send(family, 'a', 7)
+				await elapse(1_000)
+				expect(store.peek(family, 'a')).toBe(7)
 				expect(create).toHaveBeenCalledOnce()
-			},
-		)
-
-		it.each(memberKinds)(
-			'retains a %s member written while mounted after release',
-			async (_name, kind) => {
-				const { family, create } = setup(kind)
-				const store = createStore()
-				const unsubscribe = store.subscribe(family, 'a', () => {})
-				await flushMicrotask()
-				store.send(family, 'a', 3)
-				await flushMicrotask()
-				unsubscribe()
-				await expire()
-				expect(store.peek(family, 'a')).toBe(3)
-				expect(create).toHaveBeenCalledOnce()
-			},
-		)
-
-		it.each(memberKinds)(
-			'evicts a read, never-written %s member after mount and release',
-			async (_name, kind) => {
-				const { family, create, mounted } = setup(kind)
-				const store = createStore()
-				expect(store.peek(family, 'a')).toBe(0)
-				const unsubscribe = store.subscribe(family, 'a', () => {})
-				await flushMicrotask()
-				expect(mounted).toEqual([0])
-				unsubscribe()
-				await expire()
-				expect(create).toHaveBeenCalledOnce()
-				expect(store.peek(family, 'a')).toBe(0)
-				expect(create).toHaveBeenCalledTimes(2)
-			},
-		)
+			})
+		})
 	})
 
 	it('evicts written write-only members while retaining the primitives they write', async () => {

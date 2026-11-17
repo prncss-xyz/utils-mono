@@ -310,22 +310,32 @@ function familyRetention(TTL: number): FamilyRetention {
 }
 
 /**
- * For non-transient TTLs, a value written to a primitive or readable derived
- * member is state, not cache: once written, the member is never evicted, even
- * with TTL 0. Mounting it uses the written value, and releasing it afterward
- * keeps the member and its value. Writes to write-only derived members hold no
- * state and leave their eviction unchanged. Memory therefore grows with every
- * written key; the store offers no explicit removal, so callers must not write
- * keys they do not need.
+ * Negative TTL values, such as `TRANSIENT`, are transient: every family lookup
+ * creates a fresh member, even for the same key in the same microtask or while
+ * an earlier member is mounted, and a resolved handle keeps addressing its own
+ * member. Other values cache members by key, and lookups reuse a member until
+ * it is evicted: TTL 0 evicts an unmounted member in the next eviction
+ * microtask, a positive finite TTL evicts it that many milliseconds after it
+ * was created or last released, and Infinity never evicts it. NaN is invalid.
+ * With TTL 0, a first render can peek before eviction and subscribe
+ * afterward; its re-resolving handle reaches a new entry, costing one
+ * recreation and possibly an extra render for lazy primitives.
+ *
+ * In a non-transient family, writing to a primitive or readable derived member,
+ * including through hydration, retains the member and its value until it has
+ * been mounted and then completely unmounted, that is, until its last mount
+ * reference is released. Until then it survives flushes and elapsed TTLs, even
+ * if it never mounts, and family lookups reach it with the written value.
+ * After that complete unmount, its TTL applies again from the release; a later
+ * write retains it again in the same way. A written member that never mounts is
+ * therefore never evicted, and the store offers no explicit removal. Invoking
+ * the setter of a write-only derived member retains nothing in that member;
+ * readable members the setter writes follow these rules. Transient families
+ * make no such promise: a later lookup creates a fresh member, which need not
+ * hold a written or hydrated value.
  *
  * The `create` factory must return a fresh, unique symbol on every call,
  * including when it recreates the same key after an eviction.
- * Negative TTL values are transient; positive finite values expire after that
- * many milliseconds, and Infinity retains entries indefinitely. NaN is invalid.
- * TTL 0 evicts an unmounted entry in the next microtask, subject to the write
- * retention above. A first render can peek before eviction and subscribe
- * afterward; its re-resolving handle reaches a new entry, costing one
- * recreation and possibly an extra render for lazy primitives.
  * Keys are matched either by `hash` (default: identity), stored in a Map, or by
  * `eq`, stored as key/value pairs and resolved to the first stored key for which
  * `eq(stored, key)` holds; `hash` and `eq` are mutually exclusive. `eq` lookup is a
