@@ -4,7 +4,7 @@ import { Text } from '@astryxdesign/core/Text'
 import { toggle, useAtom, useAtomValue } from '@prncss-xyz/react-utils'
 
 import { timerDisplayAtom } from './atoms'
-import { runningAtom, timerAtom } from './atoms/timer'
+import { runningAtom, timerEvents } from './atoms/timer'
 
 function TimerDisplay() {
 	const timerDisplay = useAtomValue(timerDisplayAtom)
@@ -22,7 +22,7 @@ function StartStopButton() {
 }
 
 function ResetButton() {
-	const [reset, setReset] = useAtom(timerAtom.can, 'reset')
+	const [reset, setReset] = useAtom(timerEvents.reset.can)
 	const running = useAtomValue(runningAtom)
 	return (
 		<Button

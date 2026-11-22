@@ -1,29 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
 import { RESET } from '../../functions'
-import { tag } from '../../tags'
 import { flushMicrotask } from '../../utils.testing'
 import { createStore, primitiveAtom } from '../store'
 import { directMachineAtom } from './directMachineAtom'
 
 describe('directMachineAtom', () => {
 	it('supports handlers returning RESET', async () => {
-		const machine = directMachineAtom(
+		const [machine, events] = directMachineAtom(
 			{ count: 0 },
 			{ set: (count: number) => ({ count }), reset: (_payload: void) => RESET },
 		)
 		const store = createStore()
-		store.send(machine, tag('set', 5))
+		store.send(events.set, 5)
 		await flushMicrotask()
-		expect(store.peek(machine.can, 'reset')).toBe(true)
-		expect(store.peek(machine.next, 'reset')).toEqual({ count: 0 })
-		store.send(machine, 'reset')
+		expect(store.peek(events.reset.can)).toBe(true)
+		expect(store.peek(events.reset.next)).toEqual({ count: 0 })
+		store.send(events.reset)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual({ count: 0 })
 	})
 
 	it('infers event, payload, and state types', async () => {
-		const machine = directMachineAtom(
+		const [machine, events] = directMachineAtom(
 			{ count: 0, status: 'idle' },
 			{
 				inc: (payload: number, state) => ({
@@ -34,14 +33,9 @@ describe('directMachineAtom', () => {
 		const store = createStore()
 
 		expect(store.peek(machine)).toEqual({ count: 0, status: 'idle' })
-		store.send(machine, { payload: 5, type: 'inc' })
+		store.send(events.inc, 5)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual({ count: 5, status: 'idle' })
-		expect(store.peek(machine.can, RESET)).toBe(true)
-		expect(store.peek(machine.next, RESET)).toEqual({
-			count: 0,
-			status: 'idle',
-		})
 		store.send(machine, RESET)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual({ count: 0, status: 'idle' })
@@ -49,7 +43,7 @@ describe('directMachineAtom', () => {
 
 	it('supports custom result and factory options', async () => {
 		const factory = <T>(value: T) => primitiveAtom(value)
-		const machine = directMachineAtom(
+		const [machine, events] = directMachineAtom(
 			{ count: 0 },
 			{
 				inc: (payload: number, state) => ({
@@ -64,7 +58,7 @@ describe('directMachineAtom', () => {
 		const store = createStore()
 
 		expect(store.peek(machine)).toBe('Count: 0')
-		store.send(machine, { payload: 5, type: 'inc' })
+		store.send(events.inc, 5)
 		await flushMicrotask()
 		expect(store.peek(machine)).toBe('Count: 5')
 	})

@@ -15,6 +15,7 @@ export {
 	type EffectAtom,
 	type EffectBody,
 	type EffectTracker,
+	type KeyArg,
 	type MountEffect,
 	type Hydrate,
 	type OnMount,

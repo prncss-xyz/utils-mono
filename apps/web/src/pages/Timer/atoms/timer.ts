@@ -1,8 +1,13 @@
-import { focusAtom, modalMachineAtom, tag } from '@prncss-xyz/react-utils'
+import {
+	derivedAtom,
+	isFunction,
+	modalMachineAtom,
+	tag,
+} from '@prncss-xyz/react-utils'
 
 import { timeAtom } from './time'
 
-export const timerAtom = modalMachineAtom<
+export const [timerAtom, timerEvents] = modalMachineAtom<
 	{
 		start: void
 		stop: void
@@ -25,7 +30,12 @@ export const timerAtom = modalMachineAtom<
 	},
 })
 
-export const runningAtom = focusAtom(timerAtom, {
-	getter: (timer) => timer.type === 'running',
-	setter: (next: boolean) => tag(next ? 'start' : 'stop'),
-})
+export const runningAtom = derivedAtom(
+	(read) => read(timerAtom).type === 'running',
+	(read, write, update: boolean | ((running: boolean) => boolean)) => {
+		const next = isFunction(update)
+			? update(read(timerAtom).type === 'running')
+			: update
+		write(next ? timerEvents.start : timerEvents.stop)
+	},
+)

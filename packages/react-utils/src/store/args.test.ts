@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { type SetStateWithReset } from '../functions'
 import { createCommands } from './commandAtoms'
 import { focusAtom } from './focusAtom'
-import { StoreProvider, useAtom, useSetAtom } from './react'
+import { StoreProvider, useAtom, useAtomValue, useSetAtom } from './react'
 import {
 	atomFamily,
 	createStore,
@@ -63,6 +63,31 @@ describe('setter argument tuples', () => {
 		await flushMicrotask()
 		expect(store.peek(members, undefined)).toBe(20)
 		expect(store.peek(members, 'other')).toBe(25)
+	})
+
+	it('treats an omitted family key as undefined', async () => {
+		const values = atomFamily((key: string | undefined) =>
+			primitiveAtom(key ?? 'none'),
+		)
+		const reset = atomFamily((key: string | undefined) =>
+			derivedAtom(null, (_read, write) => write(values, key, 'reset')),
+		)
+		const peekOmitted = derivedAtom((read) => read(values))
+		const nested = derivedAtom(null, (_read, write) => write(reset))
+		const store = createStore()
+		const notify = vi.fn()
+		const notifyOther = vi.fn()
+		store.subscribe(values, notify)
+		store.subscribe(values, 'other', notifyOther)
+		expect(store.peek(values)).toBe('none')
+		expect(store.peek(peekOmitted)).toBe('none')
+		expect(store.resolve(values).peek()).toBe('none')
+		store.send(nested)
+		await flushMicrotask()
+		expect(store.peek(values, undefined)).toBe('reset')
+		expect(store.peek(values, 'other')).toBe('other')
+		expect(notify).toHaveBeenCalledOnce()
+		expect(notifyOther).not.toHaveBeenCalled()
 	})
 
 	it('preserves omitted optional arguments, explicit undefined, and rest arguments', () => {
@@ -237,6 +262,9 @@ describe('setter argument tuples', () => {
 			derivedAtom(null, zeroSetter),
 		)
 		const readOnlyFamily = atomFamily((_key: string) => derivedAtom(() => 0))
+		const optionalKeyFamily = atomFamily((_key: string | undefined) =>
+			derivedAtom(updateGetter, updateSetter),
+		)
 		const store = createStore()
 		expectTypeOf(update).toEqualTypeOf<AtomSymbol<number, [number, string]>>()
 		expectTypeOf(explicit).toEqualTypeOf<AtomSymbol<number, [number]>>()
@@ -296,8 +324,18 @@ describe('setter argument tuples', () => {
 			store.send(count, 1, 2)
 			// @ts-expect-error no-argument setters reject explicit undefined
 			store.send(zero, undefined)
-			// @ts-expect-error the family key cannot be omitted
 			store.send(zeroFamily)
+			write(zeroFamily)
+			// @ts-expect-error a family key without undefined cannot be omitted
+			store.send(readOnlyFamily)
+			// @ts-expect-error a family key without undefined cannot be omitted on read
+			store.peek(readOnlyFamily)
+			// @ts-expect-error a family key without undefined cannot be omitted on resolve
+			store.resolve(readOnlyFamily)
+			// @ts-expect-error a family key without undefined cannot be omitted on subscribe
+			store.subscribe(readOnlyFamily, () => {})
+			// @ts-expect-error an omitted key requires a setter without arguments
+			store.send(optionalKeyFamily, 1, 'a')
 			// @ts-expect-error wrong family key type
 			store.send(family, 123, 1, 'a')
 			// @ts-expect-error family setter arguments are required after the key
@@ -393,10 +431,14 @@ describe('setter argument tuples', () => {
 			useAtom(readOnly)[1]()
 			// @ts-expect-error useAtom cannot write a read-only atom with arguments
 			useAtom(readOnly)[1](1)
-			// @ts-expect-error hook families require a key
 			useSetAtom(zeroFamily)
-			// @ts-expect-error hook families require a key
 			useAtom(zeroFamily)
+			// @ts-expect-error hook families require a key without undefined
+			useSetAtom(readOnlyFamily)
+			// @ts-expect-error hook families require a key without undefined
+			useAtom(readOnlyFamily)
+			// @ts-expect-error hook families require a key without undefined
+			useAtomValue(readOnlyFamily)
 			// @ts-expect-error read-only family hook setters cannot be called
 			useSetAtom(readOnlyFamily, 'key')()
 			// @ts-expect-error read-only family useAtom setters cannot be called

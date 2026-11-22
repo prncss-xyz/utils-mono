@@ -1,11 +1,5 @@
 import { isFunction, isoAssert } from '../functions'
-import {
-	atomFamily,
-	derivedAtom,
-	TRANSIENT,
-	type AtomFamily,
-	type AtomSymbol,
-} from './store'
+import { derivedAtom, type AtomSymbol } from './store'
 
 type Modify<Value> = (value: Value) => Value
 type Focused<Source, Value> = Value | Extract<Source, null | undefined>
@@ -21,172 +15,152 @@ type Modifier<Source, Event, Value> = (
 	source: NonNullish<Source>,
 ) => Event
 
-type FocusAtom<Value, Event, SourceAtom> = AtomSymbol<
+type FocusAtom<Value, Event> = AtomSymbol<
 	Value,
 	[Event] extends [never] ? never : [Event]
-> &
-	(SourceAtom extends { can: AtomFamily<boolean, any, []> }
-		? { can: AtomFamily<boolean, Event, []> }
-		: {})
-
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter: Getter<Source, Value>
-		setter: Setter<Source, Event, Value>
-		modifier: Modifier<Source, Event, Value>
-		remover?: never
-	},
-): FocusAtom<Focused<Source, Value>, Value | Modify<Value>, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter: Getter<Source, Value>
-		setter: Setter<Source, Event, Value>
-		modifier?: never
-		remover?: never
-	},
-): FocusAtom<Focused<Source, Value>, Value | Modify<Value>, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter: Getter<Source, Value>
-		modifier: Modifier<Source, Event, Value>
-		remover?: never
-		setter?: never
-	},
-): FocusAtom<Focused<Source, Value>, Modify<Value>, SourceAtom>
-export function focusAtom<
-	Source,
-	Args extends unknown[],
-	Value,
-	SourceAtom extends object = {},
->(
-	sourceAtom: AtomSymbol<Source, Args> & SourceAtom,
-	opts: {
-		getter: Getter<Source, Value>
-		setter?: never
-		modifier?: never
-		remover?: never
-	},
-): FocusAtom<Focused<Source, Value>, never, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter?: never
-		setter: Setter<Source, Event, Value>
-		modifier: Modifier<Source, Event, Value>
-		remover?: never
-	},
-): FocusAtom<never, Value | Modify<Value>, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter?: never
-		setter: Setter<Source, Event, Value>
-		modifier?: never
-		remover?: never
-	},
-): FocusAtom<never, Value, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter?: never
-		modifier: Modifier<Source, Event, Value>
-		remover?: never
-		setter?: never
-	},
-): FocusAtom<never, Modify<Value>, SourceAtom>
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
-	opts: {
-		getter: Getter<Source, Value>
-		setter: Setter<Source, Event, Value>
-		modifier: Modifier<Source, Event, Value>
-		remover: Remover<Source, Event>
-	},
-): FocusAtom<
-	Focused<Source, Value>,
-	Value | Modify<Value> | null | undefined,
-	SourceAtom
 >
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter: Getter<Source, Value>
+		setter: Setter<Source, Event, Value>
+		modifier: Modifier<Source, Event, Value>
+		remover?: never
+	},
+): FocusAtom<Focused<Source, Value>, Value | Modify<Value>>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter: Getter<Source, Value>
+		setter: Setter<Source, Event, Value>
+		modifier?: never
+		remover?: never
+	},
+): FocusAtom<Focused<Source, Value>, Value | Modify<Value>>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter: Getter<Source, Value>
+		modifier: Modifier<Source, Event, Value>
+		remover?: never
+		setter?: never
+	},
+): FocusAtom<Focused<Source, Value>, Modify<Value>>
+export function focusAtom<Source, Args extends unknown[], Value>(
+	sourceAtom: AtomSymbol<Source, Args>,
+	opts: {
+		getter: Getter<Source, Value>
+		setter?: never
+		modifier?: never
+		remover?: never
+	},
+): FocusAtom<Focused<Source, Value>, never>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter?: never
+		setter: Setter<Source, Event, Value>
+		modifier: Modifier<Source, Event, Value>
+		remover?: never
+	},
+): FocusAtom<never, Value | Modify<Value>>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter?: never
+		setter: Setter<Source, Event, Value>
+		modifier?: never
+		remover?: never
+	},
+): FocusAtom<never, Value>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter?: never
+		modifier: Modifier<Source, Event, Value>
+		remover?: never
+		setter?: never
+	},
+): FocusAtom<never, Modify<Value>>
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
+	opts: {
+		getter: Getter<Source, Value>
+		setter: Setter<Source, Event, Value>
+		modifier: Modifier<Source, Event, Value>
+		remover: Remover<Source, Event>
+	},
+): FocusAtom<Focused<Source, Value>, Value | Modify<Value> | null | undefined>
+
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter: Getter<Source, Value>
 		setter: Setter<Source, Event, Value>
 		modifier?: never
 		remover: Remover<Source, Event>
 	},
-): FocusAtom<
-	Focused<Source, Value>,
-	Value | Modify<Value> | null | undefined,
-	SourceAtom
->
+): FocusAtom<Focused<Source, Value>, Value | Modify<Value> | null | undefined>
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter: Getter<Source, Value>
 		modifier: Modifier<Source, Event, Value>
 		remover: Remover<Source, Event>
 		setter?: never
 	},
-): FocusAtom<
-	Focused<Source, Value>,
-	Modify<Value> | null | undefined,
-	SourceAtom
->
+): FocusAtom<Focused<Source, Value>, Modify<Value> | null | undefined>
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter: Getter<Source, Value>
 		setter?: never
 		modifier?: never
 		remover: Remover<Source, Event>
 	},
-): FocusAtom<Focused<Source, Value>, null | undefined, SourceAtom>
+): FocusAtom<Focused<Source, Value>, null | undefined>
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter?: never
 		setter: Setter<Source, Event, Value>
 		modifier: Modifier<Source, Event, Value>
 		remover: Remover<Source, Event>
 	},
-): FocusAtom<never, Value | Modify<Value> | null | undefined, SourceAtom>
+): FocusAtom<never, Value | Modify<Value> | null | undefined>
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter?: never
 		setter: Setter<Source, Event, Value>
 		modifier?: never
 		remover: Remover<Source, Event>
 	},
-): FocusAtom<never, Value | null | undefined, SourceAtom>
+): FocusAtom<never, Value | null | undefined>
 
-export function focusAtom<Source, Event, Value, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+export function focusAtom<Source, Event, Value>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter?: never
 		modifier: Modifier<Source, Event, Value>
 		remover: Remover<Source, Event>
 		setter?: never
 	},
-): FocusAtom<never, Modify<Value> | null | undefined, SourceAtom>
-export function focusAtom<Source, Event, SourceAtom extends object = {}>(
-	sourceAtom: AtomSymbol<Source, [Event]> & SourceAtom,
+): FocusAtom<never, Modify<Value> | null | undefined>
+export function focusAtom<Source, Event>(
+	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {
 		getter?: never
 		setter?: never
 		modifier?: never
 		remover: Remover<Source, Event>
 	},
-): FocusAtom<never, null | undefined, SourceAtom>
+): FocusAtom<never, null | undefined>
 export function focusAtom(sourceAtom: any, opts: any): any {
 	const { getter, setter, modifier, remover } = opts
 	const project = (source: any) => {
@@ -207,27 +181,11 @@ export function focusAtom(sourceAtom: any, opts: any): any {
 		isoAssert(setter)
 		return setter(update, source)
 	}
-	const focused = derivedAtom(
+	return derivedAtom(
 		(read) => project(read(sourceAtom)),
 		(read, write, update: any) => {
 			const source = read(sourceAtom)
 			if (source != null) write(sourceAtom, eventFor(source, update))
 		},
 	)
-	if (!sourceAtom.can) return focused
-	return Object.assign(focused, {
-		can: atomFamily<boolean, any, []>(
-			(update) =>
-				derivedAtom(
-					(read) => {
-						const source = read(sourceAtom)
-						return source == null
-							? false
-							: read(sourceAtom.can, eventFor(source, update))
-					},
-					(_read, write) => write(focused, update),
-				),
-			{ TTL: TRANSIENT },
-		),
-	})
 }

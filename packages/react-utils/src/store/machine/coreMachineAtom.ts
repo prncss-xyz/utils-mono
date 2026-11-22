@@ -1,5 +1,5 @@
 import { fromInit, id, isReset, type Init, type Reset } from '../../functions'
-import { fromSendable, type Sendable, type Tags } from '../../tags'
+import { tag, type Tags } from '../../tags'
 import {
 	atomFamily,
 	TRANSIENT,
@@ -13,71 +13,33 @@ import {
 } from '../store'
 import type { MachineEffect } from './machineEffect'
 
-export type PreviewAtom<Value, Args extends [unknown]> = AtomSymbol<
-	Value,
-	Args
-> & {
-	can: AtomFamily<boolean, Args[0], []>
-	next: AtomFamily<Value, Args[0], []>
-}
-
-type Transition<State, Event> = (
-	event: Event,
-	state: State,
-	read: Read,
-	write: Write,
-) => State
-
-function preview<State, Event>(
-	atom: AtomSymbol<State, any>,
-	transition: Transition<State, Event>,
-	event: Event,
-	read: Read,
-) {
-	const last = read(atom)
-	let dirty = false
-	const markDirty: Write = () => {
-		dirty = true
-	}
-	const next = transition(event, last, read, markDirty)
-	return { next, changed: dirty || !Object.is(next, last) }
-}
-
-function canAtom<State, Event>(
-	atom: AtomSymbol<State, any>,
-	transition: Transition<State, Event>,
-	dispatch: AtomSymbol<any, [Event]>,
-) {
-	return atomFamily<boolean, Event, []>(
-		(event) =>
-			derivedAtom(
-				(read) => preview(atom, transition, event, read).changed,
-				(_read, write) => write(dispatch, event),
-			),
-		{ TTL: TRANSIENT },
-	)
-}
-
-function nextAtom<State, Event, Value>(
-	atom: AtomSymbol<State, any>,
-	transition: Transition<State, Event>,
-	project: (state: State, read: Read) => Value,
-	dispatch: AtomSymbol<any, [Event]>,
-) {
-	return atomFamily<Value, Event, []>(
-		(event) =>
-			derivedAtom(
-				(read) => project(preview(atom, transition, event, read).next, read),
-				(_read, write) => write(dispatch, event),
-			),
-		{ TTL: TRANSIENT },
-	)
-}
-
-export type MachineAtom<E, R> = PreviewAtom<R, [Sendable<E> | Reset]>
+type EventArgs<P> = [P] extends [void] ? [] : [payload: P]
 
 /**
- * Creates a writable store symbol backed by a state-machine transition.
+ * Write-only atom dispatching one event type. `can` and `next` preview the
+ * transition for a payload (omitted for void events), and writing to
+ * either dispatches it.
+ */
+export type EventAtom<R, P> = AtomSymbol<never, EventArgs<P>> & {
+	can: AtomFamily<boolean, P, []>
+	next: AtomFamily<R, P, []>
+}
+
+export type MachineEvents<E, R> = {
+	readonly [K in keyof E]-?: EventAtom<R, E[K]>
+}
+
+/**
+ * The state atom, writable with `RESET`, and one event atom per event type.
+ */
+export type MachineAtom<E, R> = readonly [
+	AtomSymbol<R, [Reset]>,
+	MachineEvents<E, R>,
+]
+
+/**
+ * Creates a state atom backed by a state-machine transition, and event atoms
+ * dispatching to it.
  */
 export function coreMachineAtom<E, S, R = S>(
 	init: Init<S>,
@@ -98,23 +60,28 @@ export function coreMachineAtom<E, S, R = S>(
 		opts?.factory ?? primitiveAtom
 	const state = factory(fromInit(init))
 	const advance = (
-		event: Sendable<E> | Reset,
+		event: Tags<E> | Reset,
 		last: S,
 		read: Read,
 		write: Write,
 	) => {
-		const next = transition(
-			isReset(event) ? event : fromSendable(event),
-			last,
-			read,
-			write,
-		)
+		const next = transition(event, last, read, write)
 		return isReset(next) ? fromInit(init) : next
+	}
+	const dispatch = (read: Read, write: Write, event: Tags<E> | Reset) =>
+		write(state, advance(event, read(state), read, write))
+	const preview = (event: Tags<E>, read: Read) => {
+		const last = read(state)
+		let dirty = false
+		const markDirty: Write = () => {
+			dirty = true
+		}
+		const next = advance(event, last, read, markDirty)
+		return { next, changed: dirty || !Object.is(next, last) }
 	}
 	const output = derivedAtom(
 		(read) => result(read(state), read),
-		(read, write, event: Sendable<E> | Reset) =>
-			write(state, advance(event, read(state), read, write)),
+		(read, write, reset: Reset) => dispatch(read, write, reset),
 		{
 			onMount: opts?.effect
 				? (_read, _write, mountEffect) => {
@@ -149,8 +116,43 @@ export function coreMachineAtom<E, S, R = S>(
 				: undefined,
 		},
 	)
-	return Object.assign(output, {
-		can: canAtom(state, advance, output),
-		next: nextAtom(state, advance, result, output),
-	})
+	const eventAtom = (type: string) => {
+		const toEvent = (payload: unknown) => tag(type, payload) as Tags<E>
+		const previewFamily = <V>(
+			project: (p: ReturnType<typeof preview>, read: Read) => V,
+		) =>
+			atomFamily<V, unknown, []>(
+				(payload) =>
+					derivedAtom(
+						(read) => project(preview(toEvent(payload), read), read),
+						(read, write) => dispatch(read, write, toEvent(payload)),
+					),
+				{ TTL: TRANSIENT },
+			)
+		return Object.assign(
+			derivedAtom(null, (read, write, payload?: unknown) =>
+				dispatch(read, write, toEvent(payload)),
+			),
+			{
+				can: previewFamily(({ changed }) => changed),
+				next: previewFamily(({ next }, read) => result(next, read)),
+			},
+		)
+	}
+	const cache = new Map<string, ReturnType<typeof eventAtom>>()
+	const events = new Proxy(
+		{},
+		{
+			get: (_target, type) => {
+				if (typeof type !== 'string') return undefined
+				let atom = cache.get(type)
+				if (!atom) {
+					atom = eventAtom(type)
+					cache.set(type, atom)
+				}
+				return atom
+			},
+		},
+	) as MachineEvents<E, R>
+	return [output, events]
 }

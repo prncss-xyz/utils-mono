@@ -9,7 +9,6 @@ import {
 } from '@astryxdesign/core'
 import {
 	isoAssert,
-	tag,
 	useAtomValue,
 	useDialog,
 	useSetAtom,
@@ -17,14 +16,14 @@ import {
 import { useState } from 'react'
 
 import { clearListAtom, removeListAtom } from './atoms'
-import { activeListAtom, allListAtom } from './atoms/list'
+import { activeListAtom, allListAtom, allListEvents } from './atoms/list'
 
 function RenameList({ id, close }: { id: string; close: () => void }) {
 	const { lists } = useAtomValue(allListAtom)
 	const list = lists[id]
 	isoAssert(list, 'The list to rename must exist')
 	const [name, setName] = useState(list.name)
-	const update = useSetAtom(allListAtom)
+	const renameList = useSetAtom(allListEvents.renameList)
 
 	return (
 		<Dialog isOpen purpose='form' onOpenChange={close}>
@@ -37,7 +36,7 @@ function RenameList({ id, close }: { id: string; close: () => void }) {
 						label='Confirm'
 						variant='primary'
 						onClick={() => {
-							update(tag('renameList', { list: id, name }))
+							renameList({ list: id, name })
 							close()
 						}}
 					/>
@@ -50,7 +49,7 @@ function RenameList({ id, close }: { id: string; close: () => void }) {
 export function ListHeading() {
 	const { name } = useAtomValue(activeListAtom)
 	const { active } = useAtomValue(allListAtom)
-	const updateList = useSetAtom(allListAtom)
+	const cloneList = useSetAtom(allListEvents.cloneList)
 	const clear = useSetAtom(clearListAtom)
 	const remove = useSetAtom(removeListAtom)
 	const openDialog = useDialog()
@@ -66,7 +65,7 @@ export function ListHeading() {
 			<Button
 				size='sm'
 				label='Clone list'
-				onClick={() => updateList(tag('cloneList', { list: active }))}
+				onClick={() => cloneList({ list: active })}
 			/>
 			<Button size='sm' label='Remove list' onClick={() => remove(active)} />
 		</HStack>

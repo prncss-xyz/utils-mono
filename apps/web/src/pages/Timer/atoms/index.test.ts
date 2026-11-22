@@ -10,7 +10,7 @@ import {
 	fulfilledAtom,
 	timerDisplayAtom,
 } from '.'
-import { activeListAtom, allListAtom } from './list'
+import { activeListAtom, allListAtom, allListEvents } from './list'
 import { timeAtom } from './time'
 import { runningAtom, timerAtom } from './timer'
 
@@ -78,7 +78,7 @@ test('restores valid timers and persists machine updates and clears', async () =
 	localStorage.setItem('timer-list', JSON.stringify(saved))
 	const store = createStore()
 	expect(store.peek(allListAtom)).toEqual(saved)
-	store.send(allListAtom, tag('clone', { source: '2' }))
+	store.send(allListEvents.clone, { source: '2' })
 	await Promise.resolve()
 	expect(JSON.parse(localStorage.getItem('timer-list')!)).toEqual({
 		...saved,
@@ -92,7 +92,7 @@ test('restores valid timers and persists machine updates and clears', async () =
 		},
 	})
 	expect(createStore().peek(allListAtom)).toEqual(store.peek(allListAtom))
-	store.send(allListAtom, tag('clearList', { list: '0' }))
+	store.send(allListEvents.clearList, { list: '0' })
 	await Promise.resolve()
 	expect(JSON.parse(localStorage.getItem('timer-list')!)).toEqual({
 		nextItemId: 5,
@@ -106,9 +106,9 @@ test('restores valid timers and persists machine updates and clears', async () =
 
 test('selecting an active duration resets the running timer', async () => {
 	const store = createStore()
-	store.send(allListAtom, tag('update', { target: '0', duration: 1_000 }))
+	store.send(allListEvents.update, { target: '0', duration: 1_000 })
 	await Promise.resolve()
-	store.send(allListAtom, tag('clone', { source: '0' }))
+	store.send(allListEvents.clone, { source: '0' })
 	store.send(timeAtom, 0)
 	await Promise.resolve()
 	store.send(runningAtom, true)
@@ -127,9 +127,9 @@ test('selecting an active duration resets the running timer', async () => {
 
 test('completion advances running timers and resets and stops the last timer', async () => {
 	const store = createStore()
-	store.send(allListAtom, tag('update', { target: '0', duration: 1_000 }))
+	store.send(allListEvents.update, { target: '0', duration: 1_000 })
 	await Promise.resolve()
-	store.send(allListAtom, tag('clone', { source: '0' }))
+	store.send(allListEvents.clone, { source: '0' })
 	store.send(timeAtom, 0)
 	await Promise.resolve()
 	store.send(runningAtom, true)
@@ -169,7 +169,7 @@ test('activeListAtom projects the selected list', () => {
 	localStorage.setItem('timer-list', JSON.stringify(saved))
 	const store = createStore()
 	expect(store.peek(activeListAtom)).toEqual(saved.lists.second)
-	store.send(allListAtom, tag('activateItem', { target: '0' }))
+	store.send(allListEvents.activateItem, { target: '0' })
 	expect(store.peek(allListAtom).active).toBe('second')
 	expect(store.peek(activeAtom).id).toBe('1')
 })
@@ -188,7 +188,7 @@ test('restores unnamed lists and persists renaming without changing timers', asy
 	const store = createStore()
 	expect(store.peek(activeListAtom).name).toBe('')
 	for (const name of ['Tea', '']) {
-		store.send(allListAtom, tag('renameList', { list: '0', name }))
+		store.send(allListEvents.renameList, { list: '0', name })
 		await Promise.resolve()
 		expect(store.peek(activeListAtom)).toEqual({ ...list, name })
 		expect(
@@ -249,9 +249,9 @@ test.each([clearListAtom, removeListAtom])(
 	'clearing or removing the current list stops and resets the timer',
 	async (action) => {
 		const store = createStore()
-		store.send(allListAtom, tag('renameList', { list: '0', name: 'Tea' }))
+		store.send(allListEvents.renameList, { list: '0', name: 'Tea' })
 		await Promise.resolve()
-		store.send(allListAtom, tag('cloneList', { list: '0' }))
+		store.send(allListEvents.cloneList, { list: '0' })
 		await Promise.resolve()
 		store.send(timeAtom, 0)
 		await Promise.resolve()

@@ -63,8 +63,10 @@ export function createRuntime(hydrate: Hydrate = []): {
 		peek: state.read,
 		send: state.write,
 		resolve: ((symbol, key) => resolve(state, symbol, key)) as Resolve,
-		subscribe: ((symbol, keyOrNotify, notify) =>
-			subscribe(state, symbol, keyOrNotify, notify)) as Subscribe,
+		subscribe: ((
+			symbol: AtomFamily<any, any, any> | AtomSymbol<any, any>,
+			...rest: unknown[]
+		) => subscribe(state, symbol, rest)) as Subscribe,
 		settled: () => {
 			assertOutsideGetter(state)
 			return whenSettled(state)
@@ -133,11 +135,9 @@ function resolve<S, Key, Args extends unknown[]>(
 function subscribe<S, Key, Args extends unknown[]>(
 	state: StoreState,
 	symbol: AtomFamily<S, Key, Args> | AtomSymbol<S, Args>,
-	keyOrNotify: Key | (() => void),
-	notify?: () => void,
+	rest: readonly unknown[],
 ): () => void {
-	const instance = getInstance(state, symbol, keyOrNotify as Key)
-	const callback =
-		symbol.type === 'family' ? notify! : (keyOrNotify as () => void)
-	return subscribeInstance(state, instance, callback)
+	const notify = rest.at(-1) as () => void
+	const key = (rest.length > 1 ? rest[0] : undefined) as Key
+	return subscribeInstance(state, getInstance(state, symbol, key), notify)
 }

@@ -9,7 +9,7 @@ import {
 } from '@astryxdesign/core'
 import {
 	isoAssert,
-	tag,
+	useAtom,
 	useAtomValue,
 	useDialog,
 	useSetAtom,
@@ -18,7 +18,7 @@ import { useState } from 'react'
 
 import { activeAtom, removeTimerAtom, updateDurationAtom } from './atoms'
 import { formatTime } from './atoms/formatTime'
-import { activeListAtom, allListAtom } from './atoms/list'
+import { activeListAtom, allListEvents } from './atoms/list'
 
 function EditDuration({ id, close }: { id: string; close: () => void }) {
 	const { items } = useAtomValue(activeListAtom)
@@ -55,12 +55,44 @@ function EditDuration({ id, close }: { id: string; close: () => void }) {
 	)
 }
 
-export function TimerList() {
-	const { items, active } = useAtomValue(activeListAtom)
-	const updateList = useSetAtom(allListAtom)
-	const activate = useSetAtom(activeAtom)
+function TimerItem({ id, duration }: { id: string; duration: number }) {
+	const clone = useSetAtom(allListEvents.clone)
+	const [activeItem, activate] = useAtom(activeAtom)
+	const active = activeItem.id === id
 	const remove = useSetAtom(removeTimerAtom)
 	const openDialog = useDialog()
+
+	return (
+		<HStack
+			as='li'
+			gap={3}
+			padding={3}
+			align='center'
+			wrap='wrap'
+			style={{
+				backgroundColor: active ? 'var(--color-accent-muted)' : undefined,
+			}}
+		>
+			<Button
+				size='sm'
+				label={active ? 'Active' : 'Activate'}
+				isDisabled={active}
+				onClick={() => activate(id)}
+			/>
+			<Text>{formatTime(duration)}</Text>
+			<Button size='sm' label='Remove' onClick={() => remove(id)} />
+			<Button size='sm' label='Clone' onClick={() => clone({ source: id })} />
+			<Button
+				size='sm'
+				label='Edit'
+				onClick={() => openDialog(EditDuration, { id })}
+			/>
+		</HStack>
+	)
+}
+
+export function TimerList() {
+	const { items } = useAtomValue(activeListAtom)
 
 	return (
 		<VStack
@@ -70,37 +102,7 @@ export function TimerList() {
 			style={{ listStyle: 'none', margin: 0, padding: 0 }}
 		>
 			{items.map(({ id, duration }) => (
-				<HStack
-					as='li'
-					key={id}
-					gap={3}
-					padding={3}
-					align='center'
-					wrap='wrap'
-					style={{
-						backgroundColor:
-							id === active ? 'var(--color-accent-muted)' : undefined,
-					}}
-				>
-					<Button
-						size='sm'
-						label={id === active ? 'Active' : 'Activate'}
-						isDisabled={id === active}
-						onClick={() => activate(id)}
-					/>
-					<Text>{formatTime(duration)}</Text>
-					<Button size='sm' label='Remove' onClick={() => remove(id)} />
-					<Button
-						size='sm'
-						label='Clone'
-						onClick={() => updateList(tag('clone', { source: id }))}
-					/>
-					<Button
-						size='sm'
-						label='Edit'
-						onClick={() => openDialog(EditDuration, { id })}
-					/>
-				</HStack>
+				<TimerItem key={id} id={id} duration={duration} />
 			))}
 		</VStack>
 	)

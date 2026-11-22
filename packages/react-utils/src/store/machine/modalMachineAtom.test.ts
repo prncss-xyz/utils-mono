@@ -8,24 +8,24 @@ import { modalMachineAtom } from './modalMachineAtom'
 
 describe('modalMachineAtom', () => {
 	it('supports handlers returning RESET', async () => {
-		const machine = modalMachineAtom<
+		const [machine, events] = modalMachineAtom<
 			{ set: number; reset: void },
 			{ idle: number }
 		>(tag('idle', 0), {
 			idle: { set: (value) => tag('idle', value), reset: () => RESET },
 		})
 		const store = createStore()
-		store.send(machine, tag('set', 5))
+		store.send(events.set, 5)
 		await flushMicrotask()
-		expect(store.peek(machine.can, 'reset')).toBe(true)
-		expect(store.peek(machine.next, 'reset')).toEqual(tag('idle', 0))
-		store.send(machine, 'reset')
+		expect(store.peek(events.reset.can)).toBe(true)
+		expect(store.peek(events.reset.next)).toEqual(tag('idle', 0))
+		store.send(events.reset)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual(tag('idle', 0))
 	})
 
 	it('shallow merges payloads within a mode and preserves unchanged state', async () => {
-		const machine = modalMachineAtom<
+		const [machine, events] = modalMachineAtom<
 			{ reset: void; set: number; start: void },
 			{ idle: { elapsed: number }; running: { since: number } }
 		>(tag('idle', { elapsed: 0 }), {
@@ -39,23 +39,23 @@ describe('modalMachineAtom', () => {
 		const store = createStore()
 		const initial = store.peek(machine)
 
-		expect(store.peek(machine.can, 'reset')).toBe(false)
-		store.send(machine, 'reset')
+		expect(store.peek(events.reset.can)).toBe(false)
+		store.send(events.reset)
 		await flushMicrotask()
 		expect(store.peek(machine)).toBe(initial)
 
-		store.send(machine, tag('set', 5))
+		store.send(events.set, 5)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual(tag('idle', { elapsed: 5 }))
-		expect(store.peek(machine.can, 'reset')).toBe(true)
+		expect(store.peek(events.reset.can)).toBe(true)
 
-		store.send(machine, 'start')
+		store.send(events.start)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual(tag('running', { since: 0 }))
 	})
 
 	it('transitions between modal states', async () => {
-		const machine = modalMachineAtom<
+		const [machine, events] = modalMachineAtom<
 			{ start: number; stop: number },
 			{ running: number; stopped: number }
 		>(tag('stopped', 0), {
@@ -69,11 +69,9 @@ describe('modalMachineAtom', () => {
 		const store = createStore()
 
 		expect(store.peek(machine)).toEqual({ payload: 0, type: 'stopped' })
-		store.send(machine, { payload: 5, type: 'start' })
+		store.send(events.start, 5)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual({ payload: 5, type: 'running' })
-		expect(store.peek(machine.can, RESET)).toBe(true)
-		expect(store.peek(machine.next, RESET)).toEqual(tag('stopped', 0))
 		store.send(machine, RESET)
 		await flushMicrotask()
 		expect(store.peek(machine)).toEqual(tag('stopped', 0))
@@ -81,7 +79,7 @@ describe('modalMachineAtom', () => {
 
 	it('supports custom result and factory options', async () => {
 		const factory = <T>(value: T) => primitiveAtom(value)
-		const machine = modalMachineAtom<
+		const [machine, events] = modalMachineAtom<
 			{ start: number; stop: number },
 			{ running: number; stopped: number },
 			string
@@ -106,7 +104,7 @@ describe('modalMachineAtom', () => {
 		const store = createStore()
 
 		expect(store.peek(machine)).toBe('Stopped: 0')
-		store.send(machine, { payload: 5, type: 'start' })
+		store.send(events.start, 5)
 		await flushMicrotask()
 		expect(store.peek(machine)).toBe('Running: 5')
 	})

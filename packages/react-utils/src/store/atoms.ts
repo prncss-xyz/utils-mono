@@ -49,6 +49,23 @@ export type AtomFamilyOptions<Key> = { TTL?: number } & (
 	| { eq?: Extract<FamilyLookup<Key>, { type: 'eq' }>['eq']; hash?: never }
 )
 
+/** A family key argument, optional when the key type admits `undefined`. */
+export type KeyArg<Key> = undefined extends Key ? [key?: Key] : [key: Key]
+/**
+ * Family write arguments. The key may be omitted when its type admits
+ * `undefined` and the setter takes no arguments.
+ */
+type FamilyWriteArgs<Key, Args extends unknown[]> =
+	| [key: Key, ...args: Args]
+	| (undefined extends Key ? (Args extends [] ? [] : never) : never)
+/**
+ * Family subscribe arguments. The key may be omitted when its type admits
+ * `undefined`.
+ */
+type FamilySubscribeArgs<Key> =
+	| [key: Key, notify: () => void]
+	| (undefined extends Key ? [notify: () => void] : never)
+
 /**
  * Reads an atom. Call the `read` passed to a getter or effect tracker only
  * during that function's synchronous execution. Calls after it returns,
@@ -58,7 +75,7 @@ export type AtomFamilyOptions<Key> = { TTL?: number } & (
 export type Read = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
-		key: Key,
+		...key: KeyArg<Key>
 	): S
 	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>): S
 }
@@ -73,15 +90,14 @@ export type Read = {
 export type Write = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
-		key: Key,
-		...args: Args
+		...args: FamilyWriteArgs<Key, Args>
 	): void
 	<S, Args extends unknown[]>(symbol: AtomSymbol<S, Args>, ...args: Args): void
 }
 export type Resolve = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
-		key: Key,
+		...key: KeyArg<Key>
 	): ResolvedAtom<S, Args>
 	<S, Args extends unknown[]>(
 		symbol: AtomSymbol<S, Args>,
@@ -102,8 +118,7 @@ export type Resolve = {
 export type Subscribe = {
 	<S, Key, Args extends unknown[]>(
 		symbol: AtomFamily<S, Key, Args>,
-		key: Key,
-		notify: () => void,
+		...args: FamilySubscribeArgs<Key>
 	): () => void
 	<S, Args extends unknown[]>(
 		symbol: AtomSymbol<S, Args>,

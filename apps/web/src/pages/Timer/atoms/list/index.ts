@@ -58,7 +58,7 @@ const allListsInit: AllListsState = {
 	},
 }
 
-export const allListAtom = directMachineAtom(
+export const [allListAtom, allListEvents] = directMachineAtom(
 	allListsInit,
 	{
 		clearList,

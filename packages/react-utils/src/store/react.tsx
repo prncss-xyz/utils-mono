@@ -12,6 +12,7 @@ import { isoAssert } from '../functions'
 import {
 	createStore,
 	type AtomFamily,
+	type KeyArg,
 	type AtomSymbol,
 	type EffectAtom,
 	type ValidHydrate,
@@ -74,7 +75,7 @@ function useResolvedAtomValue<V, Args extends unknown[]>(
 
 export function useAtomValue<V, Key, Args extends unknown[]>(
 	atom: AtomFamily<V, Key, Args>,
-	key: Key,
+	...key: KeyArg<Key>
 ): V
 export function useAtomValue<V, Args extends unknown[]>(
 	atom: AtomSymbol<V, Args>,
@@ -88,7 +89,7 @@ export function useAtomValue<V, Key, Args extends unknown[]>(
 
 export function useSetAtom<V, Key, Args extends unknown[]>(
 	atom: AtomFamily<V, Key, Args>,
-	key: Key,
+	...key: KeyArg<Key>
 ): (...args: Args) => void
 export function useSetAtom<V, Args extends unknown[]>(
 	atom: AtomSymbol<V, Args>,
@@ -132,7 +133,7 @@ export function useSetAtom<V, Key, Args extends unknown[]>(
 
 export function useAtom<V, Key, Args extends unknown[]>(
 	atom: AtomFamily<V, Key, Args>,
-	key: Key,
+	...key: KeyArg<Key>
 ): readonly [V, (...args: Args) => void]
 export function useAtom<V, Args extends unknown[]>(
 	atom: AtomSymbol<V, Args>,
