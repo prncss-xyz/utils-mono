@@ -7,6 +7,10 @@ type CommandAtoms<T extends Commands> = {
 	[K in keyof T]: AtomSymbol<never, Parameters<T[K]>>
 }
 
+/**
+ * Creates write-only command atoms backed by hydrated handlers. Handlers may
+ * perform impure actions; readable atom setters invoke them through `write`.
+ */
 export function createCommands<T extends Commands>() {
 	const dependencyAtom = primitiveAtom<T>(undefined as any)
 	const getCommandAtom = cached((key: string) =>

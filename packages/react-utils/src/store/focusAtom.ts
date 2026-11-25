@@ -20,6 +20,11 @@ type FocusAtom<Value, Event> = AtomSymbol<
 	[Event] extends [never] ? never : [Event]
 >
 
+/**
+ * Projects a source atom and translates focused updates into source events.
+ * Getter, setter, modifier, remover, and functional update callbacks must be
+ * pure functions of their arguments.
+ */
 export function focusAtom<Source, Event, Value>(
 	sourceAtom: AtomSymbol<Source, [Event]>,
 	opts: {

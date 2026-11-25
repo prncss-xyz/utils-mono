@@ -252,6 +252,17 @@ export type ResolvedAtom<S, Args extends unknown[]> = {
 	subscribe: (notify: () => void) => () => void
 }
 
+/**
+ * Creates a primitive whose initializer may read external state, such as the
+ * clock or storage, and allocate new values. It must not modify existing or
+ * external state, trigger actions, or acquire resources requiring cleanup.
+ *
+ * The initializer runs when the primitive's value is first needed in a store
+ * and again on `RESET`. It must also be safe to invoke repeatedly and discard
+ * its results, permitting future dry runs. Dry-run and actual initialization
+ * values may differ; matching values or reuse of results are not guaranteed.
+ * Functional updates must be pure functions of their previous value.
+ */
 export function primitiveAtom<S>(
 	getter: S | (() => S),
 	opts?: AtomOptions<NoInfer<S>>,
@@ -272,12 +283,22 @@ function nowrite(): never {
 }
 
 /**
- * Getters are pure in the way React render functions are: the result must
- * depend only on what the getter reads through its `read` argument, which plays
- * the role of hooks. Other user-supplied functions it calls are not checked, but
- * the runtime may run a getter any number of times and reuses its last result
- * while no dependency has changed, so impure inputs such as `Date.now()` give
- * stale or inconsistent values. A getter must not write, subscribe, peek, or
+ * Getters and setters of readable derived atoms must be pure except for calls
+ * to their supplied `read` and `write` functions. Results and write arguments
+ * must depend only on their arguments and values obtained through `read`.
+ * They must not mutate existing values or captured state, read mutable external
+ * state such as `Date.now()` or storage, or perform I/O directly. This also
+ * applies to callbacks they invoke. Purity is a caller contract, not a type or
+ * runtime check.
+ *
+ * A write-only derived atom, created with a null or undefined getter, is a
+ * command. Its setter may perform impure actions. A readable atom's setter can
+ * trigger those actions by calling `write(command, ...args)`. Initializers may
+ * read external state under the contract documented on {@link primitiveAtom}.
+ * Mount callbacks, effects, and cleanups may also perform impure actions.
+ *
+ * The runtime may run a getter any number of times and reuses its last result
+ * while no dependency has changed. A getter must not write, subscribe, peek, or
  * mount through the store by any other route: the store asserts that no getter
  * is running when one of those calls is made. After a getter throws, the store
  * is left in an undefined state and must not be used further. A getter that reads itself, directly or through other getters, is

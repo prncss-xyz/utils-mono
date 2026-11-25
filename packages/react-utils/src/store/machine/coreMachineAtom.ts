@@ -40,6 +40,15 @@ export type MachineAtom<E, R> = readonly [
 /**
  * Creates a state atom backed by a state-machine transition, and event atoms
  * dispatching to it.
+ *
+ * The initializer follows the contract documented on {@link primitiveAtom}:
+ * it may read external state but must have no externally visible side effects.
+ * Preview and actual initialization values may differ.
+ *
+ * The transition and result projection must be pure except for calls to
+ * supplied `read` and `write` functions. Transitions and initializers may also
+ * run during `can` and `next` previews, which suppress transition writes.
+ * Perform impure actions in commands invoked through `write` or in `opts.effect`.
  */
 export function coreMachineAtom<E, S, R = S>(
 	init: Init<S>,

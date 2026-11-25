@@ -9,6 +9,13 @@ import type { AtomSymbol, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { MachineEffect } from './machineEffect'
 
+/**
+ * Creates a machine whose event handlers return state patches. Initializers
+ * follow the contract on {@link coreMachineAtom}; preview and actual
+ * initialization values may differ. Handlers and result projections must be
+ * pure except for supplied `read` and `write` calls; previews run handlers with
+ * writes suppressed. Use commands or `opts.effect` for impure actions.
+ */
 export function directMachineAtom<E, S extends object, R = S>(
 	init: Init<S>,
 	events: {

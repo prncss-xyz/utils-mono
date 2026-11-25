@@ -10,6 +10,13 @@ import type { AtomSymbol, Read, Write } from '../store'
 import { coreMachineAtom } from './coreMachineAtom'
 import type { MachineEffect } from './machineEffect'
 
+/**
+ * Creates a machine with handlers and result projections for each state.
+ * Initializers follow the contract on {@link coreMachineAtom}; preview and
+ * actual initialization values may differ. Handlers and projections must be
+ * pure except for supplied `read` and `write` calls; previews run handlers with
+ * writes suppressed. Use commands or `opts.effect` for impure actions.
+ */
 export function modalMachineAtom<Event, State, Result = Tags<State>>(
 	init: Init<Tags<State>>,
 	states: {
